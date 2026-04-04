@@ -1,0 +1,49 @@
+name: Feature Request
+description: Suggest a new feature or enhancement
+title: "[Feature]: "
+labels: ["enhancement", "triage"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem Statement
+      description: What problem does this feature solve?
+      placeholder: I need to...
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: Describe the feature or change you'd like
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: What alternatives have you considered?
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Area
+      description: Which area does this feature belong to?
+      options:
+        - Agent prompts (bug-hunter, security-scan, etc.)
+        - Output formatting
+        - CLI flags / interface
+        - API client (Gemini integration)
+        - New agent
+        - CI / integration
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Any other relevant information or examples

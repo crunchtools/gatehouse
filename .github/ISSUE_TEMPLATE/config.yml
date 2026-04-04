@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Gemini API Documentation
+    url: https://ai.google.dev/gemini-api/docs
+    about: Check the Google Gemini API docs for API behavior questions
