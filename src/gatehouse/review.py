@@ -114,6 +114,7 @@ async def run_agent(
 async def run_review(
     base: str | None = None,
     staged: bool = False,
+    stdin_diff: str | None = None,
     agent_slugs: list[str] | None = None,
     model: str = DEFAULT_MODEL,
     advisory: bool = False,
@@ -121,7 +122,7 @@ async def run_review(
     api_key: str = "",
 ) -> int:
     """Run the full review pipeline. Returns exit code."""
-    diff = get_git_diff(base, staged)
+    diff = stdin_diff if stdin_diff is not None else get_git_diff(base, staged)
     if not diff.strip():
         print("No changes to review.")
         return 0

@@ -46,6 +46,11 @@ def main() -> None:
         help="Review staged changes only",
     )
     parser.add_argument(
+        "--stdin",
+        action="store_true",
+        help="Read diff from stdin instead of running git diff",
+    )
+    parser.add_argument(
         "--base",
         default=None,
         help="Base branch to diff against (default: auto-detect)",
@@ -90,10 +95,15 @@ def main() -> None:
         args.agents.split(",") if args.agents else None
     )
 
+    stdin_diff: str | None = None
+    if args.stdin:
+        stdin_diff = sys.stdin.read()
+
     exit_code = asyncio.run(
         run_review(
             base=args.base,
             staged=args.staged,
+            stdin_diff=stdin_diff,
             agent_slugs=agent_slugs,
             model=args.model,
             advisory=args.advisory,

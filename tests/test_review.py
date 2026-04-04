@@ -363,6 +363,43 @@ async def test_gemini_raises_after_max_retries() -> None:
     assert mock_client.post.call_count == MAX_RETRIES
 
 
+@pytest.mark.asyncio
+async def test_run_review_stdin_diff() -> None:
+    """stdin_diff bypasses git diff and uses the provided diff."""
+    with (
+        patch("gatehouse.review.load_styleguide", return_value=None),
+        patch("gatehouse.review.get_file_listing", return_value=None),
+        patch(
+            "gatehouse.review.call_gemini",
+            new_callable=AsyncMock,
+            return_value="[]",
+        ),
+    ):
+        exit_code = await run_review(
+            stdin_diff="diff --git a/foo.py b/foo.py\n+print('hi')",
+            agent_slugs=["bugs"],
+            model="gemini-2.5-flash",
+            advisory=False,
+            verbose=False,
+            api_key="test-key",
+        )
+    assert exit_code == 0
+
+
+@pytest.mark.asyncio
+async def test_run_review_stdin_empty() -> None:
+    """Empty stdin diff exits 0."""
+    exit_code = await run_review(
+        stdin_diff="",
+        agent_slugs=None,
+        model="gemini-2.5-flash",
+        advisory=False,
+        verbose=False,
+        api_key="test-key",
+    )
+    assert exit_code == 0
+
+
 def test_detect_default_branch_from_origin_head() -> None:
     """detect_default_branch reads origin/HEAD when available."""
     from gatehouse.review import detect_default_branch
