@@ -6,13 +6,36 @@ import argparse
 import asyncio
 import os
 import sys
+from pathlib import Path
 
 from gatehouse.gemini import DEFAULT_MODEL
 from gatehouse.review import run_review
 
+ENV_FILE = Path.home() / ".config" / "mcp-env" / "gatehouse.env"
+
+
+def load_env_file(path: Path) -> None:
+    """Load KEY=VALUE pairs from an env file into os.environ.
+
+    Existing environment variables take precedence (are not overwritten).
+    """
+    if not path.is_file():
+        return
+    for raw_line in path.read_text().splitlines():
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if "=" not in stripped:
+            continue
+        key, _, value = stripped.partition("=")
+        if key not in os.environ:
+            os.environ[key] = value
+
 
 def main() -> None:
     """Main entry point."""
+    load_env_file(ENV_FILE)
+
     parser = argparse.ArgumentParser(
         prog="gatehouse",
         description="Local AI code review using Gemini agents",
@@ -54,7 +77,11 @@ def main() -> None:
     api_key = os.environ.get("GEMINI_API_KEY", "")
     if not api_key:
         print(
-            "Error: GEMINI_API_KEY environment variable not set",
+            "Error: GEMINI_API_KEY not set",
+            file=sys.stderr,
+        )
+        print(
+            f"  Set in environment or add to {ENV_FILE}",
             file=sys.stderr,
         )
         sys.exit(2)

@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 import json
+import os
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 import pytest
 
@@ -355,6 +360,33 @@ async def test_gemini_raises_after_max_retries() -> None:
         )
 
     assert mock_client.post.call_count == MAX_RETRIES
+
+
+def test_load_env_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """load_env_file loads KEY=VALUE pairs without overwriting existing env."""
+    from gatehouse.cli import load_env_file
+
+    env_file = tmp_path / "test.env"
+    env_file.write_text("FOO=bar\nBAZ=qux\n# comment\n\nINVALID\n")
+
+    monkeypatch.delenv("FOO", raising=False)
+    monkeypatch.setenv("BAZ", "existing")
+
+    load_env_file(env_file)
+
+    assert os.environ["FOO"] == "bar"
+    assert os.environ["BAZ"] == "existing"
+
+    monkeypatch.delenv("FOO", raising=False)
+
+
+def test_load_env_file_missing(tmp_path: Path) -> None:
+    """load_env_file does nothing when file doesn't exist."""
+    from gatehouse.cli import load_env_file
+
+    load_env_file(tmp_path / "nonexistent.env")
 
 
 def test_cli_missing_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
