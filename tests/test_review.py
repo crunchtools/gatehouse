@@ -1,0 +1,368 @@
+"""Tests for review orchestration (mocked API)."""
+
+from __future__ import annotations
+
+import json
+from unittest.mock import AsyncMock, patch
+
+import pytest
+
+from gatehouse.review import (
+    BLOCKING_SEVERITIES,
+    CONFIDENCE_THRESHOLD,
+    run_review,
+)
+
+MOCK_BLOCKING_FINDINGS = json.dumps(
+    [
+        {
+            "file": "src/app.py",
+            "lineStart": 10,
+            "lineEnd": 12,
+            "severity": "high",
+            "category": "bug",
+            "description": "Null reference on user input",
+            "suggestion": "Add null check",
+            "evidence": "Line 10: user.name.lower()",
+            "confidence": 95,
+        },
+    ]
+)
+
+MOCK_LOW_CONFIDENCE = json.dumps(
+    [
+        {
+            "file": "src/app.py",
+            "lineStart": 20,
+            "lineEnd": 20,
+            "severity": "high",
+            "category": "bug",
+            "description": "Possible issue",
+            "suggestion": "Check it",
+            "evidence": "Line 20: x = get_data()",
+            "confidence": 60,
+        },
+    ]
+)
+
+MOCK_ADVISORY_FINDINGS = json.dumps(
+    [
+        {
+            "file": "src/app.py",
+            "lineStart": 1,
+            "lineEnd": 1,
+            "severity": "medium",
+            "category": "quality",
+            "description": "Inconsistent naming",
+            "suggestion": "Use snake_case",
+            "evidence": "Line 1: myVar = 1",
+            "confidence": 90,
+        },
+    ]
+)
+
+
+def test_confidence_threshold_value() -> None:
+    assert CONFIDENCE_THRESHOLD == 80
+
+
+def test_blocking_severities() -> None:
+    assert "critical" in BLOCKING_SEVERITIES
+    assert "high" in BLOCKING_SEVERITIES
+    assert "medium" not in BLOCKING_SEVERITIES
+    assert "low" not in BLOCKING_SEVERITIES
+
+
+@pytest.mark.asyncio
+async def test_run_review_no_diff() -> None:
+    """Empty diff exits 0."""
+    with patch("gatehouse.review.get_git_diff", return_value=""):
+        exit_code = await run_review(
+            base="main",
+            staged=False,
+            agent_slugs=None,
+            model="gemini-2.5-flash",
+            advisory=False,
+            verbose=False,
+            api_key="test-key",
+        )
+    assert exit_code == 0
+
+
+@pytest.mark.asyncio
+async def test_run_review_blocking_finding() -> None:
+    """High-severity finding from blocking agent exits 1."""
+    with (
+        patch("gatehouse.review.get_git_diff", return_value="some diff"),
+        patch("gatehouse.review.get_file_listing", return_value="src/app.py"),
+        patch("gatehouse.review.load_styleguide", return_value=None),
+        patch(
+            "gatehouse.review.call_gemini",
+            new_callable=AsyncMock,
+            return_value=MOCK_BLOCKING_FINDINGS,
+        ),
+    ):
+        exit_code = await run_review(
+            base="main",
+            staged=False,
+            agent_slugs=["bugs"],
+            model="gemini-2.5-flash",
+            advisory=False,
+            verbose=False,
+            api_key="test-key",
+        )
+    assert exit_code == 1
+
+
+@pytest.mark.asyncio
+async def test_run_review_advisory_mode() -> None:
+    """Advisory mode exits 0 even with blocking findings."""
+    with (
+        patch("gatehouse.review.get_git_diff", return_value="some diff"),
+        patch("gatehouse.review.get_file_listing", return_value="src/app.py"),
+        patch("gatehouse.review.load_styleguide", return_value=None),
+        patch(
+            "gatehouse.review.call_gemini",
+            new_callable=AsyncMock,
+            return_value=MOCK_BLOCKING_FINDINGS,
+        ),
+    ):
+        exit_code = await run_review(
+            base="main",
+            staged=False,
+            agent_slugs=["bugs"],
+            model="gemini-2.5-flash",
+            advisory=True,
+            verbose=False,
+            api_key="test-key",
+        )
+    assert exit_code == 0
+
+
+@pytest.mark.asyncio
+async def test_run_review_advisory_agent_only() -> None:
+    """Advisory-only agents never cause exit 1."""
+    with (
+        patch("gatehouse.review.get_git_diff", return_value="some diff"),
+        patch("gatehouse.review.get_file_listing", return_value="src/app.py"),
+        patch("gatehouse.review.load_styleguide", return_value=None),
+        patch(
+            "gatehouse.review.call_gemini",
+            new_callable=AsyncMock,
+            return_value=MOCK_ADVISORY_FINDINGS,
+        ),
+    ):
+        exit_code = await run_review(
+            base="main",
+            staged=False,
+            agent_slugs=["consistency"],
+            model="gemini-2.5-flash",
+            advisory=False,
+            verbose=False,
+            api_key="test-key",
+        )
+    assert exit_code == 0
+
+
+@pytest.mark.asyncio
+async def test_confidence_filtering() -> None:
+    """Findings below confidence threshold are filtered out."""
+    with (
+        patch("gatehouse.review.get_git_diff", return_value="some diff"),
+        patch("gatehouse.review.get_file_listing", return_value="src/app.py"),
+        patch("gatehouse.review.load_styleguide", return_value=None),
+        patch(
+            "gatehouse.review.call_gemini",
+            new_callable=AsyncMock,
+            return_value=MOCK_LOW_CONFIDENCE,
+        ),
+    ):
+        exit_code = await run_review(
+            base="main",
+            staged=False,
+            agent_slugs=["bugs"],
+            model="gemini-2.5-flash",
+            advisory=False,
+            verbose=False,
+            api_key="test-key",
+        )
+    assert exit_code == 0
+
+
+@pytest.mark.asyncio
+async def test_run_review_api_error_graceful() -> None:
+    """API errors are caught gracefully, agent returns no findings."""
+    import httpx
+
+    mock_request = httpx.Request("POST", "https://example.com")
+    mock_response = httpx.Response(429, request=mock_request)
+    error = httpx.HTTPStatusError(
+        "rate limited", request=mock_request, response=mock_response
+    )
+    with (
+        patch("gatehouse.review.get_git_diff", return_value="some diff"),
+        patch("gatehouse.review.get_file_listing", return_value="src/app.py"),
+        patch("gatehouse.review.load_styleguide", return_value=None),
+        patch(
+            "gatehouse.review.call_gemini",
+            new_callable=AsyncMock,
+            side_effect=error,
+        ),
+    ):
+        exit_code = await run_review(
+            base="main",
+            staged=False,
+            agent_slugs=["bugs"],
+            model="gemini-2.5-flash",
+            advisory=False,
+            verbose=False,
+            api_key="test-key",
+        )
+    assert exit_code == 0
+
+
+@pytest.mark.asyncio
+async def test_run_review_invalid_json_graceful() -> None:
+    """Invalid JSON from API is caught gracefully."""
+    with (
+        patch("gatehouse.review.get_git_diff", return_value="some diff"),
+        patch("gatehouse.review.get_file_listing", return_value="src/app.py"),
+        patch("gatehouse.review.load_styleguide", return_value=None),
+        patch(
+            "gatehouse.review.call_gemini",
+            new_callable=AsyncMock,
+            return_value="not valid json{{{",
+        ),
+    ):
+        exit_code = await run_review(
+            base="main",
+            staged=False,
+            agent_slugs=["bugs"],
+            model="gemini-2.5-flash",
+            advisory=False,
+            verbose=False,
+            api_key="test-key",
+        )
+    assert exit_code == 0
+
+
+@pytest.mark.asyncio
+async def test_run_review_empty_array_response() -> None:
+    """Empty findings array exits 0."""
+    with (
+        patch("gatehouse.review.get_git_diff", return_value="some diff"),
+        patch("gatehouse.review.get_file_listing", return_value="src/app.py"),
+        patch("gatehouse.review.load_styleguide", return_value=None),
+        patch(
+            "gatehouse.review.call_gemini",
+            new_callable=AsyncMock,
+            return_value="[]",
+        ),
+    ):
+        exit_code = await run_review(
+            base="main",
+            staged=False,
+            agent_slugs=["bugs"],
+            model="gemini-2.5-flash",
+            advisory=False,
+            verbose=False,
+            api_key="test-key",
+        )
+    assert exit_code == 0
+
+
+@pytest.mark.asyncio
+async def test_run_review_multiple_agents() -> None:
+    """Multiple agents run concurrently and results are aggregated."""
+    with (
+        patch("gatehouse.review.get_git_diff", return_value="some diff"),
+        patch("gatehouse.review.get_file_listing", return_value="src/app.py"),
+        patch("gatehouse.review.load_styleguide", return_value=None),
+        patch(
+            "gatehouse.review.call_gemini",
+            new_callable=AsyncMock,
+            return_value=MOCK_BLOCKING_FINDINGS,
+        ),
+    ):
+        exit_code = await run_review(
+            base="main",
+            staged=False,
+            agent_slugs=["bugs", "security", "performance"],
+            model="gemini-2.5-flash",
+            advisory=False,
+            verbose=False,
+            api_key="test-key",
+        )
+    assert exit_code == 1
+
+
+@pytest.mark.asyncio
+async def test_gemini_retries_on_429() -> None:
+    """call_gemini retries on 429 with backoff."""
+    import httpx
+
+    from gatehouse.gemini import call_gemini
+
+    rate_limit_response = httpx.Response(
+        429,
+        request=httpx.Request("POST", "https://example.com"),
+    )
+    ok_response = httpx.Response(
+        200,
+        json={
+            "candidates": [
+                {"content": {"parts": [{"text": "[]"}], "role": "model"}}
+            ]
+        },
+        request=httpx.Request("POST", "https://example.com"),
+    )
+
+    mock_client = AsyncMock(spec=httpx.AsyncClient)
+    mock_client.post = AsyncMock(
+        side_effect=[rate_limit_response, ok_response]
+    )
+
+    with patch("asyncio.sleep", new_callable=AsyncMock):
+        text = await call_gemini(
+            mock_client, "system", "user", "gemini-2.5-flash", "key"
+        )
+
+    assert text == "[]"
+    assert mock_client.post.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_gemini_raises_after_max_retries() -> None:
+    """call_gemini raises after exhausting retries."""
+    import httpx
+
+    from gatehouse.gemini import MAX_RETRIES, call_gemini
+
+    rate_limit_response = httpx.Response(
+        429,
+        request=httpx.Request("POST", "https://example.com"),
+    )
+
+    mock_client = AsyncMock(spec=httpx.AsyncClient)
+    mock_client.post = AsyncMock(return_value=rate_limit_response)
+
+    with (
+        patch("asyncio.sleep", new_callable=AsyncMock),
+        pytest.raises(httpx.HTTPStatusError),
+    ):
+        await call_gemini(
+            mock_client, "system", "user", "gemini-2.5-flash", "key"
+        )
+
+    assert mock_client.post.call_count == MAX_RETRIES
+
+
+def test_cli_missing_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Missing GEMINI_API_KEY exits 2."""
+    from gatehouse.cli import main
+
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setattr("sys.argv", ["gatehouse"])
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+    assert exc_info.value.code == 2

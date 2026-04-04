@@ -1,0 +1,6 @@
+code_review:
+  ignore:
+    - "vendor/**"
+    - "*.min.js"
+    - ".gourmand-cache/**"
+    - "*.lock"
