@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
 
@@ -362,6 +363,38 @@ async def test_gemini_raises_after_max_retries() -> None:
     assert mock_client.post.call_count == MAX_RETRIES
 
 
+def test_detect_default_branch_from_origin_head() -> None:
+    """detect_default_branch reads origin/HEAD when available."""
+    from gatehouse.review import detect_default_branch
+
+    with patch(
+        "gatehouse.review.subprocess.run",
+        return_value=subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout="refs/remotes/origin/master\n",
+        ),
+    ):
+        assert detect_default_branch() == "master"
+
+
+def test_detect_default_branch_fallback() -> None:
+    """detect_default_branch falls back to checking main then master."""
+    from gatehouse.review import detect_default_branch
+
+    origin_fail = subprocess.CompletedProcess(args=[], returncode=1, stdout="")
+    main_fail = subprocess.CompletedProcess(args=[], returncode=1, stdout="")
+    master_ok = subprocess.CompletedProcess(
+        args=[], returncode=0, stdout="abc123\n"
+    )
+
+    with patch(
+        "gatehouse.review.subprocess.run",
+        side_effect=[origin_fail, main_fail, master_ok],
+    ):
+        assert detect_default_branch() == "master"
+
+
 def test_load_env_file(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -389,12 +422,15 @@ def test_load_env_file_missing(tmp_path: Path) -> None:
     load_env_file(tmp_path / "nonexistent.env")
 
 
-def test_cli_missing_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cli_missing_api_key(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """Missing GEMINI_API_KEY exits 2."""
-    from gatehouse.cli import main
+    from gatehouse import cli
 
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setattr(cli, "ENV_FILE", tmp_path / "nonexistent.env")
     monkeypatch.setattr("sys.argv", ["gatehouse"])
     with pytest.raises(SystemExit) as exc_info:
-        main()
+        cli.main()
     assert exc_info.value.code == 2

@@ -20,9 +20,38 @@ CONFIDENCE_THRESHOLD = 80
 BLOCKING_SEVERITIES = frozenset({"critical", "high"})
 
 
-def get_git_diff(base: str, staged: bool) -> str:
+def detect_default_branch() -> str:
+    """Auto-detect the default branch (works in worktrees too)."""
+    origin_head = subprocess.run(
+        ["git", "symbolic-ref", "refs/remotes/origin/HEAD"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if origin_head.returncode == 0:
+        ref = origin_head.stdout.strip()
+        return ref.removeprefix("refs/remotes/origin/")
+
+    for candidate in ("main", "master"):
+        check = subprocess.run(
+            ["git", "rev-parse", "--verify", candidate],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if check.returncode == 0:
+            return candidate
+
+    return "main"
+
+
+def get_git_diff(base: str | None, staged: bool) -> str:
     """Get the git diff for review."""
-    cmd = ["git", "diff", "--staged"] if staged else ["git", "diff", f"{base}...HEAD"]
+    if staged:
+        cmd = ["git", "diff", "--staged"]
+    else:
+        resolved_base = base if base is not None else detect_default_branch()
+        cmd = ["git", "diff", f"{resolved_base}...HEAD"]
     diff_proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
     if diff_proc.returncode != 0:
         print(
@@ -83,7 +112,7 @@ async def run_agent(
 
 
 async def run_review(
-    base: str = "main",
+    base: str | None = None,
     staged: bool = False,
     agent_slugs: list[str] | None = None,
     model: str = DEFAULT_MODEL,

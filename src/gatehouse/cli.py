@@ -47,8 +47,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--base",
-        default="main",
-        help="Base branch to diff against (default: main)",
+        default=None,
+        help="Base branch to diff against (default: auto-detect)",
     )
     parser.add_argument(
         "--agents",
