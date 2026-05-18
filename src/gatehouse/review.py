@@ -19,6 +19,8 @@ CONFIDENCE_THRESHOLD = 80
 
 BLOCKING_SEVERITIES = frozenset({"critical", "high"})
 
+MAX_CONCURRENT_AGENTS = 5
+
 
 def detect_default_branch() -> str:
     """Auto-detect the default branch (works in worktrees too)."""
@@ -87,27 +89,29 @@ async def run_agent(
     model: str,
     api_key: str,
     verbose: bool,
+    semaphore: asyncio.Semaphore,
 ) -> tuple[Agent, list[dict[str, Any]]]:
     """Run a single agent and return its findings."""
-    try:
-        response_text = await call_gemini(
-            client, agent.system_prompt, user_prompt, model, api_key
-        )
-        if verbose:
-            print(f"\n--- {agent.name} raw response ---", file=sys.stderr)
-            print(response_text, file=sys.stderr)
-        findings_raw = json.loads(response_text)
-        if not isinstance(findings_raw, list):
-            findings_raw = []
-        findings: list[dict[str, Any]] = [
-            f
-            for f in findings_raw
-            if isinstance(f, dict)
-            and f.get("confidence", 0) >= CONFIDENCE_THRESHOLD
-        ]
-    except (httpx.HTTPStatusError, json.JSONDecodeError, KeyError) as exc:
-        print(f"Warning: {agent.name} failed: {exc}", file=sys.stderr)
-        findings = []
+    async with semaphore:
+        try:
+            response_text = await call_gemini(
+                client, agent.system_prompt, user_prompt, model, api_key
+            )
+            if verbose:
+                print(f"\n--- {agent.name} raw response ---", file=sys.stderr)
+                print(response_text, file=sys.stderr)
+            findings_raw = json.loads(response_text)
+            if not isinstance(findings_raw, list):
+                findings_raw = []
+            findings: list[dict[str, Any]] = [
+                f
+                for f in findings_raw
+                if isinstance(f, dict)
+                and f.get("confidence", 0) >= CONFIDENCE_THRESHOLD
+            ]
+        except (httpx.HTTPStatusError, json.JSONDecodeError, KeyError) as exc:
+            print(f"Warning: {agent.name} failed: {exc}", file=sys.stderr)
+            findings = []
     return agent, findings
 
 
@@ -133,8 +137,11 @@ async def run_review(
     user_prompt = build_user_prompt(diff, styleguide, file_listing)
 
     async with httpx.AsyncClient() as client:
+        semaphore = asyncio.Semaphore(MAX_CONCURRENT_AGENTS)
         coros = [
-            run_agent(client, agent, user_prompt, model, api_key, verbose)
+            run_agent(
+                client, agent, user_prompt, model, api_key, verbose, semaphore
+            )
             for agent in agents
         ]
         raw = await asyncio.gather(*coros)

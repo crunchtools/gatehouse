@@ -11,8 +11,57 @@ import httpx
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 DEFAULT_MODEL = "gemini-2.5-flash"
 REQUEST_TIMEOUT = 120.0
-MAX_RETRIES = 3
+MAX_RETRIES = 5
 INITIAL_BACKOFF = 2.0
+MAX_RETRY_AFTER = 90.0
+
+
+def _parse_retry_after(value: str | None) -> float | None:
+    """Parse a Retry-After header value (seconds). Returns None if unparseable."""
+    if value is None:
+        return None
+    try:
+        seconds = float(value)
+    except ValueError:
+        return None
+    if seconds < 0:
+        return None
+    return min(seconds, MAX_RETRY_AFTER)
+
+
+def _parse_retry_delay_from_body(response: httpx.Response) -> float | None:
+    """Extract Gemini's RetryInfo.retryDelay from an error response body.
+
+    Gemini returns 429s with a structured body of the form:
+        {"error": {"details": [{"@type": ".../google.rpc.RetryInfo",
+                                 "retryDelay": "30s"}, ...]}}
+    The header is usually absent, so this body field is the authoritative signal.
+    """
+    try:
+        body = response.json()
+    except ValueError:
+        return None
+    if not isinstance(body, dict):
+        return None
+    details = body.get("error", {}).get("details", [])
+    if not isinstance(details, list):
+        return None
+    for detail in details:
+        if not isinstance(detail, dict):
+            continue
+        if not str(detail.get("@type", "")).endswith("RetryInfo"):
+            continue
+        raw = detail.get("retryDelay")
+        if not isinstance(raw, str):
+            continue
+        try:
+            seconds = float(raw.rstrip("s"))
+        except ValueError:
+            continue
+        if seconds < 0:
+            continue
+        return min(seconds, MAX_RETRY_AFTER)
+    return None
 
 
 async def call_gemini(
@@ -48,7 +97,11 @@ async def call_gemini(
             http.HTTPStatus.TOO_MANY_REQUESTS,
             http.HTTPStatus.SERVICE_UNAVAILABLE,
         ):
-            backoff = INITIAL_BACKOFF * (2 ** attempt)
+            backoff = _parse_retry_delay_from_body(response)
+            if backoff is None:
+                backoff = _parse_retry_after(response.headers.get("Retry-After"))
+            if backoff is None:
+                backoff = INITIAL_BACKOFF * (2 ** attempt)
             await asyncio.sleep(backoff)
             last_error = httpx.HTTPStatusError(
                 f"{response.status_code}",

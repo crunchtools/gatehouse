@@ -338,6 +338,93 @@ async def test_gemini_retries_on_429() -> None:
 
 
 @pytest.mark.asyncio
+async def test_gemini_honors_retry_delay_in_body() -> None:
+    """call_gemini sleeps for retryDelay from Gemini's structured error body."""
+    import httpx
+
+    from gatehouse.gemini import call_gemini
+
+    error_body = {
+        "error": {
+            "code": 429,
+            "status": "RESOURCE_EXHAUSTED",
+            "details": [
+                {"@type": "type.googleapis.com/google.rpc.QuotaFailure"},
+                {
+                    "@type": "type.googleapis.com/google.rpc.RetryInfo",
+                    "retryDelay": "23s",
+                },
+            ],
+        }
+    }
+    rate_limit_response = httpx.Response(
+        429,
+        json=error_body,
+        request=httpx.Request("POST", "https://example.com"),
+    )
+    ok_response = httpx.Response(
+        200,
+        json={
+            "candidates": [
+                {"content": {"parts": [{"text": "[]"}], "role": "model"}}
+            ]
+        },
+        request=httpx.Request("POST", "https://example.com"),
+    )
+
+    mock_client = AsyncMock(spec=httpx.AsyncClient)
+    mock_client.post = AsyncMock(
+        side_effect=[rate_limit_response, ok_response]
+    )
+
+    sleep_mock = AsyncMock()
+    with patch("asyncio.sleep", sleep_mock):
+        text = await call_gemini(
+            mock_client, "system", "user", "gemini-2.5-flash", "key"
+        )
+
+    assert text == "[]"
+    sleep_mock.assert_awaited_once_with(23.0)
+
+
+@pytest.mark.asyncio
+async def test_gemini_honors_retry_after_header() -> None:
+    """call_gemini sleeps for Retry-After seconds when present."""
+    import httpx
+
+    from gatehouse.gemini import call_gemini
+
+    rate_limit_response = httpx.Response(
+        429,
+        headers={"Retry-After": "7"},
+        request=httpx.Request("POST", "https://example.com"),
+    )
+    ok_response = httpx.Response(
+        200,
+        json={
+            "candidates": [
+                {"content": {"parts": [{"text": "[]"}], "role": "model"}}
+            ]
+        },
+        request=httpx.Request("POST", "https://example.com"),
+    )
+
+    mock_client = AsyncMock(spec=httpx.AsyncClient)
+    mock_client.post = AsyncMock(
+        side_effect=[rate_limit_response, ok_response]
+    )
+
+    sleep_mock = AsyncMock()
+    with patch("asyncio.sleep", sleep_mock):
+        text = await call_gemini(
+            mock_client, "system", "user", "gemini-2.5-flash", "key"
+        )
+
+    assert text == "[]"
+    sleep_mock.assert_awaited_once_with(7.0)
+
+
+@pytest.mark.asyncio
 async def test_gemini_raises_after_max_retries() -> None:
     """call_gemini raises after exhausting retries."""
     import httpx
