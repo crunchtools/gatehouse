@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import json
-import subprocess
 from typing import TYPE_CHECKING
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
-import pytest  # noqa: TC002
+import pytest
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+import httpx
 
 from gatehouse.agents import BUG_HUNTER, GENERAL, SECURITY_SCAN
 from gatehouse.github import (
@@ -105,52 +106,62 @@ def test_format_review_body_no_findings() -> None:
     assert format_review_body(results) == "Gatehouse found no issues."
 
 
-def test_post_pr_review_constructs_payload(
+@pytest.mark.asyncio
+async def test_post_pr_review_constructs_payload(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("GITHUB_REPOSITORY", "crunchtools/gatehouse")
     monkeypatch.setenv("GITHUB_REF", "refs/pull/7/merge")
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_test123")
 
     results = [(BUG_HUNTER, [SAMPLE_FINDING])]
 
-    with patch("gatehouse.github.subprocess.run") as mock_run:
-        mock_run.return_value = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="", stderr=""
-        )
-        success = post_pr_review(results, has_blocking=True)
+    mock_response = httpx.Response(200, request=httpx.Request("POST", "https://example.com"))
+    mock_client = AsyncMock(spec=httpx.AsyncClient)
+    mock_client.post = AsyncMock(return_value=mock_response)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("gatehouse.github.httpx.AsyncClient", return_value=mock_client):
+        success = await post_pr_review(results, has_blocking=True)
 
     assert success is True
-    mock_run.assert_called_once()
-    call_kwargs = mock_run.call_args
-    payload = json.loads(call_kwargs.kwargs.get("input", call_kwargs[1].get("input", "")))
+    call_kwargs = mock_client.post.call_args
+    payload = call_kwargs.kwargs.get("json", call_kwargs[1].get("json", {}))
     assert payload["event"] == "REQUEST_CHANGES"
     assert len(payload["comments"]) == 1
     assert payload["comments"][0]["path"] == "src/app.py"
     assert payload["comments"][0]["line"] == 10
 
 
-def test_post_pr_review_comment_event(
+@pytest.mark.asyncio
+async def test_post_pr_review_comment_event(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("GITHUB_REPOSITORY", "crunchtools/gatehouse")
     monkeypatch.setenv("GITHUB_REF", "refs/pull/7/merge")
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_test123")
 
     results = [(GENERAL, [SAMPLE_FINDING])]
 
-    with patch("gatehouse.github.subprocess.run") as mock_run:
-        mock_run.return_value = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="", stderr=""
-        )
-        success = post_pr_review(results, has_blocking=False)
+    mock_response = httpx.Response(200, request=httpx.Request("POST", "https://example.com"))
+    mock_client = AsyncMock(spec=httpx.AsyncClient)
+    mock_client.post = AsyncMock(return_value=mock_response)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("gatehouse.github.httpx.AsyncClient", return_value=mock_client):
+        success = await post_pr_review(results, has_blocking=False)
 
     assert success is True
-    payload = json.loads(mock_run.call_args.kwargs.get(
-        "input", mock_run.call_args[1].get("input", "")
-    ))
+    payload = mock_client.post.call_args.kwargs.get(
+        "json", mock_client.post.call_args[1].get("json", {})
+    )
     assert payload["event"] == "COMMENT"
 
 
-def test_post_pr_review_no_pr_context(
+@pytest.mark.asyncio
+async def test_post_pr_review_no_pr_context(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("GITHUB_REPOSITORY", raising=False)
@@ -158,54 +169,109 @@ def test_post_pr_review_no_pr_context(
     monkeypatch.delenv("GITHUB_EVENT_PATH", raising=False)
 
     results = [(BUG_HUNTER, [SAMPLE_FINDING])]
-    assert post_pr_review(results, has_blocking=True) is False
+    assert await post_pr_review(results, has_blocking=True) is False
 
 
-def test_post_pr_review_gh_failure(
+@pytest.mark.asyncio
+async def test_post_pr_review_no_token(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("GITHUB_REPOSITORY", "crunchtools/gatehouse")
     monkeypatch.setenv("GITHUB_REF", "refs/pull/7/merge")
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+
+    results = [(BUG_HUNTER, [SAMPLE_FINDING])]
+    assert await post_pr_review(results, has_blocking=True) is False
+
+
+@pytest.mark.asyncio
+async def test_post_pr_review_api_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GITHUB_REPOSITORY", "crunchtools/gatehouse")
+    monkeypatch.setenv("GITHUB_REF", "refs/pull/7/merge")
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_test123")
 
     results = [(BUG_HUNTER, [SAMPLE_FINDING])]
 
-    with patch("gatehouse.github.subprocess.run") as mock_run:
-        mock_run.return_value = subprocess.CompletedProcess(
-            args=[], returncode=1, stdout="", stderr="auth required"
-        )
-        assert post_pr_review(results, has_blocking=True) is False
+    mock_response = httpx.Response(
+        422, text="Validation Failed",
+        request=httpx.Request("POST", "https://example.com"),
+    )
+    mock_client = AsyncMock(spec=httpx.AsyncClient)
+    mock_client.post = AsyncMock(return_value=mock_response)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("gatehouse.github.httpx.AsyncClient", return_value=mock_client):
+        assert await post_pr_review(results, has_blocking=True) is False
 
 
-def test_post_pr_review_gh_not_found(
+@pytest.mark.asyncio
+async def test_post_pr_review_network_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("GITHUB_REPOSITORY", "crunchtools/gatehouse")
     monkeypatch.setenv("GITHUB_REF", "refs/pull/7/merge")
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_test123")
 
     results = [(BUG_HUNTER, [SAMPLE_FINDING])]
 
-    with patch(
-        "gatehouse.github.subprocess.run", side_effect=FileNotFoundError
-    ):
-        assert post_pr_review(results, has_blocking=True) is False
+    mock_client = AsyncMock(spec=httpx.AsyncClient)
+    mock_client.post = AsyncMock(side_effect=httpx.ConnectError("connection refused"))
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("gatehouse.github.httpx.AsyncClient", return_value=mock_client):
+        assert await post_pr_review(results, has_blocking=True) is False
 
 
-def test_post_pr_review_skips_findings_without_file(
+@pytest.mark.asyncio
+async def test_post_pr_review_skips_findings_without_file(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("GITHUB_REPOSITORY", "crunchtools/gatehouse")
     monkeypatch.setenv("GITHUB_REF", "refs/pull/7/merge")
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_test123")
 
     bad_finding = {**SAMPLE_FINDING, "file": "", "lineStart": 0}
     results = [(BUG_HUNTER, [bad_finding])]
 
-    with patch("gatehouse.github.subprocess.run") as mock_run:
-        mock_run.return_value = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="", stderr=""
-        )
-        post_pr_review(results, has_blocking=True)
+    mock_response = httpx.Response(200, request=httpx.Request("POST", "https://example.com"))
+    mock_client = AsyncMock(spec=httpx.AsyncClient)
+    mock_client.post = AsyncMock(return_value=mock_response)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
 
-    payload = json.loads(mock_run.call_args.kwargs.get(
-        "input", mock_run.call_args[1].get("input", "")
-    ))
+    with patch("gatehouse.github.httpx.AsyncClient", return_value=mock_client):
+        await post_pr_review(results, has_blocking=True)
+
+    payload = mock_client.post.call_args.kwargs.get(
+        "json", mock_client.post.call_args[1].get("json", {})
+    )
     assert "comments" not in payload
+
+
+@pytest.mark.asyncio
+async def test_post_pr_review_sends_auth_header(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GITHUB_REPOSITORY", "crunchtools/gatehouse")
+    monkeypatch.setenv("GITHUB_REF", "refs/pull/7/merge")
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_test123")
+
+    results = [(BUG_HUNTER, [SAMPLE_FINDING])]
+
+    mock_response = httpx.Response(200, request=httpx.Request("POST", "https://example.com"))
+    mock_client = AsyncMock(spec=httpx.AsyncClient)
+    mock_client.post = AsyncMock(return_value=mock_response)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("gatehouse.github.httpx.AsyncClient", return_value=mock_client):
+        await post_pr_review(results, has_blocking=True)
+
+    headers = mock_client.post.call_args.kwargs.get(
+        "headers", mock_client.post.call_args[1].get("headers", {})
+    )
+    assert headers["Authorization"] == "Bearer ghp_test123"

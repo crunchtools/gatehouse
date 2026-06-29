@@ -175,7 +175,11 @@ async def run_review(
     constitution_path: str | None = None,
     comment: bool = False,
 ) -> int:
-    """Run the full review pipeline. Returns exit code."""
+    """Run the full review pipeline.
+
+    When comment=True, posts findings as a GitHub PR review after printing.
+    Returns exit code (0 clean, 1 blocking, 2 usage error).
+    """
     diff = stdin_diff if stdin_diff is not None else get_git_diff(base, staged)
     if not diff.strip():
         print("No changes to review.")
@@ -229,6 +233,6 @@ async def run_review(
     print_summary(all_results, exit_code)
 
     if comment:
-        post_pr_review(all_results, has_blocking)
+        await post_pr_review(all_results, has_blocking)
 
     return exit_code

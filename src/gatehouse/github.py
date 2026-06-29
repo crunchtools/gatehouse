@@ -1,16 +1,19 @@
-"""GitHub PR review integration via gh CLI."""
+"""GitHub PR review integration via httpx."""
 
 from __future__ import annotations
 
 import json
 import os
 import re
-import subprocess
 import sys
 from typing import TYPE_CHECKING, Any
 
+import httpx
+
 if TYPE_CHECKING:
     from gatehouse.agents import Agent
+
+GITHUB_API_URL = "https://api.github.com"
 
 
 def detect_pr_context() -> tuple[str, int] | None:
@@ -81,11 +84,11 @@ def format_review_body(
     return f"Gatehouse found {total} issues ({', '.join(parts)})"
 
 
-def post_pr_review(
+async def post_pr_review(
     results: list[tuple[Agent, list[dict[str, Any]]]],
     has_blocking: bool,
 ) -> bool:
-    """Post findings as a GitHub PR review via gh CLI.
+    """Post findings as a GitHub PR review via the GitHub REST API.
 
     Returns True on success, False on failure.
     """
@@ -93,6 +96,14 @@ def post_pr_review(
     if context is None:
         print(
             "Warning: --comment used but not in a GitHub PR context. Skipping.",
+            file=sys.stderr,
+        )
+        return False
+
+    token = os.environ.get("GITHUB_TOKEN", "")
+    if not token:
+        print(
+            "Warning: GITHUB_TOKEN not set. Cannot post PR review.",
             file=sys.stderr,
         )
         return False
@@ -122,28 +133,31 @@ def post_pr_review(
     if comments:
         payload["comments"] = comments
 
+    url = f"{GITHUB_API_URL}/repos/{repo}/pulls/{pr_number}/reviews"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+
     try:
-        proc = subprocess.run(
-            [
-                "gh", "api",
-                "--method", "POST",
-                f"repos/{repo}/pulls/{pr_number}/reviews",
-                "--input", "-",
-            ],
-            input=json.dumps(payload),
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if proc.returncode != 0:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                url,
+                headers=headers,
+                json=payload,
+                timeout=30.0,
+            )
+        if response.status_code >= 400:
             print(
-                f"Warning: Failed to post PR review: {proc.stderr.strip()}",
+                f"Warning: GitHub API returned {response.status_code}: "
+                f"{response.text[:200]}",
                 file=sys.stderr,
             )
             return False
-    except FileNotFoundError:
+    except httpx.HTTPError as exc:
         print(
-            "Warning: gh CLI not found. Install GitHub CLI to use --comment.",
+            f"Warning: Failed to post PR review: {exc}",
             file=sys.stderr,
         )
         return False
