@@ -7,13 +7,14 @@ import pytest
 from gatehouse.agents import (
     AGENT_BY_SLUG,
     ALL_AGENTS,
+    build_constitution_prompt,
     build_user_prompt,
     get_agents,
 )
 
 
-def test_seven_agents_defined() -> None:
-    assert len(ALL_AGENTS) == 7
+def test_eight_agents_defined() -> None:
+    assert len(ALL_AGENTS) == 8
 
 
 def test_agent_slugs_unique() -> None:
@@ -32,13 +33,15 @@ def test_all_agents_have_required_fields() -> None:
 def test_blocking_agents() -> None:
     blocking = [a for a in ALL_AGENTS if a.blocking]
     advisory = [a for a in ALL_AGENTS if not a.blocking]
-    assert len(blocking) == 4
+    assert len(blocking) == 5
     assert len(advisory) == 3
 
 
 def test_blocking_agent_slugs() -> None:
     blocking_slugs = {a.slug for a in ALL_AGENTS if a.blocking}
-    assert blocking_slugs == {"bugs", "security", "performance", "docs"}
+    assert blocking_slugs == {
+        "bugs", "security", "performance", "docs", "constitution",
+    }
 
 
 def test_advisory_agent_slugs() -> None:
@@ -48,7 +51,7 @@ def test_advisory_agent_slugs() -> None:
 
 def test_get_agents_all() -> None:
     agents = get_agents(None)
-    assert len(agents) == 7
+    assert len(agents) == 8
 
 
 def test_get_agents_filtered() -> None:
@@ -99,6 +102,22 @@ def test_build_user_prompt_with_all_context() -> None:
     assert "diff" in prompt
 
 
+def test_build_constitution_prompt() -> None:
+    prompt = build_constitution_prompt("diff", "rules", None, None)
+    assert "rules" in prompt
+    assert "Constitution" in prompt
+    assert "diff" in prompt
+
+
+def test_build_constitution_prompt_with_context() -> None:
+    prompt = build_constitution_prompt("diff", "rules", "style", "files")
+    assert "Constitution" in prompt
+    assert "rules" in prompt
+    assert "style" in prompt
+    assert "files" in prompt
+    assert "diff" in prompt
+
+
 def test_agent_prompts_contain_anti_noise() -> None:
     for agent in ALL_AGENTS:
         assert "Do NOT flag" in agent.system_prompt
@@ -122,4 +141,5 @@ def test_agent_by_slug_lookup() -> None:
     assert AGENT_BY_SLUG["consistency"].name == "Consistency Check"
     assert AGENT_BY_SLUG["tests"].name == "Test Coverage"
     assert AGENT_BY_SLUG["docs"].name == "Documentation"
+    assert AGENT_BY_SLUG["constitution"].name == "Constitution"
     assert AGENT_BY_SLUG["general"].name == "General Review"

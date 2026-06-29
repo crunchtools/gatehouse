@@ -11,7 +11,13 @@ from typing import Any
 
 import httpx
 
-from gatehouse.agents import Agent, build_user_prompt, get_agents
+from gatehouse.agents import (
+    CONSTITUTION,
+    Agent,
+    build_constitution_prompt,
+    build_user_prompt,
+    get_agents,
+)
 from gatehouse.gemini import DEFAULT_MODEL, call_gemini
 from gatehouse.output import format_results, print_summary
 
@@ -82,6 +88,35 @@ def load_styleguide() -> str | None:
     return None
 
 
+CONSTITUTION_SEARCH_PATHS: tuple[str, ...] = (
+    ".specify/memory/constitution.md",
+    "AGENTS.md",
+    "CLAUDE.md",
+)
+
+
+def load_constitution(override_path: str | None = None) -> str | None:
+    """Load a project constitution file.
+
+    Search order: explicit override, then .specify/, AGENTS.md, CLAUDE.md.
+    """
+    if override_path is not None:
+        path = Path(override_path)
+        if not path.exists():
+            print(
+                f"Error: constitution file not found: {override_path}",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+        return path.read_text()
+
+    for candidate in CONSTITUTION_SEARCH_PATHS:
+        path = Path(candidate)
+        if path.exists():
+            return path.read_text()
+    return None
+
+
 async def run_agent(
     client: httpx.AsyncClient,
     agent: Agent,
@@ -124,6 +159,7 @@ async def run_review(
     advisory: bool = False,
     verbose: bool = False,
     api_key: str = "",
+    constitution_path: str | None = None,
 ) -> int:
     """Run the full review pipeline. Returns exit code."""
     diff = stdin_diff if stdin_diff is not None else get_git_diff(base, staged)
@@ -136,14 +172,38 @@ async def run_review(
     file_listing = get_file_listing()
     user_prompt = build_user_prompt(diff, styleguide, file_listing)
 
+    constitution = load_constitution(constitution_path)
+    constitution_agent = None
+    standard_agents = []
+    for agent in agents:
+        if agent.slug == CONSTITUTION.slug:
+            constitution_agent = agent
+        else:
+            standard_agents.append(agent)
+
+    if constitution_agent and not constitution:
+        print("Skipping Constitution agent: no constitution file found.")
+        constitution_agent = None
+
     async with httpx.AsyncClient() as client:
         semaphore = asyncio.Semaphore(MAX_CONCURRENT_AGENTS)
         coros = [
             run_agent(
-                client, agent, user_prompt, model, api_key, verbose, semaphore
+                client, agent, user_prompt, model, api_key,
+                verbose, semaphore,
             )
-            for agent in agents
+            for agent in standard_agents
         ]
+        if constitution_agent and constitution:
+            const_prompt = build_constitution_prompt(
+                diff, constitution, styleguide, file_listing,
+            )
+            coros.append(
+                run_agent(
+                    client, constitution_agent, const_prompt, model,
+                    api_key, verbose, semaphore,
+                )
+            )
         raw = await asyncio.gather(*coros)
 
     all_results: list[tuple[Agent, list[dict[str, Any]]]] = list(raw)

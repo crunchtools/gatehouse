@@ -16,6 +16,7 @@ import pytest
 from gatehouse.review import (
     BLOCKING_SEVERITIES,
     CONFIDENCE_THRESHOLD,
+    load_constitution,
     run_review,
 )
 
@@ -484,6 +485,69 @@ async def test_run_review_stdin_empty() -> None:
         verbose=False,
         api_key="test-key",
     )
+    assert exit_code == 0
+
+
+def test_load_constitution_override(tmp_path: Path) -> None:
+    """Explicit override path loads that file."""
+    f = tmp_path / "custom.md"
+    f.write_text("my constitution")
+    assert load_constitution(str(f)) == "my constitution"
+
+
+def test_load_constitution_override_missing(tmp_path: Path) -> None:
+    """Explicit override path that doesn't exist exits 2."""
+    with pytest.raises(SystemExit) as exc_info:
+        load_constitution(str(tmp_path / "missing.md"))
+    assert exc_info.value.code == 2
+
+
+def test_load_constitution_discovery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Discovery finds files in priority order."""
+    monkeypatch.chdir(tmp_path)
+    agents_md = tmp_path / "AGENTS.md"
+    agents_md.write_text("agents rules")
+    assert load_constitution() == "agents rules"
+
+    specify_dir = tmp_path / ".specify" / "memory"
+    specify_dir.mkdir(parents=True)
+    (specify_dir / "constitution.md").write_text("specify rules")
+    assert load_constitution() == "specify rules"
+
+
+def test_load_constitution_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Returns None when no constitution file found."""
+    monkeypatch.chdir(tmp_path)
+    assert load_constitution() is None
+
+
+@pytest.mark.asyncio
+async def test_run_review_constitution_skipped() -> None:
+    """Constitution agent is skipped when no constitution file found."""
+    with (
+        patch("gatehouse.review.get_git_diff", return_value="some diff"),
+        patch("gatehouse.review.get_file_listing", return_value=None),
+        patch("gatehouse.review.load_styleguide", return_value=None),
+        patch("gatehouse.review.load_constitution", return_value=None),
+        patch(
+            "gatehouse.review.call_gemini",
+            new_callable=AsyncMock,
+            return_value="[]",
+        ),
+    ):
+        exit_code = await run_review(
+            base="main",
+            staged=False,
+            agent_slugs=["constitution"],
+            model="gemini-2.5-flash",
+            advisory=False,
+            verbose=False,
+            api_key="test-key",
+        )
     assert exit_code == 0
 
 

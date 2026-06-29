@@ -1,4 +1,4 @@
-"""Agent prompt definitions for the 5-agent review architecture."""
+"""Agent prompt definitions for the review architecture."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ Output a JSON array. Each element MUST have exactly these fields:
 - "lineEnd": integer, last line of the issue
 - "severity": string, one of "critical", "high", "medium", "low"
 - "category": string, one of "security", "performance", "bug", "quality",
-  "style", "testing", "documentation"
+  "style", "testing", "documentation", "constitution"
 - "description": string, what the issue is
 - "suggestion": string, how to fix it
 - "evidence": string, the concrete code snippet demonstrating the issue
@@ -152,6 +152,31 @@ DOCUMENTATION = Agent(
     ),
 )
 
+CONSTITUTION = Agent(
+    name="Constitution",
+    slug="constitution",
+    blocking=True,
+    system_prompt=(
+        "You are the Constitution agent. Your focus is exclusively on "
+        "compliance with the project constitution provided below.\n\n"
+        "SCOPE: Code changes that violate principles defined in the "
+        "constitution, architectural decisions that contradict stated "
+        "constraints, dependency choices or patterns the constitution "
+        "explicitly prohibits, missing requirements the constitution "
+        "mandates.\n\n"
+        "OUT OF SCOPE: Do NOT review style preferences (that is "
+        "consistency check). Do NOT review general code quality (that is "
+        "general review). Do NOT flag anything not explicitly stated in "
+        "the constitution.\n\n"
+        "SEVERITY GUIDE:\n"
+        "- critical: direct violation of an explicit prohibition\n"
+        "- high: missing a mandated requirement\n"
+        "- medium: borderline or ambiguous violation worth flagging\n"
+        "- low: tangential concern related to constitution spirit\n\n"
+        f"{ANTI_NOISE}\n\n{FINDING_SCHEMA}"
+    ),
+)
+
 CONSISTENCY_CHECK = Agent(
     name="Consistency Check",
     slug="consistency",
@@ -194,6 +219,7 @@ ALL_AGENTS: tuple[Agent, ...] = (
     PERFORMANCE_CHECK,
     TEST_COVERAGE,
     DOCUMENTATION,
+    CONSTITUTION,
     CONSISTENCY_CHECK,
     GENERAL,
 )
@@ -221,6 +247,22 @@ def build_user_prompt(
 ) -> str:
     """Build the user prompt with diff content and optional context."""
     parts: list[str] = []
+    if styleguide:
+        parts.append(f"## Project Styleguide\n\n{styleguide}")
+    if file_listing:
+        parts.append(f"## File Listing (for orientation)\n\n{file_listing}")
+    parts.append(f"## Git Diff to Review\n\n```diff\n{diff}\n```")
+    return "\n\n".join(parts)
+
+
+def build_constitution_prompt(
+    diff: str,
+    constitution: str,
+    styleguide: str | None,
+    file_listing: str | None,
+) -> str:
+    """Build the user prompt for the Constitution agent."""
+    parts: list[str] = [f"## Project Constitution\n\n{constitution}"]
     if styleguide:
         parts.append(f"## Project Styleguide\n\n{styleguide}")
     if file_listing:

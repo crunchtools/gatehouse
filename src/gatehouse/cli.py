@@ -67,6 +67,12 @@ def main() -> None:
         help=f"Gemini model to use (default: {DEFAULT_MODEL})",
     )
     parser.add_argument(
+        "--constitution",
+        type=str,
+        default=None,
+        help="Path to constitution file (default: auto-discover)",
+    )
+    parser.add_argument(
         "--advisory",
         action="store_true",
         help="Advisory mode: never exit non-zero",
@@ -109,6 +115,7 @@ def main() -> None:
             advisory=args.advisory,
             verbose=args.verbose,
             api_key=api_key,
+            constitution_path=args.constitution,
         )
     )
     sys.exit(exit_code)
