@@ -134,6 +134,15 @@ def test_agent_prompts_contain_scope() -> None:
         assert "SCOPE" in agent.system_prompt
 
 
+def test_security_agent_detects_workflow_exfiltration() -> None:
+    prompt = AGENT_BY_SLUG["security"].system_prompt
+    assert "workflows" in prompt
+    assert "secrets" in prompt
+    assert "exfiltration" in prompt
+    assert "pull_request_target" in prompt
+    assert "CRITICAL" in prompt
+
+
 def test_agent_by_slug_lookup() -> None:
     assert AGENT_BY_SLUG["bugs"].name == "Bug Hunter"
     assert AGENT_BY_SLUG["security"].name == "Security Scan"
