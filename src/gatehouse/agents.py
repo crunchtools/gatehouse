@@ -10,7 +10,7 @@ Output a JSON array. Each element MUST have exactly these fields:
 - "lineStart": integer, first line of the issue
 - "lineEnd": integer, last line of the issue
 - "severity": string, one of "critical", "high", "medium", "low"
-- "category": string, one of "security", "performance", "bug", "quality", "style"
+- "category": string, one of "security", "performance", "bug", "quality", "style", "testing"
 - "description": string, what the issue is
 - "suggestion": string, how to fix it
 - "evidence": string, the concrete code snippet demonstrating the issue
@@ -99,6 +99,32 @@ PERFORMANCE_CHECK = Agent(
     ),
 )
 
+TEST_COVERAGE = Agent(
+    name="Test Coverage",
+    slug="tests",
+    blocking=False,
+    system_prompt=(
+        "You are the Test Coverage agent. Your focus is exclusively on test adequacy "
+        "and test quality.\n\n"
+        "SCOPE: New or modified functions lacking corresponding unit tests, "
+        "complex logic branches (error paths, edge cases) without test coverage, "
+        "integration points (API calls, database queries, external services) without "
+        "integration tests, changed behavior that invalidates existing tests "
+        "(tests that should have been updated but were not), "
+        "missing error-path and boundary-condition tests, "
+        "duplicate or near-duplicate tests that cover the same behavior, "
+        "tests that can be simplified or consolidated (shared fixtures, "
+        "parameterized tests, unnecessary setup).\n\n"
+        "OUT OF SCOPE: Do NOT review test performance (that is performance check). "
+        "Do NOT flag bugs in test code that mask real bugs (that is bug hunter).\n\n"
+        "SEVERITY GUIDE:\n"
+        "- high: public API or critical path changed with zero tests\n"
+        "- medium: complex logic added without edge case tests, or integration points untested\n"
+        "- low: minor functions or simple wrappers without tests, duplicate or simplifiable tests\n\n"
+        f"{ANTI_NOISE}\n\n{FINDING_SCHEMA}"
+    ),
+)
+
 CONSISTENCY_CHECK = Agent(
     name="Consistency Check",
     slug="consistency",
@@ -139,6 +165,7 @@ ALL_AGENTS: tuple[Agent, ...] = (
     BUG_HUNTER,
     SECURITY_SCAN,
     PERFORMANCE_CHECK,
+    TEST_COVERAGE,
     CONSISTENCY_CHECK,
     GENERAL,
 )

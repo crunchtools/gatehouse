@@ -12,8 +12,8 @@ from gatehouse.agents import (
 )
 
 
-def test_five_agents_defined() -> None:
-    assert len(ALL_AGENTS) == 5
+def test_six_agents_defined() -> None:
+    assert len(ALL_AGENTS) == 6
 
 
 def test_agent_slugs_unique() -> None:
@@ -33,7 +33,7 @@ def test_blocking_agents() -> None:
     blocking = [a for a in ALL_AGENTS if a.blocking]
     advisory = [a for a in ALL_AGENTS if not a.blocking]
     assert len(blocking) == 3
-    assert len(advisory) == 2
+    assert len(advisory) == 3
 
 
 def test_blocking_agent_slugs() -> None:
@@ -43,12 +43,12 @@ def test_blocking_agent_slugs() -> None:
 
 def test_advisory_agent_slugs() -> None:
     advisory_slugs = {a.slug for a in ALL_AGENTS if not a.blocking}
-    assert advisory_slugs == {"consistency", "general"}
+    assert advisory_slugs == {"tests", "consistency", "general"}
 
 
 def test_get_agents_all() -> None:
     agents = get_agents(None)
-    assert len(agents) == 5
+    assert len(agents) == 6
 
 
 def test_get_agents_filtered() -> None:
@@ -120,4 +120,5 @@ def test_agent_by_slug_lookup() -> None:
     assert AGENT_BY_SLUG["security"].name == "Security Scan"
     assert AGENT_BY_SLUG["performance"].name == "Performance Check"
     assert AGENT_BY_SLUG["consistency"].name == "Consistency Check"
+    assert AGENT_BY_SLUG["tests"].name == "Test Coverage"
     assert AGENT_BY_SLUG["general"].name == "General Review"

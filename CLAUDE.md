@@ -1,6 +1,6 @@
 # Gatehouse
 
-Local AI code review CLI using 5 concurrent Gemini agents.
+Local AI code review CLI using 6 concurrent Gemini agents.
 
 ## Quick Start
 
@@ -19,7 +19,7 @@ gatehouse --advisory
 ## Architecture
 
 - `src/gatehouse/cli.py` -- argparse entry point
-- `src/gatehouse/agents.py` -- 5 agent prompt definitions
+- `src/gatehouse/agents.py` -- 6 agent prompt definitions
 - `src/gatehouse/gemini.py` -- httpx async Gemini REST client
 - `src/gatehouse/review.py` -- orchestration and exit code logic
 - `src/gatehouse/output.py` -- terminal output with ANSI colors
@@ -31,6 +31,7 @@ gatehouse --advisory
 | Bug Hunter | bugs | Yes |
 | Security Scan | security | Yes |
 | Performance Check | performance | Yes |
+| Test Coverage | tests | No |
 | Consistency Check | consistency | No |
 | General Review | general | No |
 
