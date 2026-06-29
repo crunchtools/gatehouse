@@ -19,6 +19,7 @@ from gatehouse.agents import (
     get_agents,
 )
 from gatehouse.gemini import DEFAULT_MODEL, call_gemini
+from gatehouse.github import post_pr_review
 from gatehouse.output import format_results, print_summary
 
 CONFIDENCE_THRESHOLD = 80
@@ -117,6 +118,18 @@ def load_constitution(override_path: str | None = None) -> str | None:
     return None
 
 
+def _has_blocking_findings(
+    results: list[tuple[Agent, list[dict[str, Any]]]],
+) -> bool:
+    """Check if any blocking agent has critical/high findings."""
+    for agent, findings in results:
+        if agent.blocking:
+            for finding in findings:
+                if finding.get("severity", "low") in BLOCKING_SEVERITIES:
+                    return True
+    return False
+
+
 async def run_agent(
     client: httpx.AsyncClient,
     agent: Agent,
@@ -160,6 +173,7 @@ async def run_review(
     verbose: bool = False,
     api_key: str = "",
     constitution_path: str | None = None,
+    comment: bool = False,
 ) -> int:
     """Run the full review pipeline. Returns exit code."""
     diff = stdin_diff if stdin_diff is not None else get_git_diff(base, staged)
@@ -210,14 +224,11 @@ async def run_review(
 
     format_results(all_results)
 
-    has_blocking = False
-    for agent, findings in all_results:
-        if agent.blocking:
-            for finding in findings:
-                severity = finding.get("severity", "low")
-                if severity in BLOCKING_SEVERITIES:
-                    has_blocking = True
-
+    has_blocking = _has_blocking_findings(all_results)
     exit_code = 1 if has_blocking and not advisory else 0
     print_summary(all_results, exit_code)
+
+    if comment:
+        post_pr_review(all_results, has_blocking)
+
     return exit_code

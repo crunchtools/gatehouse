@@ -78,6 +78,11 @@ def main() -> None:
         help="Advisory mode: never exit non-zero",
     )
     parser.add_argument(
+        "--comment",
+        action="store_true",
+        help="Post findings as GitHub PR review comments (requires gh CLI)",
+    )
+    parser.add_argument(
         "-v",
         "--verbose",
         action="store_true",
@@ -116,6 +121,7 @@ def main() -> None:
             verbose=args.verbose,
             api_key=api_key,
             constitution_path=args.constitution,
+            comment=args.comment,
         )
     )
     sys.exit(exit_code)
