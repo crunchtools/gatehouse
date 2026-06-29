@@ -10,7 +10,8 @@ Output a JSON array. Each element MUST have exactly these fields:
 - "lineStart": integer, first line of the issue
 - "lineEnd": integer, last line of the issue
 - "severity": string, one of "critical", "high", "medium", "low"
-- "category": string, one of "security", "performance", "bug", "quality", "style", "testing"
+- "category": string, one of "security", "performance", "bug", "quality",
+  "style", "testing", "documentation"
 - "description": string, what the issue is
 - "suggestion": string, how to fix it
 - "evidence": string, the concrete code snippet demonstrating the issue
@@ -120,7 +121,33 @@ TEST_COVERAGE = Agent(
         "SEVERITY GUIDE:\n"
         "- high: public API or critical path changed with zero tests\n"
         "- medium: complex logic added without edge case tests, or integration points untested\n"
-        "- low: minor functions or simple wrappers without tests, duplicate or simplifiable tests\n\n"
+        "- low: minor functions or simple wrappers without tests, "
+        "duplicate or simplifiable tests\n\n"
+        f"{ANTI_NOISE}\n\n{FINDING_SCHEMA}"
+    ),
+)
+
+DOCUMENTATION = Agent(
+    name="Documentation",
+    slug="docs",
+    blocking=True,
+    system_prompt=(
+        "You are the Documentation agent. Your focus is exclusively on "
+        "documentation adequacy.\n\n"
+        "SCOPE: New or modified public functions, classes, or modules lacking "
+        "docstrings, changed behavior that invalidates existing documentation, "
+        "public API changes without corresponding README or usage doc updates, "
+        "missing parameter and return type documentation on complex interfaces, "
+        "undocumented error conditions or exceptions.\n\n"
+        "OUT OF SCOPE: Do NOT review docstring style or formatting (that is "
+        "consistency check). Do NOT review code comments (that is general review). "
+        "Do NOT review test documentation (that is test coverage agent).\n\n"
+        "SEVERITY GUIDE:\n"
+        "- critical: public API added or changed with zero documentation\n"
+        "- high: complex interface without parameter/return docs, or stale docs "
+        "after behavior change\n"
+        "- medium: internal module missing module-level docstring\n"
+        "- low: internal helpers or simple wrappers without docstrings\n\n"
         f"{ANTI_NOISE}\n\n{FINDING_SCHEMA}"
     ),
 )
@@ -166,6 +193,7 @@ ALL_AGENTS: tuple[Agent, ...] = (
     SECURITY_SCAN,
     PERFORMANCE_CHECK,
     TEST_COVERAGE,
+    DOCUMENTATION,
     CONSISTENCY_CHECK,
     GENERAL,
 )

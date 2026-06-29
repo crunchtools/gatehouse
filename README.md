@@ -1,6 +1,6 @@
 # gatehouse
 
-Local AI code review using 6 concurrent Gemini agents. Inspired by [diffray](https://github.com/nicepkg/diffray)'s multi-agent architecture and anti-noise prompting.
+Local AI code review using 7 concurrent Gemini agents. Inspired by [diffray](https://github.com/nicepkg/diffray)'s multi-agent architecture and anti-noise prompting.
 
 ## Install
 
@@ -38,10 +38,11 @@ gatehouse --advisory
 | Security Scan | Injection, auth bypass, hardcoded secrets, data exposure | Yes (always) |
 | Performance Check | O(n^2), N+1 queries, memory leaks, blocking I/O | Yes (high/critical) |
 | Test Coverage | Missing unit/integration tests, untested edge cases and APIs | Advisory only |
+| Documentation | Missing/stale docstrings, undocumented public APIs | Yes (critical/high) |
 | Consistency Check | Naming patterns, API consistency, error handling patterns | Advisory only |
 | General Review | Over-abstraction, unclear naming, hidden dependencies | Advisory only |
 
-All 6 agents run concurrently. Findings below 80% confidence are filtered out.
+All 7 agents run concurrently. Findings below 80% confidence are filtered out.
 
 ## Exit Codes
 
