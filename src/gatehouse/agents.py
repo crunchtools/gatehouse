@@ -28,6 +28,19 @@ Do NOT flag:
 - Issues in test files unless they mask real bugs
 - TODOs or missing features (those are intentional)"""
 
+WORKFLOW_SECURITY = """\
+In .github/workflows/*.yml files, additionally check for:
+- Secret exfiltration: steps that send ${{ secrets.* }} to external URLs \
+(curl, wget, httpx, fetch, nc, ssh, scp)
+- New secret references: ${{ secrets.NEW_KEY }} added that did not exist before
+- Environment variable dumping: env, printenv, or set piped or redirected \
+to files or network commands
+- Outbound data with secret access: any step combining secret access with \
+network egress
+- pull_request_target trigger combined with checkout of \
+github.event.pull_request.head.ref (gives fork code access to secrets)
+Flag all workflow secret exfiltration findings as CRITICAL."""
+
 
 @dataclass(frozen=True)
 class Agent:
@@ -69,10 +82,12 @@ SECURITY_SCAN = Agent(
         "authentication bypass, authorization flaws, hardcoded secrets/credentials, "
         "data exposure (PII in logs, sensitive data in error messages), "
         "insecure deserialization, SSRF, open redirects.\n\n"
+        f"{WORKFLOW_SECURITY}\n\n"
         "OUT OF SCOPE: Do NOT review bugs, performance, naming, or style. "
         "Those are covered by other agents.\n\n"
         "SEVERITY GUIDE:\n"
-        "- critical: exploitable vulnerabilities, credential exposure\n"
+        "- critical: exploitable vulnerabilities, credential exposure, "
+        "workflow secret exfiltration\n"
         "- high: authorization bypass, data exposure\n"
         "- medium: defense-in-depth improvements\n"
         "- low: informational security observations\n\n"
