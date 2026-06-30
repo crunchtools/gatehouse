@@ -59,7 +59,7 @@ on:
         description: "Digest-pinned Gatehouse image. Update per release."
         type: string
         required: false
-        default: "quay.io/crunchtools/gatehouse@sha256:9a3745b902335b1465f3b64456e23f8f9da9447ce8ec344f8217aecbae2d9a07"
+        default: "quay.io/crunchtools/gatehouse@sha256:c8f75ee09f07a5b58db9a1dd069fc41a47cd0cbf5811e40999fbc0db551c1442"
     secrets:
       GEMINI_API_KEY:
         required: true
