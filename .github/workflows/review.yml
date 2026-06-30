@@ -35,7 +35,7 @@
 #      (Also sidesteps the actions/checkout v7 fork-head block entirely.)
 #   2. The diff arrives as data on stdin; `gatehouse --stdin` never runs `git`
 #      against, builds, installs, or executes the PR.
-#   3. The image is pinned by digest; the run step invokes only the container
+#   3. The image is pinned to a release tag; the run step invokes only the container
 #      entrypoint — no repo-defined tooling runs.
 #   4. Least-privilege GITHUB_TOKEN: contents:read + pull-requests:write.
 # -----------------------------------------------------------------------------
@@ -56,10 +56,13 @@ on:
         required: false
         default: ""
       image:
-        description: "Digest-pinned Gatehouse image. Update per release."
+        # Pinned to the immutable release TAG, not a digest: our registry prunes
+        # untagged manifests on rebuild, so a digest pin dies the next time the
+        # tag is rebuilt. The release tag is controlled and not rebuilt casually.
+        description: "Gatehouse release image tag. Bump per release."
         type: string
         required: false
-        default: "quay.io/crunchtools/gatehouse@sha256:c8f75ee09f07a5b58db9a1dd069fc41a47cd0cbf5811e40999fbc0db551c1442"
+        default: "quay.io/crunchtools/gatehouse:0.2.0"
     secrets:
       GEMINI_API_KEY:
         required: true
@@ -100,7 +103,7 @@ jobs:
           [ -n "$AGENTS" ] && args+=( --agents "$AGENTS" )
 
           # 1) Fetch the PR diff over the API — data only, no fork code on disk.
-          # 2) Pipe it into the digest-pinned container's `gatehouse --stdin --comment`.
+          # 2) Pipe it into the release-tag-pinned container's `gatehouse --stdin --comment`.
           #    - GITHUB_REF is synthesized as refs/pull/N/merge so gatehouse's
           #      detect_pr_context() resolves (repo, PR) without mounting the event file.
           #    - GITHUB_TOKEN authorizes gatehouse to POST the PR review via the REST API.
