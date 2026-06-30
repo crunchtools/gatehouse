@@ -36,6 +36,29 @@ jobs:
       - name: Run tests
         run: uv run pytest -v
 
+  gatehouse-review:
+    name: Gatehouse Code Review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    container:
+      image: quay.io/crunchtools/gatehouse:latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gatehouse
+        run: gatehouse --comment --advisory
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_REF: ${{ github.ref }}
+
   gourmand:
     name: Code Quality (Gourmand)
     runs-on: ubuntu-latest
