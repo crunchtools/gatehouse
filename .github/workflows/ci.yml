@@ -54,7 +54,8 @@ jobs:
       - name: Run Gatehouse
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          gatehouse --comment --advisory
+          git fetch origin "$GITHUB_BASE_REF"
+          gatehouse --base "origin/$GITHUB_BASE_REF" --comment --advisory
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
