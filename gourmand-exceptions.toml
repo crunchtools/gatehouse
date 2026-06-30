@@ -2,3 +2,8 @@
 check = "summary_litter"
 path = "CLAUDE.md"
 justification = "Claude Code project instructions for AI assistant orientation"
+
+[[exceptions]]
+check = "redundant_error_handling"
+path = "src/gatehouse/github.py"
+justification = "Parsing untrusted JSON from GITHUB_EVENT_PATH — must catch OSError/JSONDecodeError and fall through to return None"
