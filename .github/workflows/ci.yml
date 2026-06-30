@@ -55,7 +55,7 @@ jobs:
           version: "latest"
 
       - name: Install Gatehouse
-        run: uv tool install gatehouse
+        run: uv tool install gatehouse@git+https://github.com/crunchtools/gatehouse.git
 
       - name: Run Gatehouse
         run: |
