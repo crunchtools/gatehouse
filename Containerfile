@@ -28,7 +28,7 @@ COPY src/ ./src/
 RUN pip install --no-cache-dir .
 
 LABEL name="gatehouse" \
-      version="0.1.0" \
+      version="0.2.0" \
       summary="Local AI code review CLI using Gemini agents" \
       description="5-agent concurrent code review with anti-noise prompting" \
       maintainer="crunchtools.com" \

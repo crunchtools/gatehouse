@@ -36,31 +36,8 @@ jobs:
       - name: Run tests
         run: uv run pytest -v
 
-  gatehouse-review:
-    name: Gatehouse Code Review
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: write
-    container:
-      image: quay.io/crunchtools/gatehouse:latest
-
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Run Gatehouse
-        run: |
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          git fetch origin "$GITHUB_BASE_REF"
-          gatehouse --base "origin/$GITHUB_BASE_REF" --comment
-        env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          GITHUB_REF: ${{ github.ref }}
+  # Gatehouse code review runs in its own workflow (gatehouse.yml) on
+  # pull_request_target, so it covers fork PRs too. See that file.
 
   gourmand:
     name: Code Quality (Gourmand)
