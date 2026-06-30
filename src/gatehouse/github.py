@@ -66,7 +66,7 @@ def fetch_repo_file(repo: str, ref: str, path: str, token: str) -> str | None:
         )
     except httpx.HTTPError:
         return None
-    if response.status_code == 200:
+    if response.is_success:
         return response.text
     return None
 
