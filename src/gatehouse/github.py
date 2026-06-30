@@ -44,6 +44,33 @@ def detect_pr_context() -> tuple[str, int] | None:
     return None
 
 
+def fetch_repo_file(repo: str, ref: str, path: str, token: str) -> str | None:
+    """Fetch one file's contents from a repo at a ref via the GitHub API.
+
+    Used to load trusted context (styleguide, constitution) from the BASE repo
+    of a pull request without checking anything out. The ref MUST be the trusted
+    base (e.g. base-branch SHA), never the PR head — otherwise a fork could plant
+    a prompt-injecting styleguide. Returns the file text, or None if absent/error.
+    """
+    url = f"{GITHUB_API_URL}/repos/{repo}/contents/{path}"
+    headers = {
+        "Accept": "application/vnd.github.raw+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    try:
+        response = httpx.get(
+            url, headers=headers, params={"ref": ref}, timeout=15.0
+        )
+    except httpx.HTTPError:
+        return None
+    if response.is_success:
+        return response.text
+    return None
+
+
 def _format_comment_body(
     agent_name: str, finding: dict[str, Any]
 ) -> str:

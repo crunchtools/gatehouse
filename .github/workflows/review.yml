@@ -1,0 +1,116 @@
+# Gatehouse — fork-safe PR review (reusable workflow)
+#
+# Hardened `pull_request_target` review: diff-piped, NO checkout, scoped-secret-bound.
+# Reviews fork PRs with a bring-your-own Gemini key and zero hosting. Safe by
+# construction: the fork's code is only ever read as a unified DIFF on stdin —
+# never checked out to disk, never executed. The container runs `gatehouse`,
+# which is diff-in -> Gemini -> PR-review-comments-out.
+#
+# ── How adopters use it ──────────────────────────────────────────────────────
+# Add `.github/workflows/gatehouse.yml` to your repository:
+#
+#   name: Gatehouse Review
+#   on:
+#     pull_request_target:
+#       types: [opened, synchronize, reopened]
+#   permissions: {}                 # default-deny at the top level
+#   jobs:
+#     review:
+#       permissions:                # grant ONLY what the review needs
+#         contents: read
+#         pull-requests: write
+#       uses: crunchtools/gatehouse/.github/workflows/review.yml@v1
+#       secrets:
+#         GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+#
+# ── Scoped secret (recommended) ──────────────────────────────────────────────
+# Configure GEMINI_API_KEY as a *scoped* secret bound to this trusted reusable
+# workflow (Settings -> Secrets and variables -> Actions -> scope to
+# `crunchtools/gatehouse/.github/workflows/review.yml`). Then no other job in the
+# caller's repo can read the key — closing the "extra job under pull_request_target"
+# footgun. (GitHub 2026 Actions roadmap; verify availability for your plan.)
+#
+# ── Why this is safe under pull_request_target ───────────────────────────────
+#   1. No `actions/checkout` of the fork head — nothing on disk to execute.
+#      (Also sidesteps the actions/checkout v7 fork-head block entirely.)
+#   2. The diff arrives as data on stdin; `gatehouse --stdin` never runs `git`
+#      against, builds, installs, or executes the PR.
+#   3. The image is pinned by digest; the run step invokes only the container
+#      entrypoint — no repo-defined tooling runs.
+#   4. Least-privilege GITHUB_TOKEN: contents:read + pull-requests:write.
+# -----------------------------------------------------------------------------
+
+name: Gatehouse Review (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      model:
+        description: "Gemini model override (default: gatehouse built-in)"
+        type: string
+        required: false
+        default: ""
+      agents:
+        description: "Comma-separated agent slugs (default: all agents)"
+        type: string
+        required: false
+        default: ""
+      image:
+        description: "Digest-pinned Gatehouse image. Update per release."
+        type: string
+        required: false
+        default: "quay.io/crunchtools/gatehouse@sha256:9a3745b902335b1465f3b64456e23f8f9da9447ce8ec344f8217aecbae2d9a07"
+    secrets:
+      GEMINI_API_KEY:
+        required: true
+
+jobs:
+  review:
+    name: Gatehouse Code Review
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read          # read PR metadata / diff via the API
+      pull-requests: write    # post the review (REQUEST_CHANGES / COMMENT)
+    steps:
+      - name: Review fork diff (no checkout, never executes PR code)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          # Trusted base repo + base-branch SHA — styleguide/constitution are
+          # loaded from HERE via the API, never from the fork head.
+          BASE_REF: ${{ github.event.pull_request.base.sha }}
+          IMAGE: ${{ inputs.image }}
+          MODEL: ${{ inputs.model }}
+          AGENTS: ${{ inputs.agents }}
+        run: |
+          set -euo pipefail
+
+          # This reusable workflow only makes sense under pull_request_target,
+          # where a fork PR's GITHUB_TOKEN/secrets are available in the BASE
+          # repo's trusted context. Fail loudly if there is no PR context.
+          if [ -z "${PR_NUMBER:-}" ]; then
+            echo "::error::No pull_request context. Call this from 'on: pull_request_target'." >&2
+            exit 1
+          fi
+
+          # Optional passthrough flags (only added when provided).
+          args=( --stdin --comment )
+          [ -n "$MODEL" ]  && args+=( --model "$MODEL" )
+          [ -n "$AGENTS" ] && args+=( --agents "$AGENTS" )
+
+          # 1) Fetch the PR diff over the API — data only, no fork code on disk.
+          # 2) Pipe it into the digest-pinned container's `gatehouse --stdin --comment`.
+          #    - GITHUB_REF is synthesized as refs/pull/N/merge so gatehouse's
+          #      detect_pr_context() resolves (repo, PR) without mounting the event file.
+          #    - GITHUB_TOKEN authorizes gatehouse to POST the PR review via the REST API.
+          gh pr diff "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --patch \
+            | docker run --rm -i \
+                -e GEMINI_API_KEY \
+                -e GITHUB_TOKEN="$GH_TOKEN" \
+                -e GITHUB_REPOSITORY="$GITHUB_REPOSITORY" \
+                -e GITHUB_REF="refs/pull/${PR_NUMBER}/merge" \
+                -e GATEHOUSE_CONTEXT_REPO="$GITHUB_REPOSITORY" \
+                -e GATEHOUSE_CONTEXT_REF="$BASE_REF" \
+                "$IMAGE" \
+                "${args[@]}"
