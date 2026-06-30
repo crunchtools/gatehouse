@@ -32,15 +32,28 @@ def detect_pr_context() -> tuple[str, int] | None:
 
     event_path = os.environ.get("GITHUB_EVENT_PATH")
     if event_path:
-        try:
-            with open(event_path) as f:
-                event = json.load(f)
-            pr_number = event.get("pull_request", {}).get("number")
-            if isinstance(pr_number, int):
-                return repo, pr_number
-        except (OSError, json.JSONDecodeError, TypeError):
-            pass
+        pr_number = _read_pr_number_from_event(event_path)
+        if pr_number is not None:
+            return repo, pr_number
 
+    return None
+
+
+def _read_pr_number_from_event(path: str) -> int | None:
+    """Extract PR number from a GitHub event JSON file.
+
+    Returns None if the file is missing, malformed, or has no PR number.
+    """
+    try:
+        with open(path) as f:
+            event = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(event, dict):
+        return None
+    pr_number = event.get("pull_request", {}).get("number")
+    if isinstance(pr_number, int):
+        return pr_number
     return None
 
 
