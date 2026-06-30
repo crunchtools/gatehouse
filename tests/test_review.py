@@ -13,9 +13,11 @@ if TYPE_CHECKING:
 
 import pytest
 
+from gatehouse.agents import BUG_HUNTER, CONSISTENCY_CHECK
 from gatehouse.review import (
     BLOCKING_SEVERITIES,
     CONFIDENCE_THRESHOLD,
+    _has_blocking_findings,
     load_constitution,
     run_review,
 )
@@ -581,6 +583,90 @@ def test_detect_default_branch_fallback() -> None:
         side_effect=[origin_fail, main_fail, master_ok],
     ):
         assert detect_default_branch() == "master"
+
+
+def test_has_blocking_findings_true() -> None:
+    finding = {"severity": "high", "confidence": 95}
+    results = [(BUG_HUNTER, [finding])]
+    assert _has_blocking_findings(results) is True
+
+
+def test_has_blocking_findings_false_advisory_agent() -> None:
+    finding = {"severity": "high", "confidence": 95}
+    results = [(CONSISTENCY_CHECK, [finding])]
+    assert _has_blocking_findings(results) is False
+
+
+def test_has_blocking_findings_false_low_severity() -> None:
+    finding = {"severity": "low", "confidence": 95}
+    results = [(BUG_HUNTER, [finding])]
+    assert _has_blocking_findings(results) is False
+
+
+def test_has_blocking_findings_empty() -> None:
+    results = [(BUG_HUNTER, [])]
+    assert _has_blocking_findings(results) is False
+
+
+@pytest.mark.asyncio
+async def test_run_review_comment_flag_calls_post() -> None:
+    """When comment=True, post_pr_review is called."""
+    with (
+        patch("gatehouse.review.get_git_diff", return_value="some diff"),
+        patch("gatehouse.review.get_file_listing", return_value=None),
+        patch("gatehouse.review.load_styleguide", return_value=None),
+        patch(
+            "gatehouse.review.call_gemini",
+            new_callable=AsyncMock,
+            return_value=MOCK_BLOCKING_FINDINGS,
+        ),
+        patch(
+            "gatehouse.review.post_pr_review",
+            new_callable=AsyncMock,
+            return_value=True,
+        ) as mock_post,
+    ):
+        await run_review(
+            base="main",
+            staged=False,
+            agent_slugs=["bugs"],
+            model="gemini-2.5-flash",
+            advisory=False,
+            verbose=False,
+            api_key="test-key",
+            comment=True,
+        )
+    mock_post.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_run_review_no_comment_flag_skips_post() -> None:
+    """When comment=False (default), post_pr_review is not called."""
+    with (
+        patch("gatehouse.review.get_git_diff", return_value="some diff"),
+        patch("gatehouse.review.get_file_listing", return_value=None),
+        patch("gatehouse.review.load_styleguide", return_value=None),
+        patch(
+            "gatehouse.review.call_gemini",
+            new_callable=AsyncMock,
+            return_value=MOCK_BLOCKING_FINDINGS,
+        ),
+        patch(
+            "gatehouse.review.post_pr_review",
+            new_callable=AsyncMock,
+        ) as mock_post,
+    ):
+        await run_review(
+            base="main",
+            staged=False,
+            agent_slugs=["bugs"],
+            model="gemini-2.5-flash",
+            advisory=False,
+            verbose=False,
+            api_key="test-key",
+            comment=False,
+        )
+    mock_post.assert_not_awaited()
 
 
 def test_load_env_file(
