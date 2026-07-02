@@ -1,0 +1,19 @@
+# Gourmand — AI slop detection as a CI gate.
+#
+# Drop this job into your test/CI workflow. Requires no secrets — just the
+# public container image. Fails the check if any violations are found that
+# aren't excepted in gourmand-exceptions.toml.
+#
+# If your workflow file is named differently, copy this job block into it.
+
+  gourmand:
+    name: Code Quality (Gourmand)
+    runs-on: ubuntu-latest
+    container:
+      image: quay.io/crunchtools/gourmand:latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Gourmand
+        run: gourmand --full .
