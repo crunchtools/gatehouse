@@ -22,9 +22,6 @@ If there are no findings, return an empty array: []"""
 ANTI_NOISE = """\
 Do NOT flag:
 - Code that is already correct and working
-- Fixes being applied: if the diff ADDS validation, sanitization, error \
-handling, or defensive checks that the old code lacked, that is a fix — \
-not a finding. Only flag issues INTRODUCED or REMAINING in the new (+) lines
 - Positive observations ("this looks good")
 - Style preferences or subjective opinions
 - Theoretical issues that require unlikely conditions

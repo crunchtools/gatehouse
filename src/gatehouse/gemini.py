@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import http
-import random
 from typing import Any
 
 import httpx
@@ -102,7 +101,7 @@ async def call_gemini(
             if backoff is None:
                 backoff = _parse_retry_after(response.headers.get("Retry-After"))
             if backoff is None:
-                backoff = INITIAL_BACKOFF * (2 ** attempt) * (0.5 + random.random())
+                backoff = INITIAL_BACKOFF * (2 ** attempt)
             await asyncio.sleep(backoff)
             last_error = httpx.HTTPStatusError(
                 f"{response.status_code}",

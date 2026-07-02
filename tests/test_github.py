@@ -17,7 +17,6 @@ from gatehouse.agents import BUG_HUNTER, GENERAL, SECURITY_SCAN
 from gatehouse.github import (
     _format_comment_body,
     detect_pr_context,
-    fetch_repo_file,
     format_review_body,
     post_pr_review,
 )
@@ -276,27 +275,3 @@ async def test_post_pr_review_sends_auth_header(
         "headers", mock_client.post.call_args[1].get("headers", {})
     )
     assert headers["Authorization"] == "Bearer ghp_test123"
-
-
-def test_detect_pr_context_malformed_event_warns(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    event_file = tmp_path / "event.json"
-    event_file.write_text("not json")
-    monkeypatch.setenv("GITHUB_REPOSITORY", "crunchtools/gatehouse")
-    monkeypatch.delenv("GITHUB_REF", raising=False)
-    monkeypatch.setenv("GITHUB_EVENT_PATH", str(event_file))
-    result = detect_pr_context()
-    assert result is None
-    captured = capsys.readouterr()
-    assert "Warning: could not parse" in captured.err
-
-
-def test_fetch_repo_file_network_error_warns(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    with patch("gatehouse.github.httpx.get", side_effect=httpx.ConnectError("connection refused")):
-        result = fetch_repo_file("crunchtools/gatehouse", "main", "CONSTITUTION.md", "ghp_test")
-    assert result is None
-    captured = capsys.readouterr()
-    assert "Warning: could not fetch" in captured.err

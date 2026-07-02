@@ -1,6 +1,6 @@
 [project]
 name = "gatehouse"
-version = "0.2.1"
+version = "0.2.0"
 description = "Local AI code review CLI using Gemini agents"
 requires-python = ">=3.11"
 license = "AGPL-3.0-or-later"
@@ -60,7 +60,6 @@ max-statements = 50
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S101", "PLC0415", "PLR2004"]
-"src/gatehouse/gemini.py" = ["S311"]  # random.random for backoff jitter, not crypto
 
 [tool.mypy]
 python_version = "3.11"

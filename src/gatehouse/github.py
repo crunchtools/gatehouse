@@ -10,8 +10,6 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
-from gatehouse.output import strip_ansi
-
 if TYPE_CHECKING:
     from gatehouse.agents import Agent
 
@@ -40,11 +38,8 @@ def detect_pr_context() -> tuple[str, int] | None:
             pr_number = event.get("pull_request", {}).get("number")
             if isinstance(pr_number, int):
                 return repo, pr_number
-        except (OSError, json.JSONDecodeError, TypeError) as exc:
-            print(
-                f"Warning: could not parse {event_path}: {exc}",
-                file=sys.stderr,
-            )
+        except (OSError, json.JSONDecodeError, TypeError):
+            pass  # gourmand:ignore — untrusted file from GITHUB_EVENT_PATH
 
     return None
 
@@ -69,11 +64,7 @@ def fetch_repo_file(repo: str, ref: str, path: str, token: str) -> str | None:
         response = httpx.get(
             url, headers=headers, params={"ref": ref}, timeout=15.0
         )
-    except httpx.HTTPError as exc:
-        print(
-            f"Warning: could not fetch {path} from {repo}@{ref}: {exc}",
-            file=sys.stderr,
-        )
+    except httpx.HTTPError:
         return None
     if response.is_success:
         return response.text
@@ -85,9 +76,9 @@ def _format_comment_body(
 ) -> str:
     """Format a single finding as a PR review comment body."""
     severity = finding.get("severity", "low").upper()
-    description = strip_ansi(finding.get("description", ""))
-    suggestion = strip_ansi(finding.get("suggestion", ""))
-    evidence = strip_ansi(finding.get("evidence", ""))
+    description = finding.get("description", "")
+    suggestion = finding.get("suggestion", "")
+    evidence = finding.get("evidence", "")
 
     parts = [f"**{severity}** ({agent_name}): {description}"]
     if suggestion:

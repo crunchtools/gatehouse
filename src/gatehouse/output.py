@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import re
 import sys
 from typing import TYPE_CHECKING, Any
 
@@ -35,14 +34,6 @@ def color(name: str) -> str:
     return ""
 
 
-_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]|\x1b\].*?\x07|\x1b\[.*?\x1b\\")
-
-
-def strip_ansi(text: str) -> str:
-    """Remove ANSI escape sequences from untrusted text."""
-    return _ANSI_RE.sub("", text)
-
-
 def severity_rank(finding: dict[str, Any]) -> int:
     """Return sort rank for severity (lower is more severe)."""
     ranks = {"critical": 0, "high": 1, "medium": 2, "low": 3}
@@ -55,9 +46,9 @@ def format_finding(finding: dict[str, Any]) -> str:
     file_path = finding.get("file", "unknown")
     line_start = finding.get("lineStart", 0)
     line_end = finding.get("lineEnd", 0)
-    description = strip_ansi(finding.get("description", ""))
-    suggestion = strip_ansi(finding.get("suggestion", ""))
-    evidence = strip_ansi(finding.get("evidence", ""))
+    description = finding.get("description", "")
+    suggestion = finding.get("suggestion", "")
+    evidence = finding.get("evidence", "")
     confidence = finding.get("confidence", 0)
 
     sev_color = color(severity)

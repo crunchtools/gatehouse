@@ -123,11 +123,6 @@ def test_agent_prompts_contain_anti_noise() -> None:
         assert "Do NOT flag" in agent.system_prompt
 
 
-def test_anti_noise_includes_diff_direction_awareness() -> None:
-    for agent in ALL_AGENTS:
-        assert "Fixes being applied" in agent.system_prompt
-
-
 def test_agent_prompts_contain_output_schema() -> None:
     for agent in ALL_AGENTS:
         assert "JSON array" in agent.system_prompt
