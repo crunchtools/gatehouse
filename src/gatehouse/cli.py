@@ -19,6 +19,8 @@ def load_env_file(path: Path) -> None:
     """Load KEY=VALUE pairs from an env file into os.environ.
 
     Existing environment variables take precedence (are not overwritten).
+    Keys must match the POSIX portable character set ([A-Za-z_][A-Za-z0-9_]*);
+    invalid keys are silently skipped.
     """
     if not path.is_file():
         return
