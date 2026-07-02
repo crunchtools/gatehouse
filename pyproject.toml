@@ -1,6 +1,6 @@
 [project]
 name = "gatehouse"
-version = "0.2.0"
+version = "0.2.1"
 description = "Local AI code review CLI using Gemini agents"
 requires-python = ">=3.11"
 license = "AGPL-3.0-or-later"
