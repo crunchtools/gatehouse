@@ -39,7 +39,7 @@ jobs:
   # Gatehouse code review runs in its own workflow (gatehouse.yml) on
   # pull_request_target, so it covers fork PRs too. See that file.
 
-  gourmand:
+  gourmand-review:
     name: Code Quality (Gourmand)
     runs-on: ubuntu-latest
     container:
