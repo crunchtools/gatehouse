@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -28,6 +29,8 @@ def load_env_file(path: Path) -> None:
         if "=" not in stripped:
             continue
         key, _, value = stripped.partition("=")
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+            continue
         if key not in os.environ:
             os.environ[key] = value
 

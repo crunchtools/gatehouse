@@ -12,6 +12,7 @@ from gatehouse.output import (
     format_results,
     print_summary,
     severity_rank,
+    strip_ansi,
     use_color,
 )
 
@@ -156,3 +157,26 @@ def test_print_summary_exit_zero(capsys: Any) -> None:
     print_summary(results, exit_code=0)
     captured = capsys.readouterr()
     assert "Exit: 0" in captured.out
+
+
+def test_strip_ansi_removes_color_codes() -> None:
+    assert strip_ansi("\x1b[31mred text\x1b[0m") == "red text"
+
+
+def test_strip_ansi_removes_cursor_movement() -> None:
+    assert strip_ansi("\x1b[2Amove up") == "move up"
+
+
+def test_strip_ansi_removes_title_sequence() -> None:
+    assert strip_ansi("\x1b]0;evil title\x07") == ""
+
+
+def test_strip_ansi_preserves_clean_text() -> None:
+    assert strip_ansi("normal description") == "normal description"
+
+
+def test_format_finding_strips_ansi_from_description() -> None:
+    finding = _make_finding(description="\x1b[31minjected\x1b[0m")
+    output = format_finding(finding)
+    assert "\x1b" not in output
+    assert "injected" in output
