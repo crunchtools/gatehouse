@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import http
+import random
 from typing import Any
 
 import httpx
@@ -73,7 +74,9 @@ async def call_gemini(
 ) -> str:
     """Call Gemini generateContent API and return the text response.
 
-    Retries on 429 (rate limit) and 503 (overloaded) with exponential backoff.
+    Retries on 429 (rate limit) and 503 (overloaded) with exponential
+    backoff, applying random jitter to each delay so concurrent agents
+    do not retry in lockstep (thundering herd).
     """
     url = f"{GEMINI_API_URL}/{model}:generateContent"
     payload: dict[str, Any] = {
@@ -101,7 +104,7 @@ async def call_gemini(
             if backoff is None:
                 backoff = _parse_retry_after(response.headers.get("Retry-After"))
             if backoff is None:
-                backoff = INITIAL_BACKOFF * (2 ** attempt)
+                backoff = INITIAL_BACKOFF * (2 ** attempt) * (0.5 + random.random())
             await asyncio.sleep(backoff)
             last_error = httpx.HTTPStatusError(
                 f"{response.status_code}",
