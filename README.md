@@ -45,6 +45,16 @@ gatehouse --advisory
 
 All 8 agents run concurrently. Findings below 80% confidence are filtered out.
 
+## How Agents See Changes
+
+Since v0.3.0, agents do not receive raw unified diffs. Each hunk is rendered
+as a structured view: a BEFORE block (the old code, removed lines marked
+`[-]`) and an AFTER block (the new code with real file line numbers, added
+lines marked `[+]`), plus instructions to judge the direction of a change.
+Protections *added* by a change are treated as fixes, not findings;
+protections *removed* by a change are flagged. Diffs that cannot be parsed
+fall back to the raw unified format.
+
 ## Exit Codes
 
 | Code | Meaning |

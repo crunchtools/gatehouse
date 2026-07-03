@@ -62,7 +62,7 @@ on:
         description: "Gatehouse release image tag. Bump per release."
         type: string
         required: false
-        default: "quay.io/crunchtools/gatehouse:0.2.0"
+        default: "quay.io/crunchtools/gatehouse:0.3.0"
     secrets:
       GEMINI_API_KEY:
         required: true
