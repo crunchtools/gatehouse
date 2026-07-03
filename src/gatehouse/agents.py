@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from gatehouse.diffview import render_diff_view
+
 FINDING_SCHEMA = """\
 Output a JSON array. Each element MUST have exactly these fields:
 - "file": string, relative file path
@@ -22,9 +24,11 @@ If there are no findings, return an empty array: []"""
 ANTI_NOISE = """\
 Do NOT flag:
 - Code that is already correct and working
-- Fixes being applied: if the diff ADDS validation, sanitization, error \
+- Fixes being applied: if the change ADDS validation, sanitization, error \
 handling, or defensive checks that the old code lacked, that is a fix — \
-not a finding. Only flag issues INTRODUCED or REMAINING in the new (+) lines
+not a finding. Only flag issues INTRODUCED or REMAINING in the new code. \
+Conversely, protections present in the old code but REMOVED by the change \
+ARE findings
 - Positive observations ("this looks good")
 - Style preferences or subjective opinions
 - Theoretical issues that require unlikely conditions
@@ -260,6 +264,14 @@ def get_agents(slugs: list[str] | None = None) -> list[Agent]:
     return agents
 
 
+def _diff_section(diff: str) -> str:
+    """Render the diff as a structured BEFORE/AFTER view, or raw as fallback."""
+    view = render_diff_view(diff)
+    if view is not None:
+        return f"## Code Changes to Review\n\n{view}"
+    return f"## Git Diff to Review\n\n```diff\n{diff}\n```"
+
+
 def build_user_prompt(
     diff: str, styleguide: str | None, file_listing: str | None
 ) -> str:
@@ -269,7 +281,7 @@ def build_user_prompt(
         parts.append(f"## Project Styleguide\n\n{styleguide}")
     if file_listing:
         parts.append(f"## File Listing (for orientation)\n\n{file_listing}")
-    parts.append(f"## Git Diff to Review\n\n```diff\n{diff}\n```")
+    parts.append(_diff_section(diff))
     return "\n\n".join(parts)
 
 
@@ -285,5 +297,5 @@ def build_constitution_prompt(
         parts.append(f"## Project Styleguide\n\n{styleguide}")
     if file_listing:
         parts.append(f"## File Listing (for orientation)\n\n{file_listing}")
-    parts.append(f"## Git Diff to Review\n\n```diff\n{diff}\n```")
+    parts.append(_diff_section(diff))
     return "\n\n".join(parts)
