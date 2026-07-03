@@ -101,9 +101,9 @@ def test_removed_lines_preserved_and_marked() -> None:
 
 
 def test_after_block_uses_new_file_line_numbers() -> None:
+    """The hunk starts at new line 10, so the first added line is 11."""
     view = render_diff_view(MODIFIED_DIFF)
     assert view is not None
-    # Hunk starts at new line 10; the first added line is new line 11.
     assert "   11 [+]|     if not user.is_authenticated:" in view
 
 
@@ -163,6 +163,33 @@ def test_preamble_explains_direction() -> None:
 def test_unparseable_input_returns_none() -> None:
     assert render_diff_view("this is not a diff") is None
     assert render_diff_view("") is None
+
+
+def test_plain_unified_diff_without_git_header() -> None:
+    diff = (
+        "--- a/plain.py\n"
+        "+++ b/plain.py\n"
+        "@@ -1 +1 @@\n"
+        "-old\n"
+        "+new\n"
+    )
+    view = render_diff_view(diff)
+    assert view is not None
+    assert "### plain.py (modified)" in view
+    assert "old" in view
+    assert "new" in view
+
+
+def test_malformed_hunk_header_returns_none() -> None:
+    diff = MODIFIED_DIFF.replace(
+        "@@ -10,3 +10,5 @@ def handler(request):", "@@ garbage @@"
+    )
+    assert render_diff_view(diff) is None
+
+
+def test_unexpected_line_inside_hunk_returns_none() -> None:
+    diff = MODIFIED_DIFF.replace("     user = request.user", "!bad hunk line")
+    assert render_diff_view(diff) is None
 
 
 def test_multiple_files() -> None:

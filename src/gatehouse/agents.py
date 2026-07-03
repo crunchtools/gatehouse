@@ -275,7 +275,11 @@ def _diff_section(diff: str) -> str:
 def build_user_prompt(
     diff: str, styleguide: str | None, file_listing: str | None
 ) -> str:
-    """Build the user prompt with diff content and optional context."""
+    """Build the user prompt with diff content and optional context.
+
+    The raw unified diff is converted to a structured BEFORE/AFTER view
+    (see diffview) before being embedded; unparseable diffs are embedded raw.
+    """
     parts: list[str] = []
     if styleguide:
         parts.append(f"## Project Styleguide\n\n{styleguide}")
@@ -291,7 +295,11 @@ def build_constitution_prompt(
     styleguide: str | None,
     file_listing: str | None,
 ) -> str:
-    """Build the user prompt for the Constitution agent."""
+    """Build the user prompt for the Constitution agent.
+
+    The raw unified diff is converted to a structured BEFORE/AFTER view
+    (see diffview) before being embedded; unparseable diffs are embedded raw.
+    """
     parts: list[str] = [f"## Project Constitution\n\n{constitution}"]
     if styleguide:
         parts.append(f"## Project Styleguide\n\n{styleguide}")

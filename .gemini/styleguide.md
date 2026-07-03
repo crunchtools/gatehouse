@@ -7,6 +7,7 @@ Gatehouse is a Python CLI tool with 5 concurrent Gemini agents for code review.
 ### Module Structure
 - `cli.py` -- argparse entry point
 - `agents.py` -- agent prompt definitions (frozen dataclasses)
+- `diffview.py` -- unified diff to structured BEFORE/AFTER view for agents
 - `gemini.py` -- httpx async client for Gemini REST API
 - `review.py` -- orchestration (git diff, concurrent agents, exit codes)
 - `output.py` -- formatted terminal output with ANSI colors

@@ -140,8 +140,7 @@ def _parse_diff(diff: str) -> list[FileDiff]:
             files.append(current)
             continue
         if current is None:
-            if line.startswith("--- "):
-                # Plain (non-git) unified diff: file starts at ---/+++
+            if line.startswith("--- "):  # plain non-git diff: starts at ---
                 current = FileDiff(path="")
                 files.append(current)
             else:

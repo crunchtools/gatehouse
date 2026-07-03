@@ -157,3 +157,27 @@ def test_agent_by_slug_lookup() -> None:
     assert AGENT_BY_SLUG["docs"].name == "Documentation"
     assert AGENT_BY_SLUG["constitution"].name == "Constitution"
     assert AGENT_BY_SLUG["general"].name == "General Review"
+
+
+def test_diff_section_structured_when_parseable() -> None:
+    diff = (
+        "diff --git a/f.py b/f.py\n"
+        "index 1111111..2222222 100644\n"
+        "--- a/f.py\n"
+        "+++ b/f.py\n"
+        "@@ -1 +1 @@\n"
+        "-old_line\n"
+        "+new_line\n"
+    )
+    prompt = build_user_prompt(diff, None, None)
+    assert "Code Changes to Review" in prompt
+    assert "BEFORE" in prompt
+    assert "AFTER" in prompt
+    assert "```diff" not in prompt
+
+
+def test_diff_section_falls_back_to_raw_diff() -> None:
+    prompt = build_user_prompt("not a parseable diff", None, None)
+    assert "Git Diff to Review" in prompt
+    assert "```diff" in prompt
+    assert "not a parseable diff" in prompt
