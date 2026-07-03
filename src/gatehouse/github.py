@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
+from gatehouse.output import strip_ansi
+
 if TYPE_CHECKING:
     from gatehouse.agents import Agent
 
@@ -19,7 +21,9 @@ GITHUB_API_URL = "https://api.github.com"
 def detect_pr_context() -> tuple[str, int] | None:
     """Detect GitHub PR context from GHA environment variables.
 
-    Returns (repo, pr_number) or None if not in a PR context.
+    Returns (repo, pr_number) or None if not in a PR context. An unreadable
+    or malformed event file prints a warning to stderr and is treated as
+    no PR context.
     """
     repo = os.environ.get("GITHUB_REPOSITORY")
     if not repo:
@@ -38,8 +42,11 @@ def detect_pr_context() -> tuple[str, int] | None:
             pr_number = event.get("pull_request", {}).get("number")
             if isinstance(pr_number, int):
                 return repo, pr_number
-        except (OSError, json.JSONDecodeError, TypeError):
-            pass  # gourmand:ignore — untrusted file from GITHUB_EVENT_PATH
+        except (OSError, json.JSONDecodeError, TypeError) as exc:
+            print(
+                f"Warning: could not parse {event_path}: {exc}",
+                file=sys.stderr,
+            )
 
     return None
 
@@ -50,7 +57,8 @@ def fetch_repo_file(repo: str, ref: str, path: str, token: str) -> str | None:
     Used to load trusted context (styleguide, constitution) from the BASE repo
     of a pull request without checking anything out. The ref MUST be the trusted
     base (e.g. base-branch SHA), never the PR head — otherwise a fork could plant
-    a prompt-injecting styleguide. Returns the file text, or None if absent/error.
+    a prompt-injecting styleguide. Returns the file text, or None if absent
+    or on error; network/HTTP errors also print a warning to stderr.
     """
     url = f"{GITHUB_API_URL}/repos/{repo}/contents/{path}"
     headers = {
@@ -64,7 +72,11 @@ def fetch_repo_file(repo: str, ref: str, path: str, token: str) -> str | None:
         response = httpx.get(
             url, headers=headers, params={"ref": ref}, timeout=15.0
         )
-    except httpx.HTTPError:
+    except httpx.HTTPError as exc:
+        print(
+            f"Warning: could not fetch {path} from {repo}@{ref}: {exc}",
+            file=sys.stderr,
+        )
         return None
     if response.is_success:
         return response.text
@@ -74,11 +86,15 @@ def fetch_repo_file(repo: str, ref: str, path: str, token: str) -> str | None:
 def _format_comment_body(
     agent_name: str, finding: dict[str, Any]
 ) -> str:
-    """Format a single finding as a PR review comment body."""
+    """Format a single finding as a PR review comment body.
+
+    ANSI escape sequences are stripped from the finding's description,
+    suggestion, and evidence before they are embedded in the comment.
+    """
     severity = finding.get("severity", "low").upper()
-    description = finding.get("description", "")
-    suggestion = finding.get("suggestion", "")
-    evidence = finding.get("evidence", "")
+    description = strip_ansi(finding.get("description", ""))
+    suggestion = strip_ansi(finding.get("suggestion", ""))
+    evidence = strip_ansi(finding.get("evidence", ""))
 
     parts = [f"**{severity}** ({agent_name}): {description}"]
     if suggestion:
