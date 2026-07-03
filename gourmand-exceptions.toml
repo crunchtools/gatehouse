@@ -7,3 +7,13 @@ justification = "Claude Code project instructions for AI assistant orientation"
 check = "redundant_error_handling"
 path = "src/gatehouse/github.py"
 justification = "Parsing untrusted JSON from GITHUB_EVENT_PATH — must catch OSError/JSONDecodeError and fall through to return None"
+
+[[exceptions]]
+check = "single_use_helpers"
+path = "src/gatehouse/diffview.py"
+justification = "Helpers extracted from _parse_diff/render_diff_view to satisfy ruff C901/PLR0912/PLR0915 complexity limits — inlining them re-violates ruff"
+
+[[exceptions]]
+check = "prefer_match"
+path = "src/gatehouse/diffview.py"
+justification = "Chains dispatch on str.startswith prefixes; Python match has no prefix patterns, so every case would need a guard clause — less readable than elif"

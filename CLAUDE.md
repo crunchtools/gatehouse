@@ -20,6 +20,7 @@ gatehouse --advisory
 
 - `src/gatehouse/cli.py` -- argparse entry point
 - `src/gatehouse/agents.py` -- 8 agent prompt definitions
+- `src/gatehouse/diffview.py` -- unified diff to BEFORE/AFTER view for agents
 - `src/gatehouse/gemini.py` -- httpx async Gemini REST client
 - `src/gatehouse/review.py` -- orchestration and exit code logic
 - `src/gatehouse/output.py` -- terminal output with ANSI colors

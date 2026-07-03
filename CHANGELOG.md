@@ -3,6 +3,24 @@
 All notable changes to this project are documented here, following
 [Keep a Changelog](https://keepachangelog.com/) and Semantic Versioning.
 
+## [0.3.0] - 2026-07-02
+
+### Added
+- **Structured BEFORE/AFTER diff view** (`src/gatehouse/diffview.py`): agents
+  no longer receive raw unified diffs. Each hunk is rendered as an explicit
+  BEFORE block (old code, removed lines marked `[-]`) and AFTER block (new
+  code with real file line numbers, added lines marked `[+]`), plus a preamble
+  teaching agents to judge change direction. Fixes #19: hardening added by a
+  PR was flagged as a finding, while a diff removing a security control could
+  pass unnoticed. Removed lines stay visible so deleted protections are
+  flagged. Falls back to the raw diff if parsing fails (e.g. exotic `--stdin`
+  input).
+
+### Changed
+- `ANTI_NOISE` directive now states both directions explicitly: protections
+  added by a change are fixes (not findings); protections removed by a change
+  ARE findings.
+
 ## [0.2.0] - 2026-06-30
 
 ### Added
