@@ -21,7 +21,9 @@ GITHUB_API_URL = "https://api.github.com"
 def detect_pr_context() -> tuple[str, int] | None:
     """Detect GitHub PR context from GHA environment variables.
 
-    Returns (repo, pr_number) or None if not in a PR context.
+    Returns (repo, pr_number) or None if not in a PR context. An unreadable
+    or malformed event file prints a warning to stderr and is treated as
+    no PR context.
     """
     repo = os.environ.get("GITHUB_REPOSITORY")
     if not repo:
@@ -55,7 +57,8 @@ def fetch_repo_file(repo: str, ref: str, path: str, token: str) -> str | None:
     Used to load trusted context (styleguide, constitution) from the BASE repo
     of a pull request without checking anything out. The ref MUST be the trusted
     base (e.g. base-branch SHA), never the PR head — otherwise a fork could plant
-    a prompt-injecting styleguide. Returns the file text, or None if absent/error.
+    a prompt-injecting styleguide. Returns the file text, or None if absent
+    or on error; network/HTTP errors also print a warning to stderr.
     """
     url = f"{GITHUB_API_URL}/repos/{repo}/contents/{path}"
     headers = {
@@ -83,7 +86,11 @@ def fetch_repo_file(repo: str, ref: str, path: str, token: str) -> str | None:
 def _format_comment_body(
     agent_name: str, finding: dict[str, Any]
 ) -> str:
-    """Format a single finding as a PR review comment body."""
+    """Format a single finding as a PR review comment body.
+
+    ANSI escape sequences are stripped from the finding's description,
+    suggestion, and evidence before they are embedded in the comment.
+    """
     severity = finding.get("severity", "low").upper()
     description = strip_ansi(finding.get("description", ""))
     suggestion = strip_ansi(finding.get("suggestion", ""))

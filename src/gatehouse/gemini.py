@@ -74,7 +74,9 @@ async def call_gemini(
 ) -> str:
     """Call Gemini generateContent API and return the text response.
 
-    Retries on 429 (rate limit) and 503 (overloaded) with exponential backoff.
+    Retries on 429 (rate limit) and 503 (overloaded) with exponential
+    backoff, applying random jitter to each delay so concurrent agents
+    do not retry in lockstep (thundering herd).
     """
     url = f"{GEMINI_API_URL}/{model}:generateContent"
     payload: dict[str, Any] = {

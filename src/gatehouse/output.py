@@ -50,7 +50,12 @@ def severity_rank(finding: dict[str, Any]) -> int:
 
 
 def format_finding(finding: dict[str, Any]) -> str:
-    """Format a single finding for terminal display."""
+    """Format a single finding for terminal display.
+
+    ANSI escape sequences are stripped from the finding's description,
+    suggestion, and evidence so model output cannot inject terminal
+    control sequences.
+    """
     severity = finding.get("severity", "low")
     file_path = finding.get("file", "unknown")
     line_start = finding.get("lineStart", 0)

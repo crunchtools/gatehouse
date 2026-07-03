@@ -83,6 +83,20 @@ def test_format_comment_body() -> None:
     assert "user.name.lower()" in body
 
 
+def test_format_comment_body_strips_ansi() -> None:
+    finding = {
+        **SAMPLE_FINDING,
+        "description": "\x1b[31mNull reference\x1b[0m",
+        "suggestion": "\x1b[1mAdd null check\x1b[0m",
+        "evidence": "\x1b[32muser.name.lower()\x1b[0m",
+    }
+    body = _format_comment_body("Bug Hunter", finding)
+    assert "\x1b[" not in body
+    assert "Null reference" in body
+    assert "Add null check" in body
+    assert "user.name.lower()" in body
+
+
 def test_format_comment_body_no_suggestion() -> None:
     finding = {**SAMPLE_FINDING, "suggestion": "", "evidence": ""}
     body = _format_comment_body("Bug Hunter", finding)
