@@ -3,7 +3,7 @@
 All notable changes to this project are documented here, following
 [Keep a Changelog](https://keepachangelog.com/) and Semantic Versioning.
 
-## [Unreleased]
+## [0.4.0] - 2026-07-06
 
 ### Added
 - **`blocking` input on the reusable review workflow** (`.github/workflows/review.yml`):
