@@ -637,7 +637,6 @@ async def test_run_review_comment_flag_calls_post() -> None:
             comment=True,
         )
     mock_post.assert_awaited_once()
-    # Blocking findings with advisory=False → request a change review.
     assert mock_post.call_args.args[1] is True
 
 
@@ -671,7 +670,6 @@ async def test_run_review_advisory_posts_comment_not_request_changes() -> None:
         )
     assert exit_code == 0
     mock_post.assert_awaited_once()
-    # Advisory suppresses REQUEST_CHANGES → request_changes must be False.
     assert mock_post.call_args.args[1] is False
 
 

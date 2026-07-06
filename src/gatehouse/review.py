@@ -269,8 +269,6 @@ async def run_review(
     print_summary(all_results, exit_code)
 
     if comment:
-        # In advisory mode, post a plain COMMENT review — never REQUEST_CHANGES,
-        # which would still register as an unresolved review on the PR.
         await post_pr_review(all_results, request_changes)
 
     return exit_code
