@@ -637,6 +637,40 @@ async def test_run_review_comment_flag_calls_post() -> None:
             comment=True,
         )
     mock_post.assert_awaited_once()
+    assert mock_post.call_args.args[1] is True
+
+
+@pytest.mark.asyncio
+async def test_run_review_advisory_posts_comment_not_request_changes() -> None:
+    """Advisory mode posts a COMMENT review even when findings are blocking."""
+    with (
+        patch("gatehouse.review.get_git_diff", return_value="some diff"),
+        patch("gatehouse.review.get_file_listing", return_value=None),
+        patch("gatehouse.review.load_styleguide", return_value=None),
+        patch(
+            "gatehouse.review.call_gemini",
+            new_callable=AsyncMock,
+            return_value=MOCK_BLOCKING_FINDINGS,
+        ),
+        patch(
+            "gatehouse.review.post_pr_review",
+            new_callable=AsyncMock,
+            return_value=True,
+        ) as mock_post,
+    ):
+        exit_code = await run_review(
+            base="main",
+            staged=False,
+            agent_slugs=["bugs"],
+            model="gemini-2.5-flash",
+            advisory=True,
+            verbose=False,
+            api_key="test-key",
+            comment=True,
+        )
+    assert exit_code == 0
+    mock_post.assert_awaited_once()
+    assert mock_post.call_args.args[1] is False
 
 
 @pytest.mark.asyncio

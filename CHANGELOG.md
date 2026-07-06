@@ -3,6 +3,20 @@
 All notable changes to this project are documented here, following
 [Keep a Changelog](https://keepachangelog.com/) and Semantic Versioning.
 
+## [0.4.0] - 2026-07-06
+
+### Added
+- **`blocking` input on the reusable review workflow** (`.github/workflows/review.yml`):
+  opt in to failing the check on critical/high findings. Defaults to `false`.
+
+### Changed
+- **Advisory by default in CI** (#23): the reusable review workflow now passes
+  `--advisory` unless `blocking: true`, so the check always exits `0` and the
+  review is posted as a plain `COMMENT` instead of `REQUEST_CHANGES`. A
+  non-deterministic LLM finding can no longer block a merge. Local CLI behavior
+  is unchanged (still exits `1` on blocking findings). The `examples/gatehouse.yml`
+  guidance no longer tells adopters to mark the review job a required check.
+
 ## [0.3.0] - 2026-07-02
 
 ### Added

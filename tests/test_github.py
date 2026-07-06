@@ -138,7 +138,7 @@ async def test_post_pr_review_constructs_payload(
     mock_client.__aexit__ = AsyncMock(return_value=None)
 
     with patch("gatehouse.github.httpx.AsyncClient", return_value=mock_client):
-        success = await post_pr_review(results, has_blocking=True)
+        success = await post_pr_review(results, request_changes=True)
 
     assert success is True
     call_kwargs = mock_client.post.call_args
@@ -166,7 +166,7 @@ async def test_post_pr_review_comment_event(
     mock_client.__aexit__ = AsyncMock(return_value=None)
 
     with patch("gatehouse.github.httpx.AsyncClient", return_value=mock_client):
-        success = await post_pr_review(results, has_blocking=False)
+        success = await post_pr_review(results, request_changes=False)
 
     assert success is True
     payload = mock_client.post.call_args.kwargs.get(
@@ -184,7 +184,7 @@ async def test_post_pr_review_no_pr_context(
     monkeypatch.delenv("GITHUB_EVENT_PATH", raising=False)
 
     results = [(BUG_HUNTER, [SAMPLE_FINDING])]
-    assert await post_pr_review(results, has_blocking=True) is False
+    assert await post_pr_review(results, request_changes=True) is False
 
 
 @pytest.mark.asyncio
@@ -196,7 +196,7 @@ async def test_post_pr_review_no_token(
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
 
     results = [(BUG_HUNTER, [SAMPLE_FINDING])]
-    assert await post_pr_review(results, has_blocking=True) is False
+    assert await post_pr_review(results, request_changes=True) is False
 
 
 @pytest.mark.asyncio
@@ -219,7 +219,7 @@ async def test_post_pr_review_api_error(
     mock_client.__aexit__ = AsyncMock(return_value=None)
 
     with patch("gatehouse.github.httpx.AsyncClient", return_value=mock_client):
-        assert await post_pr_review(results, has_blocking=True) is False
+        assert await post_pr_review(results, request_changes=True) is False
 
 
 @pytest.mark.asyncio
@@ -238,7 +238,7 @@ async def test_post_pr_review_network_error(
     mock_client.__aexit__ = AsyncMock(return_value=None)
 
     with patch("gatehouse.github.httpx.AsyncClient", return_value=mock_client):
-        assert await post_pr_review(results, has_blocking=True) is False
+        assert await post_pr_review(results, request_changes=True) is False
 
 
 @pytest.mark.asyncio
@@ -259,7 +259,7 @@ async def test_post_pr_review_skips_findings_without_file(
     mock_client.__aexit__ = AsyncMock(return_value=None)
 
     with patch("gatehouse.github.httpx.AsyncClient", return_value=mock_client):
-        await post_pr_review(results, has_blocking=True)
+        await post_pr_review(results, request_changes=True)
 
     payload = mock_client.post.call_args.kwargs.get(
         "json", mock_client.post.call_args[1].get("json", {})
@@ -284,7 +284,7 @@ async def test_post_pr_review_sends_auth_header(
     mock_client.__aexit__ = AsyncMock(return_value=None)
 
     with patch("gatehouse.github.httpx.AsyncClient", return_value=mock_client):
-        await post_pr_review(results, has_blocking=True)
+        await post_pr_review(results, request_changes=True)
 
     headers = mock_client.post.call_args.kwargs.get(
         "headers", mock_client.post.call_args[1].get("headers", {})

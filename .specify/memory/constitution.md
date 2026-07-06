@@ -24,6 +24,8 @@ Built with argparse. Flags: `--staged`, `--base`, `--agents`, `--model`, `--advi
 
 Exit code `0` on success or advisory-only findings. Exit code `1` on blocking findings (critical/high severity from blocking agents). Exit code `2` on usage errors (missing API key, bad arguments).
 
+The blocking exit code applies to **local** invocation. The reusable CI workflow (`.github/workflows/review.yml`) is **advisory by default**: it passes `--advisory` so the check always exits `0` and posts findings as a plain `COMMENT` review, never gating a merge. Callers opt into blocking with the `blocking: true` input, and even then the check MUST NOT be marked a required status check.
+
 ## External APIs
 
 Calls Gemini REST API at `generativelanguage.googleapis.com/v1beta/models/{model}:generateContent` via httpx async client. Credential: `GEMINI_API_KEY` environment variable. Default model: `gemini-2.5-flash`.
