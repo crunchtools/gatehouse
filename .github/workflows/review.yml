@@ -55,6 +55,16 @@ on:
         type: string
         required: false
         default: ""
+      blocking:
+        # Advisory by default: the review posts findings as PR comments but the
+        # check ALWAYS passes (exit 0), so a non-deterministic LLM finding can
+        # never block a merge. Opt in with `blocking: true` only if you want
+        # critical/high findings from blocking agents to fail the check. Even
+        # then, do NOT mark this a *required* status check — see examples/.
+        description: "Fail the check on blocking findings (default: advisory)."
+        type: boolean
+        required: false
+        default: false
       image:
         # Pinned to the immutable release TAG, not a digest: our registry prunes
         # untagged manifests on rebuild, so a digest pin dies the next time the
@@ -86,6 +96,7 @@ jobs:
           IMAGE: ${{ inputs.image }}
           MODEL: ${{ inputs.model }}
           AGENTS: ${{ inputs.agents }}
+          BLOCKING: ${{ inputs.blocking }}
         run: |
           set -euo pipefail
 
@@ -98,7 +109,11 @@ jobs:
           fi
 
           # Optional passthrough flags (only added when provided).
+          # Advisory by default: unless the caller sets `blocking: true`, add
+          # --advisory so gatehouse exits 0 regardless of findings. The review
+          # is still posted; it just never fails the check.
           args=( --stdin --comment )
+          [ "$BLOCKING" = "true" ] || args+=( --advisory )
           [ -n "$MODEL" ]  && args+=( --model "$MODEL" )
           [ -n "$AGENTS" ] && args+=( --agents "$AGENTS" )
 

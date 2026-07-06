@@ -264,10 +264,13 @@ async def run_review(
     format_results(all_results)
 
     has_blocking = _has_blocking_findings(all_results)
-    exit_code = 1 if has_blocking and not advisory else 0
+    request_changes = has_blocking and not advisory
+    exit_code = 1 if request_changes else 0
     print_summary(all_results, exit_code)
 
     if comment:
-        await post_pr_review(all_results, has_blocking)
+        # In advisory mode, post a plain COMMENT review — never REQUEST_CHANGES,
+        # which would still register as an unresolved review on the PR.
+        await post_pr_review(all_results, request_changes)
 
     return exit_code

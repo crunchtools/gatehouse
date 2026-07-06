@@ -63,6 +63,18 @@ fall back to the raw unified format.
 | 1 | Blocking findings detected (critical/high) |
 | 2 | Usage error (missing API key, bad arguments) |
 
+## GitHub Actions
+
+Drop in [`examples/gatehouse.yml`](examples/gatehouse.yml) to review every PR (forks included) via the reusable `review.yml` workflow — the diff is piped as data, never checked out or executed.
+
+The review is **advisory by default**: findings post as PR comments and the check always passes, so a non-deterministic LLM finding can never block a merge. Do not mark it a required status check. To let critical/high findings fail the check (still not recommended as a required gate), opt in:
+
+```yaml
+uses: crunchtools/gatehouse/.github/workflows/review.yml@v0.2.0
+with:
+  blocking: true
+```
+
 ## Configuration
 
 Set `GEMINI_API_KEY` environment variable. If `.gemini/styleguide.md` exists in the reviewed project, it is injected as context.

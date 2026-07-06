@@ -129,11 +129,13 @@ def format_review_body(
 
 async def post_pr_review(
     results: list[tuple[Agent, list[dict[str, Any]]]],
-    has_blocking: bool,
+    request_changes: bool,
 ) -> bool:
     """Post findings as a GitHub PR review via the GitHub REST API.
 
-    Returns True on success, False on failure.
+    When request_changes is True the review is submitted as REQUEST_CHANGES;
+    otherwise (including advisory mode) it is a plain COMMENT that never gates
+    the merge. Returns True on success, False on failure.
     """
     context = detect_pr_context()
     if context is None:
@@ -167,7 +169,7 @@ async def post_pr_review(
             })
 
     body = format_review_body(results)
-    event = "REQUEST_CHANGES" if has_blocking else "COMMENT"
+    event = "REQUEST_CHANGES" if request_changes else "COMMENT"
 
     payload: dict[str, Any] = {
         "event": event,
