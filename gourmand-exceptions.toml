@@ -17,3 +17,13 @@ justification = "Helpers extracted from _parse_diff/render_diff_view to satisfy 
 check = "prefer_match"
 path = "src/gatehouse/diffview.py"
 justification = "Chains dispatch on str.startswith prefixes; Python match has no prefix patterns, so every case would need a guard clause — less readable than elif"
+
+[[exceptions]]
+check = "over_abstraction"
+path = "src/gatehouse/output.py"
+justification = "strip_ansi wraps a single _ANSI_RE.sub() call. The name is the documentation — it marks the call sites where untrusted text is being sanitised, which a bare regex substitution would not."
+
+[[exceptions]]
+check = "copy_paste_detection"
+path = "src/gatehouse/agents.py"
+justification = "build_user_prompt and build_constitution_prompt assemble different prompts from different inputs; they share only the three-line join-and-return shape, which is also what makes them look like diffview._render_hunk."
