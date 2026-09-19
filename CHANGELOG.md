@@ -3,6 +3,8 @@
 All notable changes to this project are documented here, following
 [Keep a Changelog](https://keepachangelog.com/) and Semantic Versioning.
 
+## [Unreleased]
+
 ## [0.5.0] - 2026-09-19
 
 ### Added
