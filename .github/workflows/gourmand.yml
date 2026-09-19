@@ -1,0 +1,46 @@
+# Gourmand — AI slop detection (reusable workflow)
+#
+# Runs the pinned Gourmand container against the caller repo. Centralizing
+# the job body here means a fix or image change reaches every adopter on
+# their next CI run instead of sitting frozen in a copy-pasted snapshot.
+#
+# Filed per RT #1468: a dead `cargo install --git codeberg.org/mattdm/gourmand`
+# gate kept regenerating fleet-wide because the old `examples/gourmand.yml`
+# was a copy-paste snippet, not a `workflow_call` reference — fixing it in one
+# repo never propagated to the repos that had already copied it. Do not go
+# back to a copy-paste example; that is the exact bug this workflow fixes.
+#
+# ── How adopters use it ──────────────────────────────────────────────────────
+# Add this job to your CI workflow:
+#
+#   jobs:
+#     gourmand:
+#       name: Code Quality (Gourmand)
+#       uses: crunchtools/gatehouse/.github/workflows/gourmand.yml@v0.5.0
+
+name: Gourmand (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      path:
+        description: "Path to scan (default: repo root)"
+        type: string
+        required: false
+        default: "."
+      image:
+        description: "Gourmand image ref. Override to pin a specific digest/tag."
+        type: string
+        required: false
+        default: "quay.io/crunchtools/gourmand:latest"
+
+jobs:
+  gourmand:
+    name: Code Quality (Gourmand)
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ inputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Gourmand
+        run: gourmand --full ${{ inputs.path }}

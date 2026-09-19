@@ -3,6 +3,22 @@
 All notable changes to this project are documented here, following
 [Keep a Changelog](https://keepachangelog.com/) and Semantic Versioning.
 
+## [0.5.0] - 2026-09-19
+
+### Added
+- **Reusable Gourmand workflow** (`.github/workflows/gourmand.yml`): the
+  Gourmand CI gate is now a proper `workflow_call` reusable workflow instead
+  of a copy-paste job body in `examples/gourmand.yml`. Fixes the "fix-once"
+  propagation gap identified in RT #1468 — a dead `cargo install` gate kept
+  regenerating fleet-wide because fixes to the old copy-paste example never
+  reached repos that had already pasted it. Adopters now reference
+  `crunchtools/gatehouse/.github/workflows/gourmand.yml@v0.5.0` instead of
+  inlining the job.
+
+### Changed
+- `examples/gourmand.yml` now shows the one-line `uses:` reference instead of
+  the full job body.
+
 ## [0.4.0] - 2026-07-06
 
 ### Added
