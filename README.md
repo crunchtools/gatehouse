@@ -5,7 +5,7 @@ Local AI code review using 8 concurrent Gemini agents. Inspired by [diffray](htt
 ## Install
 
 ```bash
-uv tool install gatehouse
+uv tool install gatehouse-crunchtools
 ```
 
 ## Usage

@@ -7,6 +7,19 @@ All notable changes to this project are documented here, following
 
 ## [0.5.0] - 2026-09-19
 
+### Changed
+- **The PyPI distribution is now `gatehouse-crunchtools`.** The bare name
+  `gatehouse` belongs to an unrelated project on PyPI, so `publish.yml` had
+  never once succeeded and could not — this repo has never been distributed.
+  The new name follows the same `-crunchtools` suffix every other Python
+  package in the fleet uses, and exists for exactly this reason. The installed
+  command is unchanged: still `gatehouse`. Install with
+  `uv tool install gatehouse-crunchtools`.
+- **Version bumped to 0.5.0 in `pyproject.toml` and `__init__.py`.** The v0.5.0
+  tag was created while both still read 0.4.0, so the tag pointed at code
+  calling itself a different version. The tag has been moved to the commit that
+  agrees with it.
+
 ### Added
 - **Reusable Gourmand workflow** (`.github/workflows/gourmand.yml`): the
   Gourmand CI gate is now a proper `workflow_call` reusable workflow instead
