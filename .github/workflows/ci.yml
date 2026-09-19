@@ -39,17 +39,11 @@ jobs:
   # Gatehouse code review runs in its own workflow (gatehouse.yml) on
   # pull_request_target, so it covers fork PRs too. See that file.
 
+  # Call our own reusable workflow rather than inlining the job. Gatehouse
+  # hosts gourmand.yml for the whole fleet; keeping a private copy here is the
+  # copy-paste drift RT #1468 was filed about.
   gourmand-review:
-    name: Code Quality (Gourmand)
-    runs-on: ubuntu-latest
-    container:
-      image: quay.io/crunchtools/gourmand:latest
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Run Gourmand
-        run: gourmand --full .
+    uses: ./.github/workflows/gourmand.yml
 
   build-container:
     runs-on: ubuntu-latest
