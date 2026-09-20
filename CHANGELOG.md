@@ -5,6 +5,43 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-19
+
+### Changed
+- **The Gourmand gate tracks `quay.io/crunchtools/gourmand:latest` again.**
+  0.6.0 pinned the image to `:1.0.0` as scaffolding for a staged fleet
+  rollout: old config and new binary are mutually incompatible, so pinning
+  kept unmigrated repos green while they were cut over one at a time. The
+  fleet is migrating all at once instead, which makes the pin pure overhead —
+  every adopter would carry a pin that has to be removed again afterwards.
+- **`.pre-commit-config.yaml` now runs `check --full`.** The hook was missed
+  when this repo migrated its own CI in 0.6.0. It kept invoking the old
+  `:latest` binary with pre-subcommand syntax against an already-migrated
+  config, which trips the v0.1.0 zero-threshold bug: every threshold silently
+  becomes 0. Locally that reported 139 bogus `implicit_state_machine`
+  violations while CI was green.
+
+### Fixed
+- **`pyproject.toml` and `__init__.py` now agree with the tag.** v0.6.0 was
+  tagged while both still read `0.5.0` — the same defect called out in the
+  0.5.0 entry below, reintroduced.
+
+## [0.6.0] - 2026-09-19
+
+### Changed
+- **Gourmand upgraded from upstream v0.1.0 to v0.16.5** (RT #1482). The gate
+  had been pinned to a four-month-old revision; upstream had moved ~4,000
+  commits and grown from 35 checks to 89.
+- **`gourmand --full` is now `gourmand check --full`.** 0.16.5 is
+  subcommand-based, so the bare form errors. This is why adopters must bump
+  their `uses:` ref rather than inherit the change silently.
+
+### Breaking
+- Adopters on `@v0.5.0` must migrate their `gourmand.toml` in the same commit
+  that bumps the ref: delete the `[thresholds]` block (0.16.5 restores correct
+  built-in defaults, so the fleet-wide workaround is obsolete and now a hard
+  error), and add a `classification` to every `[[exceptions]]` entry.
+
 ## [0.5.0] - 2026-09-19
 
 ### Changed
