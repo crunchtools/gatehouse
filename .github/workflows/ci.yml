@@ -44,19 +44,6 @@ jobs:
   # copy-paste drift RT #1468 was filed about.
   gourmand-review:
     uses: ./.github/workflows/gourmand.yml
-    with:
-      # Pin our own gate to the previous image while the fleet migrates.
-      #
-      # This file calls gourmand.yml by path, not by tag, so it always runs
-      # the workflow as it exists on this branch. v0.6.0 moves the default to
-      # gourmand:1.0.0, which hard-errors on this repo's own un-migrated
-      # config -- so publishing the new reusable workflow would break
-      # gatehouse's CI before gatehouse itself has migrated.
-      #
-      # Overriding `image` here decouples the two: gatehouse ships v0.6.0 for
-      # the fleet now, and migrates its own config in the normal Phase 3 sweep
-      # (RT #1482), at which point this override is deleted.
-      image: quay.io/crunchtools/gourmand:latest
 
   build-container:
     runs-on: ubuntu-latest

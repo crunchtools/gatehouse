@@ -54,6 +54,9 @@ ignore = [
     "PLR0913",  # many arguments ok for orchestration functions
 ]
 
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
 [tool.ruff.lint.pylint]
 max-branches = 10
 max-statements = 50

@@ -113,8 +113,8 @@ async def call_gemini(
             )
             continue
         response.raise_for_status()
-        data: dict[str, Any] = response.json()
-        candidates: list[Any] = data.get("candidates", [])
+        response_body: dict[str, Any] = response.json()
+        candidates: list[Any] = response_body.get("candidates", [])
         if not candidates:
             return "[]"
         content: dict[str, Any] = candidates[0].get("content", {})
