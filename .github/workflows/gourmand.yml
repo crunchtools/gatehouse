@@ -16,7 +16,25 @@
 #   jobs:
 #     gourmand:
 #       name: Code Quality (Gourmand)
-#       uses: crunchtools/gatehouse/.github/workflows/gourmand.yml@v0.5.0
+#       uses: crunchtools/gatehouse/.github/workflows/gourmand.yml@v0.6.0
+#
+# ── Migrating from v0.5.0 ────────────────────────────────────────────────────
+# v0.6.0 moves to Gourmand 1.0.0 (upstream v0.16.5) and is BREAKING. Bumping
+# the ref alone is not enough; the caller repo's config must change in the
+# same commit, because the old and new configs are mutually incompatible.
+# Per repo (RT #1482):
+#
+#   1. Delete the [thresholds] block from gourmand.toml. Upstream hard-errors
+#      on the old field names (20 were renamed in v0.14.x). The block was only
+#      ever a workaround for a v0.1.0 bug that zeroed every threshold when the
+#      table was absent; that bug is fixed, so deleting restores the defaults.
+#   2. Add a `classification` to every [[exceptions]] entry: gourmand_bug,
+#      by_design, accepted_bad_taste or fix_planned. Required at runtime.
+#   3. Add a [[check_overrides]] entry, with classification, for every check
+#      disabled in [checks].
+#
+# Repos still on @v0.5.0 keep resolving to gourmand:latest and stay green, so
+# the fleet migrates one repo at a time rather than all at once.
 
 name: Gourmand (reusable)
 
@@ -32,7 +50,7 @@ on:
         description: "Gourmand image ref. Override to pin a specific digest/tag."
         type: string
         required: false
-        default: "quay.io/crunchtools/gourmand:latest"
+        default: "quay.io/crunchtools/gourmand:1.0.0"
 
 jobs:
   gourmand:
@@ -43,4 +61,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Run Gourmand
-        run: gourmand --full ${{ inputs.path }}
+        run: gourmand check --full ${{ inputs.path }}
