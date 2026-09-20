@@ -2,28 +2,54 @@
 check = "summary_litter"
 path = "CLAUDE.md"
 justification = "Claude Code project instructions for AI assistant orientation"
+classification = "by_design"
 
 [[exceptions]]
 check = "redundant_error_handling"
 path = "src/gatehouse/github.py"
 justification = "Parsing untrusted JSON from GITHUB_EVENT_PATH — must catch OSError/JSONDecodeError and fall through to return None"
+classification = "by_design"
 
 [[exceptions]]
 check = "single_use_helpers"
 path = "src/gatehouse/diffview.py"
 justification = "Helpers extracted from _parse_diff/render_diff_view to satisfy ruff C901/PLR0912/PLR0915 complexity limits — inlining them re-violates ruff"
+classification = "by_design"
 
 [[exceptions]]
 check = "prefer_match"
 path = "src/gatehouse/diffview.py"
 justification = "Chains dispatch on str.startswith prefixes; Python match has no prefix patterns, so every case would need a guard clause — less readable than elif"
+classification = "by_design"
 
 [[exceptions]]
 check = "over_abstraction"
 path = "src/gatehouse/output.py"
 justification = "strip_ansi wraps a single _ANSI_RE.sub() call. The name is the documentation — it marks the call sites where untrusted text is being sanitised, which a bare regex substitution would not."
+classification = "by_design"
 
 [[exceptions]]
 check = "copy_paste_detection"
 path = "src/gatehouse/agents.py"
 justification = "build_user_prompt and build_constitution_prompt assemble different prompts from different inputs; they share only the three-line join-and-return shape, which is also what makes them look like diffview._render_hunk."
+classification = "by_design"
+
+# ── New checks in Gourmand 1.0.0 (upstream v0.16.5) ─────────────────────────
+
+[[exceptions]]
+check = "CH020-direct_exit"
+path = "src/gatehouse/review.py"
+classification = "accepted_bad_taste"
+justification = "get_git_diff and load_constitution print to stderr and sys.exit(2) rather than raising for main() to handle. Gourmand is right: helpers should not terminate the process. Restructuring the error paths of a working CI gate is not worth the risk right now, so this is accepted rather than excused -- it counts against the score until the control flow is reworked."
+
+[[exceptions]]
+check = "EV013-hidden_env_config"
+path = "src/gatehouse/review.py"
+classification = "by_design"
+justification = "GATEHOUSE_CONTEXT_REPO and GATEHOUSE_CONTEXT_REF are not hidden toggles. They are the documented fork-safe interface: described in _context_source()'s own docstring, recorded in CHANGELOG.md, and set explicitly by .github/workflows/review.yml. They carry the base repo and base SHA so the styleguide loads from the trusted base rather than a PR head."
+
+[[exceptions]]
+check = "EV002-manifest_lint_suppression"
+path = "pyproject.toml"
+classification = "by_design"
+justification = "Every entry in ruff's ignore and per-file-ignores carries an inline comment naming why (S101 assert-in-tests, S603/S607 for the git subprocess calls, S311 for backoff jitter). These are deliberate configuration for a CLI that shells out to git, not suppressions parked to be cleaned up later."

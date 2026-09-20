@@ -727,7 +727,9 @@ def test_load_env_file_missing(tmp_path: Path) -> None:
     """load_env_file does nothing when file doesn't exist."""
     from gatehouse.cli import load_env_file
 
+    before = dict(os.environ)
     load_env_file(tmp_path / "nonexistent.env")
+    assert dict(os.environ) == before
 
 
 def test_load_env_file_rejects_spaces_in_key(
