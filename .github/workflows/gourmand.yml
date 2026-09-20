@@ -50,7 +50,7 @@ on:
         description: "Gourmand image ref. Override to pin a specific digest/tag."
         type: string
         required: false
-        default: "quay.io/crunchtools/gourmand:1.0.0"
+        default: "quay.io/crunchtools/gourmand:latest"
 
 jobs:
   gourmand:
