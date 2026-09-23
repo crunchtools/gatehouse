@@ -34,8 +34,8 @@ wheels = [
 ]
 
 [[package]]
-name = "gatehouse"
-version = "0.3.1"
+name = "gatehouse-crunchtools"
+version = "0.7.1"
 source = { editable = "." }
 dependencies = [
     { name = "httpx" },

@@ -5,6 +5,14 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-09-23
+
+### Fixed
+- **`review.yml` defaults to this release's image.** The default image had
+  stayed at `quay.io/crunchtools/gatehouse:0.4.0` since 0.4.0, so callers
+  pinning `review.yml@v0.5.0` through `@v0.7.0` still reviewed with the 0.4.0
+  container. A new test fails when the default tag and `__version__` disagree.
+
 ## [0.7.0] - 2026-09-19
 
 ### Changed
