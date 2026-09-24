@@ -25,3 +25,10 @@ repos:
         pass_filenames: false
         always_run: true
         stages: [pre-commit, pre-merge-commit]
+      - id: gatehouse
+        name: Gatehouse (AI code review, staged diff)
+        entry: bash -c 'git diff --cached | podman run --rm -i --env-file "$HOME/.config/mcp-env/gatehouse.env" -v .:/src:ro,Z -w /src quay.io/crunchtools/gatehouse:latest --stdin'
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit, pre-merge-commit]

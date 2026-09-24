@@ -1,0 +1,93 @@
+# Gatehouse triage — every finding gets an answer before merge (reusable)
+#
+# The review job is advisory: an LLM reviewer is non-deterministic, so it never
+# holds merge authority. That left a gap nobody measured — findings were posted
+# and then merged past, unanswered. On one repo a PR drew 40 findings (21 high)
+# and merged five minutes later with no reply to any of them.
+#
+# This job closes the gap without giving the LLM a vote. It does not judge the
+# findings. It checks that a HUMAN (or an agent acting for one) replied to each
+# one — `fixed in <sha>` or `not a bug: <reason>`. That is deterministic, so
+# unlike the review it is safe to mark as a required status check.
+#
+# What counts:
+#   • a finding  = an inline PR review comment by the reviewer account that is
+#                  not itself a reply (findings without a file/line are posted
+#                  only in the review summary and are not counted here)
+#   • an answer  = any reply in that thread by someone other than the reviewer
+# Outdated findings still count: a later commit fixing one is answered by
+# saying so, which is the audit trail this job exists to create.
+#
+# Callers run it twice (see examples/gatehouse.yml): after the review job, in
+# the same run, and again on every review-comment event. The second trigger is
+# needed because a review posted with GITHUB_TOKEN cannot start a new workflow
+# run, while a human reply can.
+#
+# Read-only: pull-requests: read, no checkout, no secrets, no PR code executed.
+
+name: Gatehouse triage
+
+on:
+  workflow_call:
+    inputs:
+      reviewer:
+        description: "Account that posts Gatehouse findings."
+        type: string
+        required: false
+        default: "github-actions[bot]"
+
+permissions: {}
+
+jobs:
+  triage:
+    name: Gatehouse triage
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    steps:
+      - name: Every Gatehouse finding has a reply
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REVIEWER: ${{ inputs.reviewer }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PR_NUMBER:-}" ]; then
+            echo "::error::No pull_request context." >&2
+            exit 1
+          fi
+
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/comments?per_page=100" \
+            > comments.json
+
+          # --- triage filter (tests/test_triage.py runs this against fixtures) ---
+          jq -s --arg bot "$REVIEWER" '
+            (add // []) as $all
+            | (reduce ($all[] | select(.in_reply_to_id != null and .user.login != $bot)
+                | .in_reply_to_id) as $r ({}; .[$r | tostring] = true)) as $answered
+            | [ $all[]
+                | select(.user.login == $bot and .in_reply_to_id == null)
+                | select($answered[.id | tostring] | not)
+                | { url: .html_url,
+                    path: .path,
+                    line: (.line // .original_line),
+                    finding: (.body | split("\n")[0]) } ]
+          ' comments.json > unanswered.json
+          # --- end triage filter ---
+
+          count=$(jq length unanswered.json)
+          if [ "$count" -eq 0 ]; then
+            echo "Every Gatehouse finding on this PR has a reply."
+            exit 0
+          fi
+
+          {
+            echo "## ${count} unanswered Gatehouse finding(s)"
+            echo
+            echo 'Reply to each thread with `fixed in <sha>` or `not a bug: <reason>`.'
+            echo
+            jq -r '.[] | "- [\(.path):\(.line)](\(.url)) \(.finding)"' unanswered.json
+          } >> "$GITHUB_STEP_SUMMARY"
+          jq -r '.[] | "::error file=\(.path),line=\(.line)::Unanswered Gatehouse finding: \(.url)"' \
+            unanswered.json
+          exit 1
