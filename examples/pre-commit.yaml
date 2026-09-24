@@ -11,19 +11,25 @@
 # ~/.config/mcp-env/gatehouse.env (GEMINI_API_KEY=...). A false positive is
 # skipped with `SKIP=gatehouse git commit ...` — and must then be answered on
 # the PR, where the same finding will reappear.
+#
+# Both hooks run podman with --events-backend=none and --log-driver=none.
+# Rootless podman otherwise writes six lifecycle events per run, each
+# carrying every image label, plus the tool's output, into the journal,
+# and from there into /var/log/messages: hundreds of lines a day on a busy
+# workstation.
 repos:
   - repo: local
     hooks:
       - id: gourmand
         name: Gourmand (AI slop detection)
-        entry: podman run --rm -v .:/src:Z -w /src quay.io/crunchtools/gourmand:latest check --full
+        entry: podman --events-backend=none run --rm --log-driver=none -v .:/src:Z -w /src quay.io/crunchtools/gourmand:latest check --full
         language: system
         pass_filenames: false
         always_run: true
         stages: [pre-commit, pre-merge-commit]
       - id: gatehouse
         name: Gatehouse (AI code review, staged diff)
-        entry: bash -c 'git diff --cached | podman run --rm -i --env-file "$HOME/.config/mcp-env/gatehouse.env" -v .:/src:ro,Z -w /src quay.io/crunchtools/gatehouse:latest --stdin'
+        entry: bash -c 'git diff --cached | podman --events-backend=none run --rm --log-driver=none -i --env-file "$HOME/.config/mcp-env/gatehouse.env" -v .:/src:ro,Z -w /src quay.io/crunchtools/gatehouse:latest --stdin'
         language: system
         pass_filenames: false
         always_run: true
