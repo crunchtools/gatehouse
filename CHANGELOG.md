@@ -5,6 +5,28 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-09-24
+
+### Added
+- **`triage.yml`, a deterministic merge condition for an advisory reviewer.**
+  Findings were posted and merged past unanswered: one adopter merged a PR
+  with 40 findings (21 high) five minutes after the review, replying to none.
+  The new reusable workflow fails while any inline finding lacks a reply by
+  someone other than the reviewer. It never judges the code, so unlike the
+  review it is safe to mark as a required status check.
+- **`examples/pre-commit.yaml`**: the mandatory local gates, Gourmand and a
+  Gatehouse hook that reviews the staged diff from the container image and
+  blocks the commit on critical/high findings.
+
+### Changed
+- `examples/gatehouse.yml` adds the triage job and the
+  `pull_request_review_comment` trigger that re-runs it on a reply; guard
+  and review are skipped for that event. It also moves to `review.yml@v0.8.0`
+  (it still pointed at v0.2.0) and to the head-repo guard this repo already
+  uses — the example had kept the `author_association` check that trusted a
+  collaborator's fork and failed every Dependabot PR.
+- This repo's own `.pre-commit-config.yaml` runs the Gatehouse hook.
+
 ## [0.7.1] - 2026-09-23
 
 ### Fixed

@@ -10,7 +10,7 @@
 # rules (your styleguide/constitution) are fetched from YOUR base branch, not the
 # PR. The one thing you don't trust — the proposed change — is only ever read.
 #
-# Two jobs with DIFFERENT authority:
+# Three jobs with DIFFERENT authority:
 #   • guard   — a real blocking gate. Mark it a REQUIRED status check so a PR
 #               that tampers with your workflow files is rejected.
 #   • review  — ADVISORY. It posts findings as PR comments and always passes;
@@ -18,23 +18,31 @@
 #               so it must never hold merge authority. (Opt into blocking with
 #               `blocking: true` below only if you accept that tradeoff — and
 #               even then, keep it out of branch protection.)
+#   • triage  — deterministic. Fails while any finding has no reply
+#               (`fixed in <sha>` or `not a bug: <reason>`). Safe to mark
+#               REQUIRED: it never judges code, only whether a human answered.
 
 name: Gatehouse
 
 on:
   pull_request_target:
     types: [opened, synchronize, reopened]
+  # Re-runs triage when someone replies. A review posted with GITHUB_TOKEN
+  # cannot trigger a workflow, so the first triage runs after `review` below.
+  pull_request_review_comment:
+    types: [created, edited, deleted]
 
 permissions: {}   # default-deny; each job grants only what it needs
 
 jobs:
   # ── 1) Protect the workflow files themselves ────────────────────────────────
-  # Rejects PRs from outside contributors that touch .github/workflows/. Safe
-  # under pull_request_target because it only reads the changed-file LIST via the
+  # Rejects PRs from forks that touch .github/workflows/. Safe under
+  # pull_request_target because it only reads the changed-file LIST via the
   # API — it never checks out or runs your code. And because pull_request_target
   # runs the BASE version of this file, a PR can't edit this job to disable it.
   guard:
     name: Protect workflows
+    if: github.event_name == 'pull_request_target'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -44,21 +52,20 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
-          AUTHOR_ASSOC: ${{ github.event.pull_request.author_association }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
         run: |
           set -euo pipefail
-          # Maintainers may change workflows; only gate outside contributors.
-          case "$AUTHOR_ASSOC" in
-            OWNER|MEMBER|COLLABORATOR)
-              echo "Author '$AUTHOR_ASSOC' is trusted; allowing."; exit 0 ;;
-          esac
+          # Gate on where the branch lives, not on the author's role: a branch
+          # pushed into this repo already required write access, and a fork is
+          # what pull_request_target actually guards against.
+          if [ "$HEAD_REPO" = "$GITHUB_REPOSITORY" ]; then
+            echo "Head branch is in $GITHUB_REPOSITORY; allowing."; exit 0
+          fi
           changed="$(gh pr diff "$PR" --repo "$GITHUB_REPOSITORY" --name-only)"
           if echo "$changed" | grep -qE '^\.github/workflows/'; then
             echo "::error::PR modifies .github/workflows/ — not accepted from external contributors."
             gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body \
               $'🚫 **Workflow changes are not accepted via pull request.** Please open an issue and a maintainer will make the change.'
-            # Hard-reject instead of just failing the check? Uncomment:
-            # gh pr close "$PR" --repo "$GITHUB_REPOSITORY"
             exit 1
           fi
           echo "No workflow files changed."
@@ -69,13 +76,25 @@ jobs:
   # Scope GEMINI_API_KEY to this reusable workflow so only it can read the key.
   review:
     name: Gatehouse review
+    if: github.event_name == 'pull_request_target'
     permissions:
       contents: read
       pull-requests: write
-    uses: crunchtools/gatehouse/.github/workflows/review.yml@v0.2.0
+    uses: crunchtools/gatehouse/.github/workflows/review.yml@v0.8.0
     # Advisory by default — findings post as comments, the check always passes.
     # Uncomment to let critical/high findings fail the check (still not required):
     #   with:
     #     blocking: true
     secrets:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+
+  # ── 3) Every finding answered ──────────────────────────────────────────────
+  # Runs after the review on a push, and alone on a reply (review is skipped
+  # then, hence always()). Read-only, no secrets.
+  triage:
+    name: Gatehouse triage
+    needs: review
+    if: always()
+    permissions:
+      pull-requests: read
+    uses: crunchtools/gatehouse/.github/workflows/triage.yml@v0.8.0

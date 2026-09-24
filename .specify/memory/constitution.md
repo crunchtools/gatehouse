@@ -1,9 +1,9 @@
 # gatehouse Constitution
 
-> **Version:** 1.0.0
+> **Version:** 1.1.0
 > **Ratified:** 2026-04-04
 > **Status:** Active
-> **Inherits:** [crunchtools/constitution](https://github.com/crunchtools/constitution) v1.5.0
+> **Inherits:** [crunchtools/constitution](https://github.com/crunchtools/constitution) v1.17.0
 > **Profile:** CLI Tool
 
 ## Purpose
@@ -25,6 +25,8 @@ Built with argparse. Flags: `--staged`, `--base`, `--agents`, `--model`, `--advi
 Exit code `0` on success or advisory-only findings. Exit code `1` on blocking findings (critical/high severity from blocking agents). Exit code `2` on usage errors (missing API key, bad arguments).
 
 The blocking exit code applies to **local** invocation. The reusable CI workflow (`.github/workflows/review.yml`) is **advisory by default**: it passes `--advisory` so the check always exits `0` and posts findings as a plain `COMMENT` review, never gating a merge. Callers opt into blocking with the `blocking: true` input, and even then the check MUST NOT be marked a required status check.
+
+The triage workflow (`.github/workflows/triage.yml`) is the opposite case and is kept separate on purpose. It never judges code — it fails only while an inline finding has no reply from someone other than the reviewer — so it is deterministic and SHOULD be marked a required status check. That is what makes an advisory reviewer's findings a merge condition without giving the LLM a vote.
 
 ## External APIs
 
