@@ -53,3 +53,9 @@ check = "EV002-manifest_lint_suppression"
 path = "pyproject.toml"
 classification = "by_design"
 justification = "Every entry in ruff's ignore and per-file-ignores carries an inline comment naming why (S101 assert-in-tests, S603/S607 for the git subprocess calls, S311 for backoff jitter). These are deliberate configuration for a CLI that shells out to git, not suppressions parked to be cleaned up later."
+
+[[exceptions]]
+check = "hidden_env_config"
+path = "src/gatehouse/cli.py"
+justification = "OPENROUTER_API_KEY_FILE is the _FILE credential variant the CLI-tool profile (section I.3) makes mandatory; documented in README Configuration"
+classification = "by_design"

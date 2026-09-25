@@ -5,6 +5,30 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-09-24
+
+### Changed
+- **Gatehouse calls OpenRouter, not the Gemini API.** The default model is
+  `openai/gpt-6-luna`, with `google/gemini-3.1-flash-lite` as an automatic
+  fallback when it is rate-limited or down. On a 33-diff replay of real
+  crunchtools changes, judged blind by two models from other vendors, Luna
+  caught as many reintroduced bugs as `gemini-2.5-flash` while nearly all of
+  2.5 Flash's findings on clean PRs were noise, at about a sixth of the cost
+  per review (RT #1505).
+- Every request requires zero data retention and forbids training on prompts.
+- `--model` takes an OpenRouter slug.
+- A reply wrapped as `{"findings": [...]}` is unwrapped instead of dropped.
+
+### Added
+- `OPENROUTER_API_KEY_FILE`: read the key from a file (wins over the
+  variable; warns when the file is group- or world-readable).
+
+### Removed
+- **Breaking:** `GEMINI_API_KEY` is no longer read. Replace it with
+  `OPENROUTER_API_KEY` in `~/.config/mcp-env/gatehouse.env` and in the
+  GitHub secret passed to `review.yml`. gatehouse exits 2 with a pointer
+  when only the old key is set.
+
 ## [0.8.0] - 2026-09-24
 
 ### Added

@@ -102,11 +102,11 @@ def test_stdin_diff_never_invokes_git(monkeypatch):
     def boom(*_a, **_k):
         raise AssertionError("get_git_diff called — fork code path was touched")
 
-    async def fake_gemini(*_a, **_k):
+    async def fake_model(*_a, **_k):
         return "[]"
 
     monkeypatch.setattr(review, "get_git_diff", boom)
-    monkeypatch.setattr(review, "call_gemini", fake_gemini)
+    monkeypatch.setattr(review, "call_model", fake_model)
     monkeypatch.delenv("GATEHOUSE_CONTEXT_REPO", raising=False)
     monkeypatch.delenv("GATEHOUSE_CONTEXT_REF", raising=False)
 

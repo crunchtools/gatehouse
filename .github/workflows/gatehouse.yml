@@ -62,7 +62,7 @@ jobs:
       pull-requests: write
     uses: ./.github/workflows/review.yml
     secrets:
-      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
 
   # 3) Every finding answered (deterministic; safe as a required check).
   triage:

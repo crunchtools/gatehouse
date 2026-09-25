@@ -8,7 +8,7 @@
 # The gatehouse hook reviews the STAGED diff, with your repo mounted read-only
 # so the Constitution agent reads your constitution. It blocks the commit on
 # critical/high findings (exit 1), like Gourmand. The key comes from
-# ~/.config/mcp-env/gatehouse.env (GEMINI_API_KEY=...). A false positive is
+# ~/.config/mcp-env/gatehouse.env (OPENROUTER_API_KEY=...). A false positive is
 # skipped with `SKIP=gatehouse git commit ...` — and must then be answered on
 # the PR, where the same finding will reappear.
 #

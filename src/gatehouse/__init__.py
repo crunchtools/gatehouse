@@ -1,3 +1,3 @@
-"""Gatehouse -- local AI code review using Gemini agents."""
+"""Gatehouse -- local AI code review using concurrent LLM agents."""
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"

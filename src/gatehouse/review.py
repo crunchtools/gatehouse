@@ -19,8 +19,8 @@ from gatehouse.agents import (
     build_user_prompt,
     get_agents,
 )
-from gatehouse.gemini import DEFAULT_MODEL, call_gemini
 from gatehouse.github import fetch_repo_file, post_pr_review
+from gatehouse.llm import DEFAULT_MODEL, call_model
 from gatehouse.output import format_results, print_summary
 
 CONFIDENCE_THRESHOLD = 80
@@ -177,13 +177,16 @@ async def run_agent(
     """Run a single agent and return its findings."""
     async with semaphore:
         try:
-            response_text = await call_gemini(
+            response_text = await call_model(
                 client, agent.system_prompt, user_prompt, model, api_key
             )
             if verbose:
                 print(f"\n--- {agent.name} raw response ---", file=sys.stderr)
                 print(response_text, file=sys.stderr)
             findings_raw = json.loads(response_text)
+            if isinstance(findings_raw, dict):
+                # Some models wrap the array: {"findings": [...]}.
+                findings_raw = findings_raw.get("findings", [])
             if not isinstance(findings_raw, list):
                 findings_raw = []
             findings: list[dict[str, Any]] = [
