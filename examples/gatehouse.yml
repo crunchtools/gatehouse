@@ -61,7 +61,10 @@ jobs:
           if [ "$HEAD_REPO" = "$GITHUB_REPOSITORY" ]; then
             echo "Head branch is in $GITHUB_REPOSITORY; allowing."; exit 0
           fi
-          changed="$(gh pr diff "$PR" --repo "$GITHUB_REPOSITORY" --name-only)"
+          # Both sides of a rename: `gh pr diff --name-only` lists only the new
+          # path, so a fork could move a workflow out of .github/workflows/ unseen.
+          changed="$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" \
+            --jq '.[] | .filename, (.previous_filename // empty)')"
           if echo "$changed" | grep -qE '^\.github/workflows/'; then
             echo "::error::PR modifies .github/workflows/ — not accepted from external contributors."
             gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body \
