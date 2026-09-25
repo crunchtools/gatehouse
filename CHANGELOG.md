@@ -5,6 +5,15 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+### Fixed
+- **The workflow guard missed renames.** It read `gh pr diff --name-only`,
+  which lists only a renamed file's new path, so a fork could move a workflow
+  out of `.github/workflows/` (deleting it) and pass. The guard in
+  `examples/gatehouse.yml` and in this repo now reads both `filename` and
+  `previous_filename` from the pull-request files API. Found by Gatehouse
+  reviewing its own fleet rollout (RT #1507); repos that copied the example
+  should re-copy it.
+
 ## [0.9.0] - 2026-09-24
 
 ### Changed

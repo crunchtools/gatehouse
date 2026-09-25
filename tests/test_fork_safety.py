@@ -9,6 +9,7 @@ PR's code is never executed.
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 from gatehouse import review
 
@@ -119,3 +120,16 @@ def test_stdin_diff_never_invokes_git(monkeypatch):
     )
 
     assert exit_code == 0
+
+
+def test_guard_checks_both_sides_of_a_rename():
+    """The workflow guard sees a rename's old path, not just its new one.
+
+    `gh pr diff --name-only` lists only the destination of a rename, so a fork
+    could move a file out of .github/workflows/ past a guard built on it.
+    """
+    root = Path(__file__).parent.parent
+    for path in ("examples/gatehouse.yml", ".github/workflows/gatehouse.yml"):
+        text = (root / path).read_text()
+        assert "previous_filename" in text, path
+        assert "--name-only" not in text.split("changed=")[1].split("\n")[0], path
