@@ -13,6 +13,10 @@ All notable changes to this project are documented here, following
   `previous_filename` from the pull-request files API. Found by Gatehouse
   reviewing its own fleet rollout (RT #1507); repos that copied the example
   should re-copy it.
+- **A reply could clear a failed workflow guard.** The guard ran only on
+  `pull_request_target`, so on a `pull_request_review_comment` run it reported
+  `skipped`, and a required check counts `skipped` as passing. It now runs on
+  both events, and posts its explanation only once.
 
 ## [0.9.0] - 2026-09-24
 

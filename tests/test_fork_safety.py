@@ -133,3 +133,16 @@ def test_guard_checks_both_sides_of_a_rename():
         text = (root / path).read_text()
         assert "previous_filename" in text, path
         assert "--name-only" not in text.split("changed=")[1].split("\n")[0], path
+
+
+def test_guard_runs_on_reply_events():
+    """The guard is not skipped on pull_request_review_comment.
+
+    A skipped job reports "skipped", which a required check counts as passing,
+    so a guard limited to pull_request_target would be cleared by any reply.
+    """
+    root = Path(__file__).parent.parent
+    for path in ("examples/gatehouse.yml", ".github/workflows/gatehouse.yml"):
+        guard = (root / path).read_text().split("name: Protect workflows")[1]
+        guard = guard.split("\n  review:")[0].split("runs-on:")[0]
+        assert "if:" not in guard, path

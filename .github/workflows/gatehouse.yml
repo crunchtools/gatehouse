@@ -21,7 +21,9 @@ jobs:
   # 1) Reject PRs from outside contributors that modify workflow files.
   guard:
     name: Protect workflows
-    if: github.event_name == 'pull_request_target'
+    # Runs on replies too. A job skipped on the reply event reports
+    # "skipped", which a required check counts as passing: skipping the
+    # guard there would let any comment on a rejected fork PR clear it.
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -30,6 +32,7 @@ jobs:
       - name: Reject workflow changes from untrusted PRs
         env:
           GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
           PR: ${{ github.event.pull_request.number }}
           HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
         run: |
@@ -50,8 +53,11 @@ jobs:
             --jq '.[] | .filename, (.previous_filename // empty)')"
           if echo "$changed" | grep -qE '^\.github/workflows/'; then
             echo "::error::PR modifies .github/workflows/ — not accepted from external contributors."
-            gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body \
-              $'🚫 **Workflow changes are not accepted via pull request.** Please open an issue and a maintainer will make the change.'
+            # Explain once, on the PR event; replies re-run the check, not the comment.
+            if [ "$EVENT" = "pull_request_target" ]; then
+              gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body \
+                $'🚫 **Workflow changes are not accepted via pull request.** Please open an issue and a maintainer will make the change.'
+            fi
             exit 1
           fi
           echo "No workflow files changed."
