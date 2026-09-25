@@ -9,7 +9,7 @@ import re
 import sys
 from pathlib import Path
 
-from gatehouse.gemini import DEFAULT_MODEL
+from gatehouse.llm import DEFAULT_MODEL
 from gatehouse.review import run_review
 
 ENV_FILE = Path.home() / ".config" / "mcp-env" / "gatehouse.env"
@@ -37,13 +37,30 @@ def load_env_file(path: Path) -> None:
             os.environ[key] = value
 
 
+def load_api_key() -> str:
+    """Return the OpenRouter key; OPENROUTER_API_KEY_FILE wins over the variable.
+
+    Warns (does not fail) when the key file is readable by group or others.
+    """
+    key_file = os.environ.get("OPENROUTER_API_KEY_FILE")
+    if key_file:
+        path = Path(key_file)
+        if path.stat().st_mode & 0o077:
+            print(
+                f"Warning: {path} is readable by group or others; chmod 600 it",
+                file=sys.stderr,
+            )
+        return path.read_text().strip()
+    return os.environ.get("OPENROUTER_API_KEY", "")
+
+
 def main() -> None:
     """Main entry point."""
     load_env_file(ENV_FILE)
 
     parser = argparse.ArgumentParser(
         prog="gatehouse",
-        description="Local AI code review using Gemini agents",
+        description="Local AI code review using concurrent LLM agents",
     )
     parser.add_argument(
         "--staged",
@@ -69,7 +86,7 @@ def main() -> None:
     parser.add_argument(
         "--model",
         default=DEFAULT_MODEL,
-        help=f"Gemini model to use (default: {DEFAULT_MODEL})",
+        help=f"OpenRouter model slug (default: {DEFAULT_MODEL})",
     )
     parser.add_argument(
         "--constitution",
@@ -95,16 +112,21 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    api_key = os.environ.get("GEMINI_API_KEY", "")
+    api_key = load_api_key()
     if not api_key:
         print(
-            "Error: GEMINI_API_KEY not set",
+            "Error: OPENROUTER_API_KEY not set",
             file=sys.stderr,
         )
         print(
-            f"  Set in environment or add to {ENV_FILE}",
+            f"  Set it (or OPENROUTER_API_KEY_FILE) in the environment or in {ENV_FILE}",
             file=sys.stderr,
         )
+        if os.environ.get("GEMINI_API_KEY"):
+            print(
+                "  GEMINI_API_KEY is no longer used: gatehouse calls OpenRouter since 0.9.0",
+                file=sys.stderr,
+            )
         sys.exit(2)
 
     agent_slugs: list[str] | None = (

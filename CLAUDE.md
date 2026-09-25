@@ -1,6 +1,6 @@
 # Gatehouse
 
-Local AI code review CLI using 8 concurrent Gemini agents.
+Local AI code review CLI using 8 concurrent LLM agents via OpenRouter.
 
 ## Quick Start
 
@@ -10,7 +10,7 @@ cd ~/Projects/crunchtools/gatehouse
 uv sync --extra dev
 
 # Run from a git repo with changes
-GEMINI_API_KEY=your_key gatehouse
+OPENROUTER_API_KEY=your_key gatehouse
 gatehouse --staged
 gatehouse --agents bugs,security
 gatehouse --advisory
@@ -21,7 +21,7 @@ gatehouse --advisory
 - `src/gatehouse/cli.py` -- argparse entry point
 - `src/gatehouse/agents.py` -- 8 agent prompt definitions
 - `src/gatehouse/diffview.py` -- unified diff to BEFORE/AFTER view for agents
-- `src/gatehouse/gemini.py` -- httpx async Gemini REST client
+- `src/gatehouse/llm.py` -- httpx async OpenRouter client (Luna default, Flash Lite fallback, ZDR-only)
 - `src/gatehouse/review.py` -- orchestration and exit code logic
 - `src/gatehouse/output.py` -- terminal output with ANSI colors
 

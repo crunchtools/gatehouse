@@ -1,10 +1,10 @@
 # Gatehouse — fork-safe PR review (reusable workflow)
 #
 # Hardened `pull_request_target` review: diff-piped, NO checkout, scoped-secret-bound.
-# Reviews fork PRs with a bring-your-own Gemini key and zero hosting. Safe by
+# Reviews fork PRs with a bring-your-own OpenRouter key and zero hosting. Safe by
 # construction: the fork's code is only ever read as a unified DIFF on stdin —
 # never checked out to disk, never executed. The container runs `gatehouse`,
-# which is diff-in -> Gemini -> PR-review-comments-out.
+# which is diff-in -> OpenRouter -> PR-review-comments-out.
 #
 # ── How adopters use it ──────────────────────────────────────────────────────
 # Add `.github/workflows/gatehouse.yml` to your repository:
@@ -21,10 +21,10 @@
 #         pull-requests: write
 #       uses: crunchtools/gatehouse/.github/workflows/review.yml@v1
 #       secrets:
-#         GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+#         OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
 #
 # ── Scoped secret (recommended) ──────────────────────────────────────────────
-# Configure GEMINI_API_KEY as a *scoped* secret bound to this trusted reusable
+# Configure OPENROUTER_API_KEY as a *scoped* secret bound to this trusted reusable
 # workflow (Settings -> Secrets and variables -> Actions -> scope to
 # `crunchtools/gatehouse/.github/workflows/review.yml`). Then no other job in the
 # caller's repo can read the key — closing the "extra job under pull_request_target"
@@ -46,7 +46,7 @@ on:
   workflow_call:
     inputs:
       model:
-        description: "Gemini model override (default: gatehouse built-in)"
+        description: "OpenRouter model slug override (default: gatehouse built-in)"
         type: string
         required: false
         default: ""
@@ -72,9 +72,9 @@ on:
         description: "Gatehouse release image tag. Bump per release."
         type: string
         required: false
-        default: "quay.io/crunchtools/gatehouse:0.8.0"
+        default: "quay.io/crunchtools/gatehouse:0.9.0"
     secrets:
-      GEMINI_API_KEY:
+      OPENROUTER_API_KEY:
         required: true
 
 jobs:
@@ -88,7 +88,7 @@ jobs:
       - name: Review fork diff (no checkout, never executes PR code)
         env:
           GH_TOKEN: ${{ github.token }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           # Trusted base repo + base-branch SHA — styleguide/constitution are
           # loaded from HERE via the API, never from the fork head.
@@ -124,7 +124,7 @@ jobs:
           #    - GITHUB_TOKEN authorizes gatehouse to POST the PR review via the REST API.
           gh pr diff "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --patch \
             | docker run --rm -i \
-                -e GEMINI_API_KEY \
+                -e OPENROUTER_API_KEY \
                 -e GITHUB_TOKEN="$GH_TOKEN" \
                 -e GITHUB_REPOSITORY="$GITHUB_REPOSITORY" \
                 -e GITHUB_REF="refs/pull/${PR_NUMBER}/merge" \

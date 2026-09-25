@@ -8,11 +8,11 @@
 #   podman build -t quay.io/fatherlinux/gatehouse .
 #
 # Run (bind-mount your repo):
-#   podman run --rm -e GEMINI_API_KEY -v $(pwd):/repo:ro,Z -w /repo \
+#   podman run --rm -e OPENROUTER_API_KEY -v $(pwd):/repo:ro,Z -w /repo \
 #     quay.io/fatherlinux/gatehouse --base main
 #
 # Run with specific flags:
-#   podman run --rm -e GEMINI_API_KEY -v $(pwd):/repo:ro,Z -w /repo \
+#   podman run --rm -e OPENROUTER_API_KEY -v $(pwd):/repo:ro,Z -w /repo \
 #     quay.io/fatherlinux/gatehouse --staged --agents bugs,security
 
 FROM quay.io/hummingbird/python:latest-fips-builder
@@ -29,7 +29,7 @@ RUN pip install --no-cache-dir .
 
 LABEL name="gatehouse" \
       version="0.2.0" \
-      summary="Local AI code review CLI using Gemini agents" \
+      summary="Local AI code review CLI using concurrent LLM agents" \
       description="5-agent concurrent code review with anti-noise prompting" \
       maintainer="crunchtools.com" \
       url="https://github.com/crunchtools/gatehouse" \

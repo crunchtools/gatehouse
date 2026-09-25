@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import subprocess
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, patch
 
 if TYPE_CHECKING:
@@ -90,7 +91,7 @@ async def test_run_review_no_diff() -> None:
             base="main",
             staged=False,
             agent_slugs=None,
-            model="gemini-2.5-flash",
+            model="openai/gpt-6-luna",
             advisory=False,
             verbose=False,
             api_key="test-key",
@@ -106,7 +107,7 @@ async def test_run_review_blocking_finding() -> None:
         patch("gatehouse.review.get_file_listing", return_value="src/app.py"),
         patch("gatehouse.review.load_styleguide", return_value=None),
         patch(
-            "gatehouse.review.call_gemini",
+            "gatehouse.review.call_model",
             new_callable=AsyncMock,
             return_value=MOCK_BLOCKING_FINDINGS,
         ),
@@ -115,7 +116,7 @@ async def test_run_review_blocking_finding() -> None:
             base="main",
             staged=False,
             agent_slugs=["bugs"],
-            model="gemini-2.5-flash",
+            model="openai/gpt-6-luna",
             advisory=False,
             verbose=False,
             api_key="test-key",
@@ -131,7 +132,7 @@ async def test_run_review_advisory_mode() -> None:
         patch("gatehouse.review.get_file_listing", return_value="src/app.py"),
         patch("gatehouse.review.load_styleguide", return_value=None),
         patch(
-            "gatehouse.review.call_gemini",
+            "gatehouse.review.call_model",
             new_callable=AsyncMock,
             return_value=MOCK_BLOCKING_FINDINGS,
         ),
@@ -140,7 +141,7 @@ async def test_run_review_advisory_mode() -> None:
             base="main",
             staged=False,
             agent_slugs=["bugs"],
-            model="gemini-2.5-flash",
+            model="openai/gpt-6-luna",
             advisory=True,
             verbose=False,
             api_key="test-key",
@@ -156,7 +157,7 @@ async def test_run_review_advisory_agent_only() -> None:
         patch("gatehouse.review.get_file_listing", return_value="src/app.py"),
         patch("gatehouse.review.load_styleguide", return_value=None),
         patch(
-            "gatehouse.review.call_gemini",
+            "gatehouse.review.call_model",
             new_callable=AsyncMock,
             return_value=MOCK_ADVISORY_FINDINGS,
         ),
@@ -165,7 +166,7 @@ async def test_run_review_advisory_agent_only() -> None:
             base="main",
             staged=False,
             agent_slugs=["consistency"],
-            model="gemini-2.5-flash",
+            model="openai/gpt-6-luna",
             advisory=False,
             verbose=False,
             api_key="test-key",
@@ -181,7 +182,7 @@ async def test_confidence_filtering() -> None:
         patch("gatehouse.review.get_file_listing", return_value="src/app.py"),
         patch("gatehouse.review.load_styleguide", return_value=None),
         patch(
-            "gatehouse.review.call_gemini",
+            "gatehouse.review.call_model",
             new_callable=AsyncMock,
             return_value=MOCK_LOW_CONFIDENCE,
         ),
@@ -190,7 +191,7 @@ async def test_confidence_filtering() -> None:
             base="main",
             staged=False,
             agent_slugs=["bugs"],
-            model="gemini-2.5-flash",
+            model="openai/gpt-6-luna",
             advisory=False,
             verbose=False,
             api_key="test-key",
@@ -213,7 +214,7 @@ async def test_run_review_api_error_graceful() -> None:
         patch("gatehouse.review.get_file_listing", return_value="src/app.py"),
         patch("gatehouse.review.load_styleguide", return_value=None),
         patch(
-            "gatehouse.review.call_gemini",
+            "gatehouse.review.call_model",
             new_callable=AsyncMock,
             side_effect=error,
         ),
@@ -222,7 +223,7 @@ async def test_run_review_api_error_graceful() -> None:
             base="main",
             staged=False,
             agent_slugs=["bugs"],
-            model="gemini-2.5-flash",
+            model="openai/gpt-6-luna",
             advisory=False,
             verbose=False,
             api_key="test-key",
@@ -238,7 +239,7 @@ async def test_run_review_invalid_json_graceful() -> None:
         patch("gatehouse.review.get_file_listing", return_value="src/app.py"),
         patch("gatehouse.review.load_styleguide", return_value=None),
         patch(
-            "gatehouse.review.call_gemini",
+            "gatehouse.review.call_model",
             new_callable=AsyncMock,
             return_value="not valid json{{{",
         ),
@@ -247,7 +248,7 @@ async def test_run_review_invalid_json_graceful() -> None:
             base="main",
             staged=False,
             agent_slugs=["bugs"],
-            model="gemini-2.5-flash",
+            model="openai/gpt-6-luna",
             advisory=False,
             verbose=False,
             api_key="test-key",
@@ -263,7 +264,7 @@ async def test_run_review_empty_array_response() -> None:
         patch("gatehouse.review.get_file_listing", return_value="src/app.py"),
         patch("gatehouse.review.load_styleguide", return_value=None),
         patch(
-            "gatehouse.review.call_gemini",
+            "gatehouse.review.call_model",
             new_callable=AsyncMock,
             return_value="[]",
         ),
@@ -272,7 +273,7 @@ async def test_run_review_empty_array_response() -> None:
             base="main",
             staged=False,
             agent_slugs=["bugs"],
-            model="gemini-2.5-flash",
+            model="openai/gpt-6-luna",
             advisory=False,
             verbose=False,
             api_key="test-key",
@@ -288,7 +289,7 @@ async def test_run_review_multiple_agents() -> None:
         patch("gatehouse.review.get_file_listing", return_value="src/app.py"),
         patch("gatehouse.review.load_styleguide", return_value=None),
         patch(
-            "gatehouse.review.call_gemini",
+            "gatehouse.review.call_model",
             new_callable=AsyncMock,
             return_value=MOCK_BLOCKING_FINDINGS,
         ),
@@ -297,7 +298,7 @@ async def test_run_review_multiple_agents() -> None:
             base="main",
             staged=False,
             agent_slugs=["bugs", "security", "performance"],
-            model="gemini-2.5-flash",
+            model="openai/gpt-6-luna",
             advisory=False,
             verbose=False,
             api_key="test-key",
@@ -306,11 +307,11 @@ async def test_run_review_multiple_agents() -> None:
 
 
 @pytest.mark.asyncio
-async def test_gemini_retries_on_429() -> None:
-    """call_gemini retries on 429 with backoff."""
+async def test_llm_retries_on_429() -> None:
+    """call_model retries on 429 with backoff."""
     import httpx
 
-    from gatehouse.gemini import call_gemini
+    from gatehouse.llm import call_model
 
     rate_limit_response = httpx.Response(
         429,
@@ -318,11 +319,7 @@ async def test_gemini_retries_on_429() -> None:
     )
     ok_response = httpx.Response(
         200,
-        json={
-            "candidates": [
-                {"content": {"parts": [{"text": "[]"}], "role": "model"}}
-            ]
-        },
+        json={"choices": [{"message": {"role": "assistant", "content": "[]"}}]},
         request=httpx.Request("POST", "https://example.com"),
     )
 
@@ -332,8 +329,8 @@ async def test_gemini_retries_on_429() -> None:
     )
 
     with patch("asyncio.sleep", new_callable=AsyncMock):
-        text = await call_gemini(
-            mock_client, "system", "user", "gemini-2.5-flash", "key"
+        text = await call_model(
+            mock_client, "system", "user", "openai/gpt-6-luna", "key"
         )
 
     assert text == "[]"
@@ -341,61 +338,11 @@ async def test_gemini_retries_on_429() -> None:
 
 
 @pytest.mark.asyncio
-async def test_gemini_honors_retry_delay_in_body() -> None:
-    """call_gemini sleeps for retryDelay from Gemini's structured error body."""
+async def test_llm_honors_retry_after_header() -> None:
+    """call_model sleeps for Retry-After seconds when present."""
     import httpx
 
-    from gatehouse.gemini import call_gemini
-
-    error_body = {
-        "error": {
-            "code": 429,
-            "status": "RESOURCE_EXHAUSTED",
-            "details": [
-                {"@type": "type.googleapis.com/google.rpc.QuotaFailure"},
-                {
-                    "@type": "type.googleapis.com/google.rpc.RetryInfo",
-                    "retryDelay": "23s",
-                },
-            ],
-        }
-    }
-    rate_limit_response = httpx.Response(
-        429,
-        json=error_body,
-        request=httpx.Request("POST", "https://example.com"),
-    )
-    ok_response = httpx.Response(
-        200,
-        json={
-            "candidates": [
-                {"content": {"parts": [{"text": "[]"}], "role": "model"}}
-            ]
-        },
-        request=httpx.Request("POST", "https://example.com"),
-    )
-
-    mock_client = AsyncMock(spec=httpx.AsyncClient)
-    mock_client.post = AsyncMock(
-        side_effect=[rate_limit_response, ok_response]
-    )
-
-    sleep_mock = AsyncMock()
-    with patch("asyncio.sleep", sleep_mock):
-        text = await call_gemini(
-            mock_client, "system", "user", "gemini-2.5-flash", "key"
-        )
-
-    assert text == "[]"
-    sleep_mock.assert_awaited_once_with(23.0)
-
-
-@pytest.mark.asyncio
-async def test_gemini_honors_retry_after_header() -> None:
-    """call_gemini sleeps for Retry-After seconds when present."""
-    import httpx
-
-    from gatehouse.gemini import call_gemini
+    from gatehouse.llm import call_model
 
     rate_limit_response = httpx.Response(
         429,
@@ -404,11 +351,7 @@ async def test_gemini_honors_retry_after_header() -> None:
     )
     ok_response = httpx.Response(
         200,
-        json={
-            "candidates": [
-                {"content": {"parts": [{"text": "[]"}], "role": "model"}}
-            ]
-        },
+        json={"choices": [{"message": {"role": "assistant", "content": "[]"}}]},
         request=httpx.Request("POST", "https://example.com"),
     )
 
@@ -419,8 +362,8 @@ async def test_gemini_honors_retry_after_header() -> None:
 
     sleep_mock = AsyncMock()
     with patch("asyncio.sleep", sleep_mock):
-        text = await call_gemini(
-            mock_client, "system", "user", "gemini-2.5-flash", "key"
+        text = await call_model(
+            mock_client, "system", "user", "openai/gpt-6-luna", "key"
         )
 
     assert text == "[]"
@@ -428,11 +371,11 @@ async def test_gemini_honors_retry_after_header() -> None:
 
 
 @pytest.mark.asyncio
-async def test_gemini_raises_after_max_retries() -> None:
-    """call_gemini raises after exhausting retries."""
+async def test_llm_raises_after_max_retries() -> None:
+    """call_model raises after exhausting retries."""
     import httpx
 
-    from gatehouse.gemini import MAX_RETRIES, call_gemini
+    from gatehouse.llm import MAX_RETRIES, call_model
 
     rate_limit_response = httpx.Response(
         429,
@@ -446,8 +389,8 @@ async def test_gemini_raises_after_max_retries() -> None:
         patch("asyncio.sleep", new_callable=AsyncMock),
         pytest.raises(httpx.HTTPStatusError),
     ):
-        await call_gemini(
-            mock_client, "system", "user", "gemini-2.5-flash", "key"
+        await call_model(
+            mock_client, "system", "user", "openai/gpt-6-luna", "key"
         )
 
     assert mock_client.post.call_count == MAX_RETRIES
@@ -460,7 +403,7 @@ async def test_run_review_stdin_diff() -> None:
         patch("gatehouse.review.load_styleguide", return_value=None),
         patch("gatehouse.review.get_file_listing", return_value=None),
         patch(
-            "gatehouse.review.call_gemini",
+            "gatehouse.review.call_model",
             new_callable=AsyncMock,
             return_value="[]",
         ),
@@ -468,7 +411,7 @@ async def test_run_review_stdin_diff() -> None:
         exit_code = await run_review(
             stdin_diff="diff --git a/foo.py b/foo.py\n+print('hi')",
             agent_slugs=["bugs"],
-            model="gemini-2.5-flash",
+            model="openai/gpt-6-luna",
             advisory=False,
             verbose=False,
             api_key="test-key",
@@ -482,7 +425,7 @@ async def test_run_review_stdin_empty() -> None:
     exit_code = await run_review(
         stdin_diff="",
         agent_slugs=None,
-        model="gemini-2.5-flash",
+        model="openai/gpt-6-luna",
         advisory=False,
         verbose=False,
         api_key="test-key",
@@ -536,7 +479,7 @@ async def test_run_review_constitution_skipped() -> None:
         patch("gatehouse.review.load_styleguide", return_value=None),
         patch("gatehouse.review.load_constitution", return_value=None),
         patch(
-            "gatehouse.review.call_gemini",
+            "gatehouse.review.call_model",
             new_callable=AsyncMock,
             return_value="[]",
         ),
@@ -545,7 +488,7 @@ async def test_run_review_constitution_skipped() -> None:
             base="main",
             staged=False,
             agent_slugs=["constitution"],
-            model="gemini-2.5-flash",
+            model="openai/gpt-6-luna",
             advisory=False,
             verbose=False,
             api_key="test-key",
@@ -616,7 +559,7 @@ async def test_run_review_comment_flag_calls_post() -> None:
         patch("gatehouse.review.get_file_listing", return_value=None),
         patch("gatehouse.review.load_styleguide", return_value=None),
         patch(
-            "gatehouse.review.call_gemini",
+            "gatehouse.review.call_model",
             new_callable=AsyncMock,
             return_value=MOCK_BLOCKING_FINDINGS,
         ),
@@ -630,7 +573,7 @@ async def test_run_review_comment_flag_calls_post() -> None:
             base="main",
             staged=False,
             agent_slugs=["bugs"],
-            model="gemini-2.5-flash",
+            model="openai/gpt-6-luna",
             advisory=False,
             verbose=False,
             api_key="test-key",
@@ -648,7 +591,7 @@ async def test_run_review_advisory_posts_comment_not_request_changes() -> None:
         patch("gatehouse.review.get_file_listing", return_value=None),
         patch("gatehouse.review.load_styleguide", return_value=None),
         patch(
-            "gatehouse.review.call_gemini",
+            "gatehouse.review.call_model",
             new_callable=AsyncMock,
             return_value=MOCK_BLOCKING_FINDINGS,
         ),
@@ -662,7 +605,7 @@ async def test_run_review_advisory_posts_comment_not_request_changes() -> None:
             base="main",
             staged=False,
             agent_slugs=["bugs"],
-            model="gemini-2.5-flash",
+            model="openai/gpt-6-luna",
             advisory=True,
             verbose=False,
             api_key="test-key",
@@ -681,7 +624,7 @@ async def test_run_review_no_comment_flag_skips_post() -> None:
         patch("gatehouse.review.get_file_listing", return_value=None),
         patch("gatehouse.review.load_styleguide", return_value=None),
         patch(
-            "gatehouse.review.call_gemini",
+            "gatehouse.review.call_model",
             new_callable=AsyncMock,
             return_value=MOCK_BLOCKING_FINDINGS,
         ),
@@ -694,7 +637,7 @@ async def test_run_review_no_comment_flag_skips_post() -> None:
             base="main",
             staged=False,
             agent_slugs=["bugs"],
-            model="gemini-2.5-flash",
+            model="openai/gpt-6-luna",
             advisory=False,
             verbose=False,
             api_key="test-key",
@@ -782,11 +725,11 @@ def test_load_env_file_rejects_leading_digit(
 
 
 @pytest.mark.asyncio
-async def test_gemini_fallback_backoff_has_jitter() -> None:
+async def test_llm_fallback_backoff_has_jitter() -> None:
     """Fallback backoff includes random jitter factor."""
     import httpx
 
-    from gatehouse.gemini import INITIAL_BACKOFF, call_gemini
+    from gatehouse.llm import INITIAL_BACKOFF, call_model
 
     rate_limit_response = httpx.Response(
         429,
@@ -794,11 +737,7 @@ async def test_gemini_fallback_backoff_has_jitter() -> None:
     )
     ok_response = httpx.Response(
         200,
-        json={
-            "candidates": [
-                {"content": {"parts": [{"text": "[]"}], "role": "model"}}
-            ]
-        },
+        json={"choices": [{"message": {"role": "assistant", "content": "[]"}}]},
         request=httpx.Request("POST", "https://example.com"),
     )
 
@@ -810,10 +749,10 @@ async def test_gemini_fallback_backoff_has_jitter() -> None:
     sleep_mock = AsyncMock()
     with (
         patch("asyncio.sleep", sleep_mock),
-        patch("gatehouse.gemini.random.random", return_value=0.25),
+        patch("gatehouse.llm.random.random", return_value=0.25),
     ):
-        await call_gemini(
-            mock_client, "system", "user", "gemini-2.5-flash", "key"
+        await call_model(
+            mock_client, "system", "user", "openai/gpt-6-luna", "key"
         )
 
     expected = INITIAL_BACKOFF * (2 ** 0) * (0.5 + 0.25)
@@ -823,12 +762,125 @@ async def test_gemini_fallback_backoff_has_jitter() -> None:
 def test_cli_missing_api_key(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Missing GEMINI_API_KEY exits 2."""
+    """Missing OPENROUTER_API_KEY exits 2."""
     from gatehouse import cli
 
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY_FILE", raising=False)
     monkeypatch.setattr(cli, "ENV_FILE", tmp_path / "nonexistent.env")
     monkeypatch.setattr("sys.argv", ["gatehouse"])
     with pytest.raises(SystemExit) as exc_info:
         cli.main()
     assert exc_info.value.code == 2
+
+
+def _ok(content: str) -> Any:
+    import httpx
+
+    return httpx.Response(
+        200,
+        json={"choices": [{"message": {"role": "assistant", "content": content}}]},
+        request=httpx.Request("POST", "https://example.com"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_llm_payload_pins_zdr_and_fallback() -> None:
+    """Every request enforces ZDR/no-training and lists the fallback model."""
+    import httpx
+
+    from gatehouse.llm import FALLBACK_MODELS, OPENROUTER_API_URL, call_model
+
+    mock_client = AsyncMock(spec=httpx.AsyncClient)
+    mock_client.post = AsyncMock(return_value=_ok("[]"))
+    await call_model(mock_client, "sys", "user", "openai/gpt-6-luna", "k")
+
+    args, kwargs = mock_client.post.call_args
+    assert args[0] == OPENROUTER_API_URL
+    body = kwargs["json"]
+    assert body["provider"] == {"zdr": True, "data_collection": "deny"}
+    assert body["models"] == ["openai/gpt-6-luna", *FALLBACK_MODELS]
+    assert kwargs["headers"]["Authorization"] == "Bearer k"
+
+
+@pytest.mark.asyncio
+async def test_llm_fallback_not_duplicated() -> None:
+    """Requesting the fallback model itself does not list it twice."""
+    import httpx
+
+    from gatehouse.llm import FALLBACK_MODELS, call_model
+
+    mock_client = AsyncMock(spec=httpx.AsyncClient)
+    mock_client.post = AsyncMock(return_value=_ok("[]"))
+    await call_model(mock_client, "sys", "user", FALLBACK_MODELS[0], "k")
+    assert mock_client.post.call_args.kwargs["json"]["models"] == [FALLBACK_MODELS[0]]
+
+
+@pytest.mark.asyncio
+async def test_llm_retries_upstream_error_in_200() -> None:
+    """A 200 carrying an upstream error object is retried, not parsed."""
+    import httpx
+
+    from gatehouse.llm import call_model
+
+    error_200 = httpx.Response(
+        200,
+        json={"error": {"code": 429, "message": "rate-limited upstream"}},
+        request=httpx.Request("POST", "https://example.com"),
+    )
+    mock_client = AsyncMock(spec=httpx.AsyncClient)
+    mock_client.post = AsyncMock(side_effect=[error_200, _ok("[]")])
+    with patch("asyncio.sleep", new_callable=AsyncMock):
+        text = await call_model(mock_client, "s", "u", "openai/gpt-6-luna", "k")
+    assert text == "[]"
+    assert mock_client.post.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_llm_strips_code_fences() -> None:
+    """A fenced JSON reply is returned as bare JSON."""
+    import httpx
+
+    from gatehouse.llm import call_model
+
+    mock_client = AsyncMock(spec=httpx.AsyncClient)
+    mock_client.post = AsyncMock(return_value=_ok('```json\n[{"a": 1}]\n```'))
+    text = await call_model(mock_client, "s", "u", "openai/gpt-6-luna", "k")
+    assert text == '[{"a": 1}]'
+
+
+@pytest.mark.asyncio
+async def test_run_agent_accepts_wrapped_array() -> None:
+    """{"findings": [...]} is unwrapped rather than dropped."""
+    import httpx
+
+    from gatehouse import review
+    from gatehouse.agents import BUG_HUNTER
+
+    finding = {"file": "a.py", "lineStart": 1, "lineEnd": 1, "severity": "high",
+               "category": "bug", "description": "d", "suggestion": "s",
+               "evidence": "e", "confidence": 90}
+    with patch(
+        "gatehouse.review.call_model",
+        new_callable=AsyncMock,
+        return_value=json.dumps({"findings": [finding]}),
+    ):
+        _, findings = await review.run_agent(
+            AsyncMock(spec=httpx.AsyncClient), BUG_HUNTER, "u",
+            "openai/gpt-6-luna", "k", False, asyncio.Semaphore(1),
+        )
+    assert findings == [finding]
+
+
+def test_cli_key_file_wins(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """OPENROUTER_API_KEY_FILE takes precedence and is stripped."""
+    from gatehouse import cli
+
+    key_file = tmp_path / "key"
+    key_file.write_text("from-file\n")
+    key_file.chmod(0o600)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "from-env")
+    monkeypatch.setenv("OPENROUTER_API_KEY_FILE", str(key_file))
+    assert cli.load_api_key() == "from-file"
