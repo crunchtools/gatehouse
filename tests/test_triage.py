@@ -108,7 +108,9 @@ def test_example_runs_triage_after_review_and_on_replies() -> None:
     text = EXAMPLE.read_text()
     assert "pull_request_review_comment:" in text
     assert re.search(r"triage:.*?needs: review.*?if: always\(\)", text, re.S)
-    assert text.count("if: github.event_name == 'pull_request_target'") == 2
+    # Only the review is gated to the PR event; the guard also runs on replies
+    # (see test_fork_safety.test_guard_runs_on_reply_events).
+    assert text.count("if: github.event_name == 'pull_request_target'") == 1
 
 
 def test_example_guard_gates_on_head_repo_not_author_role() -> None:
