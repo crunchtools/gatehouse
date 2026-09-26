@@ -5,6 +5,23 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-09-25
+
+### Added
+- **`retriage.yml` and `examples/gatehouse-retriage.yml`: a reply now clears
+  the triage check.** Triage re-ran on `pull_request_review_comment`, but that
+  run's checks do not count toward branch rules: on #50, four passing reply
+  runs left the PR blocked until the `pull_request_target` run's triage job
+  was re-run by hand. The new `workflow_run` listener does that re-run
+  automatically, from the default-branch definition. Repos that require
+  `Gatehouse triage` should add the example file.
+
+### Security
+- **Answers #47.** Because reply-event checks do not count toward the
+  ruleset, a fork that rewrites its copy of the workflow cannot satisfy
+  `Protect workflows` or `Gatehouse triage` on a reply. The re-run that does
+  count uses the base definition.
+
 ## [0.10.0] - 2026-09-25
 
 ### Changed

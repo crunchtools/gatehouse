@@ -18,10 +18,11 @@
 # Outdated findings still count: a later commit fixing one is answered by
 # saying so, which is the audit trail this job exists to create.
 #
-# Callers run it twice (see examples/gatehouse.yml): after the review job, in
-# the same run, and again on every review-comment event. The second trigger is
-# needed because a review posted with GITHUB_TOKEN cannot start a new workflow
-# run, while a human reply can.
+# Callers run it after the review job, in the same pull_request_target run
+# (see examples/gatehouse.yml). A reply cannot simply run it again: a review
+# posted with GITHUB_TOKEN starts no workflow, and a run started by the reply
+# event does not count toward branch rules. retriage.yml re-runs this job
+# inside the pull_request_target run instead.
 #
 # Read-only: pull-requests: read, no checkout, no secrets, no PR code executed.
 

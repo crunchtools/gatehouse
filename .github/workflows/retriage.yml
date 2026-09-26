@@ -1,0 +1,95 @@
+# Gatehouse retriage — re-run triage where the required check counts (reusable)
+#
+# A reply to a finding has to re-run triage, and the obvious way — triage on
+# `pull_request_review_comment` — does not work. GitHub attaches that run's
+# check to the PR head, but the merge box and the ruleset ignore it: only the
+# `pull_request_target` suite's result counts. Verified on gatehouse#50: four
+# passing reply runs left the PR BLOCKED; re-running the triage job inside the
+# `pull_request_target` run made it CLEAN.
+#
+# That is also why a fork cannot forge the check (gatehouse#47). A reply run
+# executes the fork's copy of the workflow, but its suite is not the one the
+# ruleset reads. The suite that counts is re-run from the base definition.
+#
+# So the reply run is only a doorbell. Callers listen for it with
+# `workflow_run` — which runs the default-branch definition with a write token
+# even when the reply came from a fork — and call this workflow, which finds
+# the `pull_request_target` run of the same workflow for the same head commit
+# and re-runs only its triage job. Triage is deterministic, so a spurious
+# re-run costs a few seconds and changes nothing.
+#
+# No checkout, no secrets, no PR code: two GitHub API reads and one re-run.
+
+name: Gatehouse retriage
+
+on:
+  workflow_call:
+    inputs:
+      check:
+        description: "Triage job name as the Actions API reports it."
+        type: string
+        required: false
+        default: "Gatehouse triage / Gatehouse triage"
+
+permissions: {}
+
+jobs:
+  retriage:
+    name: Re-run Gatehouse triage
+    runs-on: ubuntu-latest
+    # Replies queue per PR head: a re-run cannot start while one is running.
+    concurrency:
+      group: >-
+        gatehouse-retriage-${{ github.event.workflow_run.head_repository.full_name }}-${{
+        github.event.workflow_run.head_branch }}-${{ github.event.workflow_run.head_sha }}
+    permissions:
+      actions: write
+    steps:
+      - name: Re-run triage in the pull_request_target run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          WORKFLOW_ID: ${{ github.event.workflow_run.workflow_id }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          HEAD_REPO: ${{ github.event.workflow_run.head_repository.full_name }}
+          CHECK: ${{ inputs.check }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" != "workflow_run" ]; then
+            echo "::error::Call this from 'on: workflow_run'." >&2
+            exit 1
+          fi
+
+          # Same workflow file, same PR head (repo, branch, commit: two PRs can
+          # share a commit), the event whose suite counts. Newest first.
+          runs="repos/$GITHUB_REPOSITORY/actions/workflows/$WORKFLOW_ID/runs"
+          run_id="$(gh api "$runs?event=pull_request_target&head_sha=$HEAD_SHA&per_page=100" \
+            -X GET -f branch="$HEAD_BRANCH" \
+            --jq '[.workflow_runs[] | select(.head_repository.full_name == env.HEAD_REPO)]
+                  | first | .id // empty')"
+          if [ -z "$run_id" ]; then
+            echo "No pull_request_target run for $HEAD_SHA; nothing to re-run."
+            exit 0
+          fi
+
+          # A run still in progress will triage on its own when it gets there,
+          # and GitHub refuses to re-run a job until its run has completed.
+          for _ in $(seq 60); do
+            status="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id" --jq .status)"
+            [ "$status" = completed ] && break
+            sleep 5
+          done
+          if [ "$status" != completed ]; then
+            echo "::error::Run $run_id still $status after 5 minutes." >&2
+            exit 1
+          fi
+
+          job_id="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/jobs" \
+            --jq '.jobs[] | select(.name == env.CHECK) | .id' | head -n1)"
+          if [ -z "$job_id" ]; then
+            echo "::error::No job named '$CHECK' in run $run_id." >&2
+            exit 1
+          fi
+          gh api -X POST "repos/$GITHUB_REPOSITORY/actions/jobs/$job_id/rerun" --silent
+          echo "Re-ran '$CHECK' (job $job_id) in run $run_id."

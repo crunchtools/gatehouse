@@ -11,7 +11,8 @@ on:
   pull_request_target:
     branches: [master]
     types: [opened, synchronize, reopened]
-  # Re-runs triage on a reply; guard and review are skipped for this event.
+  # A reply rings the doorbell; gatehouse-retriage.yml re-runs triage in the
+  # pull_request_target run, the only suite branch rules count.
   pull_request_review_comment:
     types: [created, edited, deleted]
 
