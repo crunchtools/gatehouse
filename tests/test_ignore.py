@@ -188,13 +188,20 @@ async def test_run_review_all_ignored_skips_the_agents(
     monkeypatch.chdir(tmp_path)
     (tmp_path / IGNORE_FILE).write_text("data/\n")
     call_model = AsyncMock(return_value="[]")
-    with patch("gatehouse.review.call_model", call_model):
+    with (
+        patch("gatehouse.review.call_model", call_model),
+        patch("gatehouse.review.post_pr_review", new_callable=AsyncMock) as post,
+    ):
         exit_code = await run_review(
-            stdin_diff=MODIFIED.format(p="data/x.fp"), agent_slugs=["bugs"], api_key="k"
+            stdin_diff=MODIFIED.format(p="data/x.fp"),
+            agent_slugs=["bugs"],
+            api_key="k",
+            comment=True,
         )
     out = capsys.readouterr()
     assert exit_code == 0
     call_model.assert_not_awaited()
+    post.assert_not_awaited()
     assert "No changes to review." in out.out
     assert f"Ignored 1 file(s) per {IGNORE_FILE}." in out.err
 

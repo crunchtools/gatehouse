@@ -17,8 +17,9 @@ All notable changes to this project are documented here, following
   changes. The posted review says how many files were skipped (when every changed
   file is ignored, nothing is posted).
 - Under a trusted base (`GATEHOUSE_CONTEXT_REPO`/`REF`), the styleguide,
-  constitution and ignore file come only from the base; a missing base copy
-  no longer falls back to the working tree.
+  ignore file and auto-discovered constitution come only from the base; a
+  missing base copy no longer falls back to the working tree. An explicit
+  `--constitution` path still wins, as before.
 
 ## [0.11.0] - 2026-09-25
 
