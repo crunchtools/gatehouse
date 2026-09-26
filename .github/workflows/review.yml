@@ -72,7 +72,7 @@ on:
         description: "Gatehouse release image tag. Bump per release."
         type: string
         required: false
-        default: "quay.io/crunchtools/gatehouse:0.9.0"
+        default: "quay.io/crunchtools/gatehouse:0.10.0"
     secrets:
       OPENROUTER_API_KEY:
         required: true
@@ -118,17 +118,29 @@ jobs:
           [ -n "$AGENTS" ] && args+=( --agents "$AGENTS" )
 
           # 1) Fetch the PR diff over the API — data only, no fork code on disk.
-          # 2) Pipe it into the release-tag-pinned container's `gatehouse --stdin --comment`.
+          #    Staged in a file so a failed fetch fails here, by name, instead
+          #    of reaching gatehouse as an empty diff. --allow-escape-sequences:
+          #    gh otherwise refuses any diff containing ESC bytes (data files,
+          #    terminal fixtures); the diff goes to a pipe, not a terminal, and
+          #    gatehouse strips escapes from everything it prints or posts.
+          diff_file="$(mktemp)"
+          trap 'rm -f "$diff_file"' EXIT
+          if ! gh pr diff "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --patch \
+              --allow-escape-sequences > "$diff_file"; then
+            echo "::error::Could not fetch the diff for PR #${PR_NUMBER}." >&2
+            exit 2
+          fi
+
+          # 2) Feed it to the release-tag-pinned container's `gatehouse --stdin --comment`.
           #    - GITHUB_REF is synthesized as refs/pull/N/merge so gatehouse's
           #      detect_pr_context() resolves (repo, PR) without mounting the event file.
           #    - GITHUB_TOKEN authorizes gatehouse to POST the PR review via the REST API.
-          gh pr diff "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --patch \
-            | docker run --rm -i \
-                -e OPENROUTER_API_KEY \
-                -e GITHUB_TOKEN="$GH_TOKEN" \
-                -e GITHUB_REPOSITORY="$GITHUB_REPOSITORY" \
-                -e GITHUB_REF="refs/pull/${PR_NUMBER}/merge" \
-                -e GATEHOUSE_CONTEXT_REPO="$GITHUB_REPOSITORY" \
-                -e GATEHOUSE_CONTEXT_REF="$BASE_REF" \
-                "$IMAGE" \
-                "${args[@]}"
+          docker run --rm -i \
+            -e OPENROUTER_API_KEY \
+            -e GITHUB_TOKEN="$GH_TOKEN" \
+            -e GITHUB_REPOSITORY="$GITHUB_REPOSITORY" \
+            -e GITHUB_REF="refs/pull/${PR_NUMBER}/merge" \
+            -e GATEHOUSE_CONTEXT_REPO="$GITHUB_REPOSITORY" \
+            -e GATEHOUSE_CONTEXT_REF="$BASE_REF" \
+            "$IMAGE" \
+            "${args[@]}" < "$diff_file"

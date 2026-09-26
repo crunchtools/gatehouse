@@ -5,7 +5,24 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-09-25
+
+### Changed
+- **An agent that cannot finish now exits 2.** It used to print a warning and
+  count as zero findings, so an OpenRouter outage or a garbled reply passed
+  as a clean review (the pre-commit hook included). Findings from the agents
+  that did finish are still printed and posted, and the posted review names
+  the ones that did not. `--advisory`, and so the default `review.yml`, still
+  exits 0 (#41).
+
 ### Fixed
+- **`--stdin` crashed on `httpx.ReadTimeout` over a large diff.** Timeouts and
+  dropped connections are now retried with the same backoff as a 429 (#41).
+- **`review.yml` failed on diffs containing escape sequences.** `gh pr diff`
+  refuses such a diff unless told otherwise, printed nothing, and the job
+  reported `No changes to review.` before exiting 1. The diff is now fetched
+  with `--allow-escape-sequences` into a file, and a failed fetch says so
+  (#44).
 - **The workflow guard missed renames.** It read `gh pr diff --name-only`,
   which lists only a renamed file's new path, so a fork could move a workflow
   out of `.github/workflows/` (deleting it) and pass. The guard in

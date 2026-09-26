@@ -129,9 +129,7 @@ def main() -> None:
             )
         sys.exit(2)
 
-    agent_slugs: list[str] | None = (
-        args.agents.split(",") if args.agents else None
-    )
+    agent_slugs: list[str] | None = args.agents.split(",") if args.agents else None
 
     stdin_diff: str | None = None
     if args.stdin:

@@ -16,7 +16,16 @@ REVIEW_WORKFLOW = Path(__file__).parent.parent / ".github" / "workflows" / "revi
 
 
 def test_review_workflow_default_image_matches_package_version():
-    match = re.search(r'default: "quay\.io/crunchtools/gatehouse:([^"]+)"',
-                      REVIEW_WORKFLOW.read_text())
+    match = re.search(
+        r'default: "quay\.io/crunchtools/gatehouse:([^"]+)"', REVIEW_WORKFLOW.read_text()
+    )
     assert match, "review.yml has no default gatehouse image"
     assert match.group(1) == __version__
+
+
+def test_review_workflow_fetches_diff_with_escape_sequences():
+    """gh pr diff refuses a diff with ESC bytes unless told; that failed #44."""
+    text = REVIEW_WORKFLOW.read_text()
+    assert "--allow-escape-sequences" in text
+    assert '< "$diff_file"' in text
+    assert "| docker run" not in text

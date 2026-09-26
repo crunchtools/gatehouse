@@ -142,7 +142,10 @@ def print_summary(
     summary = ", ".join(parts)
     print(f"\n{bld}Summary:{rst} {total} findings ({summary})")
 
-    if exit_code != 0:
+    if exit_code == 2:
+        crit = color("critical")
+        print(f"{crit}Exit: 2 (review incomplete){rst}")
+    elif exit_code != 0:
         crit = color("critical")
         print(f"{crit}Exit: {exit_code} (blocking findings detected){rst}")
     else:

@@ -201,14 +201,12 @@ async def test_confidence_filtering() -> None:
 
 @pytest.mark.asyncio
 async def test_run_review_api_error_graceful() -> None:
-    """API errors are caught gracefully, agent returns no findings."""
+    """An agent whose API calls fail marks the review incomplete: exit 2."""
     import httpx
 
     mock_request = httpx.Request("POST", "https://example.com")
     mock_response = httpx.Response(429, request=mock_request)
-    error = httpx.HTTPStatusError(
-        "rate limited", request=mock_request, response=mock_response
-    )
+    error = httpx.HTTPStatusError("rate limited", request=mock_request, response=mock_response)
     with (
         patch("gatehouse.review.get_git_diff", return_value="some diff"),
         patch("gatehouse.review.get_file_listing", return_value="src/app.py"),
@@ -228,12 +226,12 @@ async def test_run_review_api_error_graceful() -> None:
             verbose=False,
             api_key="test-key",
         )
-    assert exit_code == 0
+    assert exit_code == 2
 
 
 @pytest.mark.asyncio
 async def test_run_review_invalid_json_graceful() -> None:
-    """Invalid JSON from API is caught gracefully."""
+    """Invalid JSON from the model marks the review incomplete: exit 2."""
     with (
         patch("gatehouse.review.get_git_diff", return_value="some diff"),
         patch("gatehouse.review.get_file_listing", return_value="src/app.py"),
@@ -253,7 +251,7 @@ async def test_run_review_invalid_json_graceful() -> None:
             verbose=False,
             api_key="test-key",
         )
-    assert exit_code == 0
+    assert exit_code == 2
 
 
 @pytest.mark.asyncio
@@ -324,14 +322,10 @@ async def test_llm_retries_on_429() -> None:
     )
 
     mock_client = AsyncMock(spec=httpx.AsyncClient)
-    mock_client.post = AsyncMock(
-        side_effect=[rate_limit_response, ok_response]
-    )
+    mock_client.post = AsyncMock(side_effect=[rate_limit_response, ok_response])
 
     with patch("asyncio.sleep", new_callable=AsyncMock):
-        text = await call_model(
-            mock_client, "system", "user", "openai/gpt-6-luna", "key"
-        )
+        text = await call_model(mock_client, "system", "user", "openai/gpt-6-luna", "key")
 
     assert text == "[]"
     assert mock_client.post.call_count == 2
@@ -356,15 +350,11 @@ async def test_llm_honors_retry_after_header() -> None:
     )
 
     mock_client = AsyncMock(spec=httpx.AsyncClient)
-    mock_client.post = AsyncMock(
-        side_effect=[rate_limit_response, ok_response]
-    )
+    mock_client.post = AsyncMock(side_effect=[rate_limit_response, ok_response])
 
     sleep_mock = AsyncMock()
     with patch("asyncio.sleep", sleep_mock):
-        text = await call_model(
-            mock_client, "system", "user", "openai/gpt-6-luna", "key"
-        )
+        text = await call_model(mock_client, "system", "user", "openai/gpt-6-luna", "key")
 
     assert text == "[]"
     sleep_mock.assert_awaited_once_with(7.0)
@@ -389,9 +379,7 @@ async def test_llm_raises_after_max_retries() -> None:
         patch("asyncio.sleep", new_callable=AsyncMock),
         pytest.raises(httpx.HTTPStatusError),
     ):
-        await call_model(
-            mock_client, "system", "user", "openai/gpt-6-luna", "key"
-        )
+        await call_model(mock_client, "system", "user", "openai/gpt-6-luna", "key")
 
     assert mock_client.post.call_count == MAX_RETRIES
 
@@ -447,9 +435,7 @@ def test_load_constitution_override_missing(tmp_path: Path) -> None:
     assert exc_info.value.code == 2
 
 
-def test_load_constitution_discovery(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_load_constitution_discovery(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Discovery finds files in priority order."""
     monkeypatch.chdir(tmp_path)
     agents_md = tmp_path / "AGENTS.md"
@@ -462,9 +448,7 @@ def test_load_constitution_discovery(
     assert load_constitution() == "specify rules"
 
 
-def test_load_constitution_none(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_load_constitution_none(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Returns None when no constitution file found."""
     monkeypatch.chdir(tmp_path)
     assert load_constitution() is None
@@ -517,9 +501,7 @@ def test_detect_default_branch_fallback() -> None:
 
     origin_fail = subprocess.CompletedProcess(args=[], returncode=1, stdout="")
     main_fail = subprocess.CompletedProcess(args=[], returncode=1, stdout="")
-    master_ok = subprocess.CompletedProcess(
-        args=[], returncode=0, stdout="abc123\n"
-    )
+    master_ok = subprocess.CompletedProcess(args=[], returncode=0, stdout="abc123\n")
 
     with patch(
         "gatehouse.review.subprocess.run",
@@ -646,9 +628,7 @@ async def test_run_review_no_comment_flag_skips_post() -> None:
     mock_post.assert_not_awaited()
 
 
-def test_load_env_file(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_load_env_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """load_env_file loads KEY=VALUE pairs without overwriting existing env."""
     from gatehouse.cli import load_env_file
 
@@ -687,9 +667,7 @@ def test_load_env_file_rejects_spaces_in_key(
     assert "FOO BAR" not in os.environ
 
 
-def test_load_env_file_rejects_dash_in_key(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_load_env_file_rejects_dash_in_key(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     from gatehouse.cli import load_env_file
 
     env_file = tmp_path / "test.env"
@@ -699,9 +677,7 @@ def test_load_env_file_rejects_dash_in_key(
     assert "foo-bar" not in os.environ
 
 
-def test_load_env_file_accepts_lowercase(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_load_env_file_accepts_lowercase(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     from gatehouse.cli import load_env_file
 
     env_file = tmp_path / "test.env"
@@ -742,26 +718,20 @@ async def test_llm_fallback_backoff_has_jitter() -> None:
     )
 
     mock_client = AsyncMock(spec=httpx.AsyncClient)
-    mock_client.post = AsyncMock(
-        side_effect=[rate_limit_response, ok_response]
-    )
+    mock_client.post = AsyncMock(side_effect=[rate_limit_response, ok_response])
 
     sleep_mock = AsyncMock()
     with (
         patch("asyncio.sleep", sleep_mock),
         patch("gatehouse.llm.random.random", return_value=0.25),
     ):
-        await call_model(
-            mock_client, "system", "user", "openai/gpt-6-luna", "key"
-        )
+        await call_model(mock_client, "system", "user", "openai/gpt-6-luna", "key")
 
-    expected = INITIAL_BACKOFF * (2 ** 0) * (0.5 + 0.25)
+    expected = INITIAL_BACKOFF * (2**0) * (0.5 + 0.25)
     sleep_mock.assert_awaited_once_with(expected)
 
 
-def test_cli_missing_api_key(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_cli_missing_api_key(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Missing OPENROUTER_API_KEY exits 2."""
     from gatehouse import cli
 
@@ -857,24 +827,35 @@ async def test_run_agent_accepts_wrapped_array() -> None:
     from gatehouse import review
     from gatehouse.agents import BUG_HUNTER
 
-    finding = {"file": "a.py", "lineStart": 1, "lineEnd": 1, "severity": "high",
-               "category": "bug", "description": "d", "suggestion": "s",
-               "evidence": "e", "confidence": 90}
+    finding = {
+        "file": "a.py",
+        "lineStart": 1,
+        "lineEnd": 1,
+        "severity": "high",
+        "category": "bug",
+        "description": "d",
+        "suggestion": "s",
+        "evidence": "e",
+        "confidence": 90,
+    }
     with patch(
         "gatehouse.review.call_model",
         new_callable=AsyncMock,
         return_value=json.dumps({"findings": [finding]}),
     ):
         _, findings = await review.run_agent(
-            AsyncMock(spec=httpx.AsyncClient), BUG_HUNTER, "u",
-            "openai/gpt-6-luna", "k", False, asyncio.Semaphore(1),
+            AsyncMock(spec=httpx.AsyncClient),
+            BUG_HUNTER,
+            "u",
+            "openai/gpt-6-luna",
+            "k",
+            False,
+            asyncio.Semaphore(1),
         )
     assert findings == [finding]
 
 
-def test_cli_key_file_wins(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_cli_key_file_wins(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """OPENROUTER_API_KEY_FILE takes precedence and is stripped."""
     from gatehouse import cli
 
@@ -884,3 +865,230 @@ def test_cli_key_file_wins(
     monkeypatch.setenv("OPENROUTER_API_KEY", "from-env")
     monkeypatch.setenv("OPENROUTER_API_KEY_FILE", str(key_file))
     assert cli.load_api_key() == "from-file"
+
+
+@pytest.mark.asyncio
+async def test_run_review_agent_failure_advisory_exits_zero(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """--advisory never fails the run; an unfinished agent is still reported."""
+    import httpx
+
+    with (
+        patch("gatehouse.review.get_file_listing", return_value="src/app.py"),
+        patch("gatehouse.review.load_styleguide", return_value=None),
+        patch(
+            "gatehouse.review.call_model",
+            new_callable=AsyncMock,
+            side_effect=httpx.ReadTimeout("timed out"),
+        ),
+    ):
+        exit_code = await run_review(
+            stdin_diff="some diff",
+            agent_slugs=["bugs"],
+            advisory=True,
+            api_key="test-key",
+        )
+    assert exit_code == 0
+    assert "Review incomplete: Bug Hunter" in capsys.readouterr().err
+
+
+@pytest.mark.asyncio
+async def test_run_review_partial_failure_still_reports_findings(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Findings from agents that finished are printed; failed ones are named."""
+    import httpx
+
+    async def fake(_c: Any, system_prompt: str, *_a: Any) -> str:
+        if system_prompt == BUG_HUNTER.system_prompt:
+            return MOCK_BLOCKING_FINDINGS
+        raise httpx.ReadTimeout("timed out")
+
+    with (
+        patch("gatehouse.review.get_file_listing", return_value="src/app.py"),
+        patch("gatehouse.review.load_styleguide", return_value=None),
+        patch("gatehouse.review.call_model", side_effect=fake),
+    ):
+        exit_code = await run_review(
+            stdin_diff="some diff",
+            agent_slugs=["bugs", "consistency"],
+            api_key="test-key",
+        )
+    out = capsys.readouterr()
+    assert exit_code == 2
+    assert "Null reference on user input" in out.out
+    assert CONSISTENCY_CHECK.name in out.err
+
+
+@pytest.mark.asyncio
+async def test_llm_retries_on_read_timeout() -> None:
+    """call_model retries a transport timeout and returns the next answer."""
+    import httpx
+
+    from gatehouse.llm import call_model
+
+    ok = httpx.Response(
+        200,
+        json={"choices": [{"message": {"content": "[]"}}]},
+        request=httpx.Request("POST", "https://example.com"),
+    )
+    mock_client = AsyncMock(spec=httpx.AsyncClient)
+    mock_client.post = AsyncMock(side_effect=[httpx.ReadTimeout("slow"), ok])
+
+    with patch("asyncio.sleep", new_callable=AsyncMock):
+        text = await call_model(mock_client, "system", "user", "openai/gpt-6-luna", "key")
+    assert text == "[]"
+    assert mock_client.post.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_llm_raises_timeout_after_max_retries() -> None:
+    """A timeout on every attempt surfaces as the timeout, not a crash elsewhere."""
+    import httpx
+
+    from gatehouse.llm import MAX_RETRIES, call_model
+
+    mock_client = AsyncMock(spec=httpx.AsyncClient)
+    mock_client.post = AsyncMock(side_effect=httpx.ReadTimeout("slow"))
+
+    sleep_mock = AsyncMock()
+    with (
+        patch("asyncio.sleep", sleep_mock),
+        pytest.raises(httpx.ReadTimeout),
+    ):
+        await call_model(mock_client, "system", "user", "openai/gpt-6-luna", "key")
+    assert mock_client.post.call_count == MAX_RETRIES
+    assert sleep_mock.await_count == MAX_RETRIES - 1
+
+
+@pytest.mark.asyncio
+async def test_run_review_non_numeric_confidence_is_agent_failure() -> None:
+    """A malformed finding marks the agent unfinished instead of crashing."""
+    bad = json.dumps([{"file": "a.py", "severity": "high", "confidence": "high"}])
+    with (
+        patch("gatehouse.review.get_file_listing", return_value="a.py"),
+        patch("gatehouse.review.load_styleguide", return_value=None),
+        patch("gatehouse.review.call_model", new_callable=AsyncMock, return_value=bad),
+    ):
+        exit_code = await run_review(
+            stdin_diff="some diff", agent_slugs=["bugs"], api_key="test-key"
+        )
+    assert exit_code == 2
+
+
+@pytest.mark.asyncio
+async def test_run_review_comment_names_failed_agents() -> None:
+    """The posted review is told which agents did not finish."""
+    import httpx
+
+    with (
+        patch("gatehouse.review.get_file_listing", return_value=None),
+        patch("gatehouse.review.load_styleguide", return_value=None),
+        patch(
+            "gatehouse.review.call_model",
+            new_callable=AsyncMock,
+            side_effect=httpx.ReadTimeout("slow"),
+        ),
+        patch(
+            "gatehouse.review.post_pr_review", new_callable=AsyncMock, return_value=True
+        ) as mock_post,
+    ):
+        await run_review(stdin_diff="some diff", agent_slugs=["bugs"], api_key="k", comment=True)
+    assert mock_post.call_args.args[2] == (BUG_HUNTER.name,)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reply", ['{"verdict": "fine"}', '"ok"', '["not a finding"]'])
+async def test_run_review_wrong_shape_is_agent_failure(reply: str) -> None:
+    """A reply that is not a list of finding objects does not pass as clean."""
+    with (
+        patch("gatehouse.review.get_file_listing", return_value=None),
+        patch("gatehouse.review.load_styleguide", return_value=None),
+        patch("gatehouse.review.call_model", new_callable=AsyncMock, return_value=reply),
+    ):
+        exit_code = await run_review(stdin_diff="some diff", agent_slugs=["bugs"], api_key="k")
+    assert exit_code == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "body",
+    [
+        [],
+        {"choices": []},
+        {"choices": {"a": 1}},
+        {"choices": ["x"]},
+        {"choices": [{"message": 1}]},
+        {"choices": [{"message": {"content": "  "}}]},
+    ],
+)
+async def test_llm_malformed_body_is_retried(body: Any) -> None:
+    """A 200 body of the wrong shape is retried like an upstream error."""
+    import httpx
+
+    from gatehouse.llm import MAX_RETRIES, call_model
+
+    response = httpx.Response(200, json=body, request=httpx.Request("POST", "https://example.com"))
+    mock_client = AsyncMock(spec=httpx.AsyncClient)
+    mock_client.post = AsyncMock(return_value=response)
+    with (
+        patch("asyncio.sleep", new_callable=AsyncMock),
+        pytest.raises(httpx.HTTPStatusError),
+    ):
+        await call_model(mock_client, "system", "user", "openai/gpt-6-luna", "key")
+    assert mock_client.post.call_count == MAX_RETRIES
+
+
+@pytest.mark.asyncio
+async def test_run_review_advisory_blocking_and_failed(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Advisory with a blocking finding and a failed agent: both shown, exit 0."""
+    import httpx
+
+    async def fake(_c: Any, system_prompt: str, *_a: Any) -> str:
+        if system_prompt == BUG_HUNTER.system_prompt:
+            return MOCK_BLOCKING_FINDINGS
+        raise httpx.ReadTimeout("timed out")
+
+    with (
+        patch("gatehouse.review.get_file_listing", return_value=None),
+        patch("gatehouse.review.load_styleguide", return_value=None),
+        patch("gatehouse.review.call_model", side_effect=fake),
+    ):
+        exit_code = await run_review(
+            stdin_diff="some diff",
+            agent_slugs=["bugs", "consistency"],
+            advisory=True,
+            api_key="k",
+        )
+    out = capsys.readouterr()
+    assert exit_code == 0
+    assert "Null reference on user input" in out.out
+    assert "Exit: 0" in out.out
+    assert f"Review incomplete: {CONSISTENCY_CHECK.name}" in out.err
+
+
+@pytest.mark.asyncio
+async def test_run_review_incomplete_summary_says_exit_2(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The printed summary agrees with the returned exit code."""
+    import httpx
+
+    async def fake(_c: Any, system_prompt: str, *_a: Any) -> str:
+        if system_prompt == BUG_HUNTER.system_prompt:
+            return MOCK_BLOCKING_FINDINGS
+        raise httpx.ReadTimeout("timed out")
+
+    with (
+        patch("gatehouse.review.get_file_listing", return_value=None),
+        patch("gatehouse.review.load_styleguide", return_value=None),
+        patch("gatehouse.review.call_model", side_effect=fake),
+    ):
+        exit_code = await run_review(
+            stdin_diff="some diff", agent_slugs=["bugs", "consistency"], api_key="k"
+        )
+    assert exit_code == 2
+    assert "Exit: 2 (review incomplete)" in capsys.readouterr().out

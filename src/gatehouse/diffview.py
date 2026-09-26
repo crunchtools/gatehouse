@@ -99,10 +99,10 @@ def _apply_metadata(current: FileDiff, line: str) -> None:
     elif line.startswith("deleted file mode"):
         current.status = "deleted"
     elif line.startswith("rename from "):
-        current.old_path = line[len("rename from "):]
+        current.old_path = line[len("rename from ") :]
         current.status = "renamed"
     elif line.startswith("rename to "):
-        current.path = line[len("rename to "):]
+        current.path = line[len("rename to ") :]
     elif line.startswith("--- "):
         path = _strip_git_prefix(line[4:])
         if path != "/dev/null" and current.old_path is None:
@@ -158,9 +158,7 @@ def _parse_diff(diff: str) -> list[FileDiff]:
     return parsed
 
 
-def _render_block(
-    label: str, start: int, lines: list[tuple[str, str]], marker: str
-) -> str:
+def _render_block(label: str, start: int, lines: list[tuple[str, str]], marker: str) -> str:
     """Render one BEFORE or AFTER block with line numbers and markers."""
     rendered: list[str] = [f"{label}:", "```"]
     number = start
@@ -182,14 +180,18 @@ def _render_hunk(hunk: Hunk) -> str:
         parts.append(
             _render_block(
                 "BEFORE (old code — no longer exists)",
-                hunk.old_start, before, "[-]",
+                hunk.old_start,
+                before,
+                "[-]",
             )
         )
     if after:
         parts.append(
             _render_block(
                 "AFTER (current code — real file line numbers)",
-                hunk.new_start, after, "[+]",
+                hunk.new_start,
+                after,
+                "[+]",
             )
         )
     if not parts:

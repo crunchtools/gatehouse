@@ -38,9 +38,7 @@ def _trusted_base_fetcher(calls):
     return fake_fetch
 
 
-def test_styleguide_prefers_trusted_base_over_planted_local(
-    tmp_path, monkeypatch
-):
+def test_styleguide_prefers_trusted_base_over_planted_local(tmp_path, monkeypatch):
     _plant_malicious_rules(tmp_path)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(review, "fetch_repo_file", _trusted_base_fetcher([]))
@@ -54,9 +52,7 @@ def test_styleguide_prefers_trusted_base_over_planted_local(
     assert MALICIOUS not in result
 
 
-def test_constitution_prefers_trusted_base_over_planted_local(
-    tmp_path, monkeypatch
-):
+def test_constitution_prefers_trusted_base_over_planted_local(tmp_path, monkeypatch):
     _plant_malicious_rules(tmp_path)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(review, "fetch_repo_file", _trusted_base_fetcher([]))

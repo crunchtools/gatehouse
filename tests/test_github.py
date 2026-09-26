@@ -44,9 +44,7 @@ def test_detect_pr_context_from_github_ref(
     assert result == ("crunchtools/gatehouse", 42)
 
 
-def test_detect_pr_context_from_event_path(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_detect_pr_context_from_event_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     event_file = tmp_path / "event.json"
     event_file.write_text(json.dumps({"pull_request": {"number": 99}}))
     monkeypatch.setenv("GITHUB_REPOSITORY", "crunchtools/gatehouse")
@@ -210,7 +208,8 @@ async def test_post_pr_review_api_error(
     results = [(BUG_HUNTER, [SAMPLE_FINDING])]
 
     mock_response = httpx.Response(
-        422, text="Validation Failed",
+        422,
+        text="Validation Failed",
         request=httpx.Request("POST", "https://example.com"),
     )
     mock_client = AsyncMock(spec=httpx.AsyncClient)
@@ -314,3 +313,9 @@ def test_fetch_repo_file_network_error_warns(
     assert result is None
     captured = capsys.readouterr()
     assert "Warning: could not fetch" in captured.err
+
+
+def test_format_review_body_names_failed_agents() -> None:
+    body = format_review_body([], failed=("Bug Hunter",))
+    assert body.startswith("Gatehouse found no issues.")
+    assert "Incomplete: Bug Hunter could not finish." in body

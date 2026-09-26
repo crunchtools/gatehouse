@@ -272,9 +272,7 @@ def _diff_section(diff: str) -> str:
     return f"## Git Diff to Review\n\n```diff\n{diff}\n```"
 
 
-def build_user_prompt(
-    diff: str, styleguide: str | None, file_listing: str | None
-) -> str:
+def build_user_prompt(diff: str, styleguide: str | None, file_listing: str | None) -> str:
     """Build the user prompt with diff content and optional context.
 
     The raw unified diff is converted to a structured BEFORE/AFTER view
