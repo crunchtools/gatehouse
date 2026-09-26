@@ -846,11 +846,11 @@ async def test_run_agent_accepts_wrapped_array() -> None:
         _, findings = await review.run_agent(
             AsyncMock(spec=httpx.AsyncClient),
             BUG_HUNTER,
-            "u",
-            "openai/gpt-6-luna",
-            "k",
-            False,
-            asyncio.Semaphore(1),
+            user_prompt="u",
+            model="openai/gpt-6-luna",
+            api_key="k",
+            verbose=False,
+            semaphore=asyncio.Semaphore(1),
         )
     assert findings == [finding]
 

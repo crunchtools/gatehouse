@@ -192,6 +192,7 @@ def _parse_findings(response_text: str) -> list[dict[str, Any]]:
 async def run_agent(
     client: httpx.AsyncClient,
     agent: Agent,
+    *,
     user_prompt: str,
     model: str,
     api_key: str,
@@ -215,6 +216,7 @@ async def run_agent(
 
 
 async def run_review(
+    *,
     base: str | None = None,
     staged: bool = False,
     stdin_diff: str | None = None,
@@ -266,11 +268,11 @@ async def run_review(
             run_agent(
                 client,
                 agent,
-                user_prompt,
-                model,
-                api_key,
-                verbose,
-                semaphore,
+                user_prompt=user_prompt,
+                model=model,
+                api_key=api_key,
+                verbose=verbose,
+                semaphore=semaphore,
             )
             for agent in standard_agents
         ]
@@ -285,11 +287,11 @@ async def run_review(
                 run_agent(
                     client,
                     constitution_agent,
-                    const_prompt,
-                    model,
-                    api_key,
-                    verbose,
-                    semaphore,
+                    user_prompt=const_prompt,
+                    model=model,
+                    api_key=api_key,
+                    verbose=verbose,
+                    semaphore=semaphore,
                 )
             )
         raw = await asyncio.gather(*coros)
