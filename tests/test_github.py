@@ -319,3 +319,8 @@ def test_format_review_body_names_failed_agents() -> None:
     body = format_review_body([], failed=("Bug Hunter",))
     assert body.startswith("Gatehouse found no issues.")
     assert "Incomplete: Bug Hunter could not finish." in body
+
+
+def test_format_review_body_counts_ignored_files() -> None:
+    body = format_review_body([], ignored=7)
+    assert "7 file(s) not reviewed, per `.gatehouse-ignore` on the base branch." in body

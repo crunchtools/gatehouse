@@ -23,6 +23,7 @@ gatehouse --advisory
 - `src/gatehouse/diffview.py` -- unified diff to BEFORE/AFTER view for agents
 - `src/gatehouse/llm.py` -- httpx async OpenRouter client (Luna default, Flash Lite fallback, ZDR-only)
 - `src/gatehouse/review.py` -- orchestration and exit code logic
+- `src/gatehouse/ignore.py` -- `.gatehouse-ignore` (gitignore syntax) filtering of diff and file listing
 - `src/gatehouse/output.py` -- terminal output with ANSI colors
 
 ## Agents

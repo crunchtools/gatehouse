@@ -1,6 +1,6 @@
 [project]
 name = "gatehouse-crunchtools"
-version = "0.11.0"
+version = "0.12.0"
 description = "Local AI code review CLI using concurrent LLM agents"
 requires-python = ">=3.11"
 license = "AGPL-3.0-or-later"
@@ -19,6 +19,7 @@ classifiers = [
 ]
 dependencies = [
     "httpx>=0.27",
+    "pathspec>=0.12",
 ]
 
 [project.optional-dependencies]

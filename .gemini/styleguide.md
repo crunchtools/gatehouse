@@ -10,6 +10,7 @@ Gatehouse is a Python CLI tool with 8 concurrent LLM agents for code review, cal
 - `diffview.py` -- unified diff to structured BEFORE/AFTER view for agents
 - `llm.py` -- httpx async OpenRouter client (retries, model fallback, ZDR-only)
 - `review.py` -- orchestration (git diff, concurrent agents, exit codes)
+- `ignore.py` -- `.gatehouse-ignore` filtering (gitignore syntax via pathspec)
 - `output.py` -- formatted terminal output with ANSI colors
 
 ### Conventions

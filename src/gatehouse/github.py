@@ -103,9 +103,12 @@ def _format_comment_body(agent_name: str, finding: dict[str, Any]) -> str:
 def format_review_body(
     results: list[tuple[Agent, list[dict[str, Any]]]],
     failed: tuple[str, ...] = (),
+    ignored: int = 0,
 ) -> str:
-    """Generate the review summary body line, naming agents that did not finish."""
+    """Generate the review summary body: counts, skipped files, unfinished agents."""
     body = _count_line(results)
+    if ignored:
+        body += f"\n\n{ignored} file(s) not reviewed, per `.gatehouse-ignore` on the base branch."
     if failed:
         body += f"\n\nIncomplete: {', '.join(failed)} could not finish."
     return body
@@ -136,13 +139,15 @@ async def post_pr_review(
     results: list[tuple[Agent, list[dict[str, Any]]]],
     request_changes: bool,
     failed: tuple[str, ...] = (),
+    ignored: int = 0,
 ) -> bool:
     """Post findings as a GitHub PR review via the GitHub REST API.
 
     When request_changes is True the review is submitted as REQUEST_CHANGES;
     otherwise (including advisory mode) it is a plain COMMENT that never gates
-    the merge. ``failed`` names agents that could not finish; the review body
-    says so. Returns True on success, False on failure.
+    the merge. ``failed`` names agents that could not finish and ``ignored``
+    counts files skipped per .gatehouse-ignore; the review body says both.
+    Returns True on success, False on failure.
     """
     context = detect_pr_context()
     if context is None:
@@ -177,7 +182,7 @@ async def post_pr_review(
                 }
             )
 
-    body = format_review_body(results, failed)
+    body = format_review_body(results, failed, ignored)
     event = "REQUEST_CHANGES" if request_changes else "COMMENT"
 
     payload: dict[str, Any] = {
