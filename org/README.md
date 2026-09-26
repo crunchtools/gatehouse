@@ -7,6 +7,11 @@ GitHub reports it) on every repo's default branch. `Gatehouse review` is
 advisory and deliberately not required (constitution XII). Org admins bypass,
 which keeps direct pushes to default branches working.
 
+Only the `pull_request_target` run's checks count toward these rules; a run
+started by a reply to a finding does not. Every repo that carries the
+Gatehouse workflow needs `examples/gatehouse-retriage.yml` too, or a reply
+leaves triage red until someone re-runs it by hand.
+
 Apply changes with:
 
     gh api -X PUT orgs/crunchtools/rulesets/23993173 --input org/ruleset-gatehouse-gates.json

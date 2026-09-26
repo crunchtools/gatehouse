@@ -123,3 +123,31 @@ def test_example_guard_gates_on_head_repo_not_author_role() -> None:
     assert '[ "$HEAD_REPO" = "$GITHUB_REPOSITORY" ]' in guard
     assert "head.repo.full_name" in guard
     assert "author_association" not in guard
+
+
+RETRIAGE = TRIAGE.parent / "retriage.yml"
+RETRIAGE_EXAMPLE = EXAMPLE.parent / "gatehouse-retriage.yml"
+
+
+def test_retriage_reruns_only_the_pull_request_target_suite() -> None:
+    """Reply-event checks do not count toward branch rules (#47, #50)."""
+    text = RETRIAGE.read_text()
+    assert "event=pull_request_target" in text
+    assert "workflow_run.workflow_id" in text
+    assert "/rerun" in text
+    assert "rerun-failed-jobs" not in text  # only triage, never a paid review
+
+
+def test_retriage_is_least_privilege() -> None:
+    code = re.sub(r"#.*", "", RETRIAGE.read_text())
+    assert re.findall(r"^\s+(\w[\w-]*): (?:read|write)$", code, re.M) == ["actions"]
+    assert "actions/checkout" not in code
+    assert "secrets" not in code
+
+
+def test_retriage_example_listens_for_reply_runs_only() -> None:
+    text = RETRIAGE_EXAMPLE.read_text()
+    assert "workflow_run:" in text
+    assert "workflows: [Gatehouse]" in text
+    assert "github.event.workflow_run.event == 'pull_request_review_comment'" in text
+    assert "retriage.yml@v" in text

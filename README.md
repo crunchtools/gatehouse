@@ -67,10 +67,12 @@ fall back to the raw unified format.
 
 Drop in [`examples/gatehouse.yml`](examples/gatehouse.yml) to review every PR (forks included) via the reusable `review.yml` workflow — the diff is piped as data, never checked out or executed.
 
+Add [`examples/gatehouse-retriage.yml`](examples/gatehouse-retriage.yml) as well if `Gatehouse triage` is a required check. A reply to a finding starts a run whose checks branch rules ignore; the retriage workflow re-runs triage inside the `pull_request_target` run, where the result counts.
+
 The review is **advisory by default**: findings post as PR comments and the check always passes (an agent that could not finish is named in the review instead of failing it), so a non-deterministic LLM finding can never block a merge. Do not mark it a required status check. To let critical/high findings fail the check (still not recommended as a required gate), opt in:
 
 ```yaml
-uses: crunchtools/gatehouse/.github/workflows/review.yml@v0.10.0
+uses: crunchtools/gatehouse/.github/workflows/review.yml@v0.11.0
 with:
   blocking: true
 ```
