@@ -76,21 +76,13 @@ def test_format_finding_low_severity() -> None:
 
 
 def test_severity_rank_ordering() -> None:
-    assert severity_rank({"severity": "critical"}) < severity_rank(
-        {"severity": "high"}
-    )
-    assert severity_rank({"severity": "high"}) < severity_rank(
-        {"severity": "medium"}
-    )
-    assert severity_rank({"severity": "medium"}) < severity_rank(
-        {"severity": "low"}
-    )
+    assert severity_rank({"severity": "critical"}) < severity_rank({"severity": "high"})
+    assert severity_rank({"severity": "high"}) < severity_rank({"severity": "medium"})
+    assert severity_rank({"severity": "medium"}) < severity_rank({"severity": "low"})
 
 
 def test_severity_rank_unknown() -> None:
-    assert severity_rank({"severity": "unknown"}) > severity_rank(
-        {"severity": "low"}
-    )
+    assert severity_rank({"severity": "unknown"}) > severity_rank({"severity": "low"})
 
 
 def test_no_color_env() -> None:

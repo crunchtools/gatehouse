@@ -40,7 +40,11 @@ def test_blocking_agents() -> None:
 def test_blocking_agent_slugs() -> None:
     blocking_slugs = {a.slug for a in ALL_AGENTS if a.blocking}
     assert blocking_slugs == {
-        "bugs", "security", "performance", "docs", "constitution",
+        "bugs",
+        "security",
+        "performance",
+        "docs",
+        "constitution",
     }
 
 

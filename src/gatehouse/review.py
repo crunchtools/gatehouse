@@ -74,9 +74,7 @@ def get_git_diff(base: str | None, staged: bool) -> str:
 
 def get_file_listing() -> str | None:
     """Get git-tracked file listing for context."""
-    ls_proc = subprocess.run(
-        ["git", "ls-files"], capture_output=True, text=True, check=False
-    )
+    ls_proc = subprocess.run(["git", "ls-files"], capture_output=True, text=True, check=False)
     if ls_proc.returncode != 0:
         return None
     return ls_proc.stdout
@@ -165,6 +163,22 @@ def _has_blocking_findings(
     return False
 
 
+def _parse_findings(response_text: str) -> list[dict[str, Any]]:
+    """Return the confident findings in a model reply.
+
+    Raises ValueError (JSONDecodeError included) or TypeError when the reply
+    is not a list of finding objects: that is an unfinished review, not a
+    clean one.
+    """
+    findings_raw = json.loads(response_text)
+    if isinstance(findings_raw, dict):
+        # Some models wrap the array: {"findings": [...]}.
+        findings_raw = findings_raw.get("findings")
+    if not isinstance(findings_raw, list) or not all(isinstance(f, dict) for f in findings_raw):
+        raise TypeError(f"reply is {type(findings_raw).__name__}, not a list of findings")
+    return [f for f in findings_raw if f.get("confidence", 0) >= CONFIDENCE_THRESHOLD]
+
+
 async def run_agent(
     client: httpx.AsyncClient,
     agent: Agent,
@@ -173,8 +187,8 @@ async def run_agent(
     api_key: str,
     verbose: bool,
     semaphore: asyncio.Semaphore,
-) -> tuple[Agent, list[dict[str, Any]]]:
-    """Run a single agent and return its findings."""
+) -> tuple[Agent, list[dict[str, Any]] | None]:
+    """Run a single agent and return its findings, or None if it failed."""
     async with semaphore:
         try:
             response_text = await call_model(
@@ -183,21 +197,10 @@ async def run_agent(
             if verbose:
                 print(f"\n--- {agent.name} raw response ---", file=sys.stderr)
                 print(response_text, file=sys.stderr)
-            findings_raw = json.loads(response_text)
-            if isinstance(findings_raw, dict):
-                # Some models wrap the array: {"findings": [...]}.
-                findings_raw = findings_raw.get("findings", [])
-            if not isinstance(findings_raw, list):
-                findings_raw = []
-            findings: list[dict[str, Any]] = [
-                f
-                for f in findings_raw
-                if isinstance(f, dict)
-                and f.get("confidence", 0) >= CONFIDENCE_THRESHOLD
-            ]
-        except (httpx.HTTPStatusError, json.JSONDecodeError, KeyError) as exc:
-            print(f"Warning: {agent.name} failed: {exc}", file=sys.stderr)
-            findings = []
+            findings: list[dict[str, Any]] | None = _parse_findings(response_text)
+        except (httpx.HTTPError, ValueError, TypeError) as exc:
+            print(f"Error: {agent.name} did not finish: {exc!r}", file=sys.stderr)
+            findings = None
     return agent, findings
 
 
@@ -216,7 +219,9 @@ async def run_review(
     """Run the full review pipeline.
 
     When comment=True, posts findings as a GitHub PR review after printing.
-    Returns exit code (0 clean, 1 blocking, 2 usage error).
+    Returns exit code (0 clean, 1 blocking, 2 usage error or an agent that
+    could not finish). An unfinished agent outranks findings, except under
+    --advisory, which never fails the run: there it is reported, not raised.
     """
     diff = stdin_diff if stdin_diff is not None else get_git_diff(base, staged)
     if not diff.strip():
@@ -245,33 +250,53 @@ async def run_review(
         semaphore = asyncio.Semaphore(MAX_CONCURRENT_AGENTS)
         coros = [
             run_agent(
-                client, agent, user_prompt, model, api_key,
-                verbose, semaphore,
+                client,
+                agent,
+                user_prompt,
+                model,
+                api_key,
+                verbose,
+                semaphore,
             )
             for agent in standard_agents
         ]
         if constitution_agent and constitution:
             const_prompt = build_constitution_prompt(
-                diff, constitution, styleguide, file_listing,
+                diff,
+                constitution,
+                styleguide,
+                file_listing,
             )
             coros.append(
                 run_agent(
-                    client, constitution_agent, const_prompt, model,
-                    api_key, verbose, semaphore,
+                    client,
+                    constitution_agent,
+                    const_prompt,
+                    model,
+                    api_key,
+                    verbose,
+                    semaphore,
                 )
             )
         raw = await asyncio.gather(*coros)
 
-    all_results: list[tuple[Agent, list[dict[str, Any]]]] = list(raw)
+    failed = tuple(agent.name for agent, findings in raw if findings is None)
+    all_results: list[tuple[Agent, list[dict[str, Any]]]] = [
+        (agent, findings) for agent, findings in raw if findings is not None
+    ]
 
     format_results(all_results)
 
     has_blocking = _has_blocking_findings(all_results)
     request_changes = has_blocking and not advisory
     exit_code = 1 if request_changes else 0
+    if failed:
+        print(f"Review incomplete: {', '.join(failed)} could not finish.", file=sys.stderr)
+        if not advisory:
+            exit_code = 2
     print_summary(all_results, exit_code)
 
     if comment:
-        await post_pr_review(all_results, request_changes)
+        await post_pr_review(all_results, request_changes, failed)
 
     return exit_code

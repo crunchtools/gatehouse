@@ -166,13 +166,7 @@ def test_unparseable_input_returns_none() -> None:
 
 
 def test_plain_unified_diff_without_git_header() -> None:
-    diff = (
-        "--- a/plain.py\n"
-        "+++ b/plain.py\n"
-        "@@ -1 +1 @@\n"
-        "-old\n"
-        "+new\n"
-    )
+    diff = "--- a/plain.py\n+++ b/plain.py\n@@ -1 +1 @@\n-old\n+new\n"
     view = render_diff_view(diff)
     assert view is not None
     assert "### plain.py (modified)" in view
@@ -181,9 +175,7 @@ def test_plain_unified_diff_without_git_header() -> None:
 
 
 def test_malformed_hunk_header_returns_none() -> None:
-    diff = MODIFIED_DIFF.replace(
-        "@@ -10,3 +10,5 @@ def handler(request):", "@@ garbage @@"
-    )
+    diff = MODIFIED_DIFF.replace("@@ -10,3 +10,5 @@ def handler(request):", "@@ garbage @@")
     assert render_diff_view(diff) is None
 
 

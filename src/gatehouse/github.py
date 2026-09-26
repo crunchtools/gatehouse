@@ -69,9 +69,7 @@ def fetch_repo_file(repo: str, ref: str, path: str, token: str) -> str | None:
         headers["Authorization"] = f"Bearer {token}"
 
     try:
-        response = httpx.get(
-            url, headers=headers, params={"ref": ref}, timeout=15.0
-        )
+        response = httpx.get(url, headers=headers, params={"ref": ref}, timeout=15.0)
     except httpx.HTTPError as exc:
         print(
             f"Warning: could not fetch {path} from {repo}@{ref}: {exc}",
@@ -83,9 +81,7 @@ def fetch_repo_file(repo: str, ref: str, path: str, token: str) -> str | None:
     return None
 
 
-def _format_comment_body(
-    agent_name: str, finding: dict[str, Any]
-) -> str:
+def _format_comment_body(agent_name: str, finding: dict[str, Any]) -> str:
     """Format a single finding as a PR review comment body.
 
     ANSI escape sequences are stripped from the finding's description,
@@ -106,8 +102,17 @@ def _format_comment_body(
 
 def format_review_body(
     results: list[tuple[Agent, list[dict[str, Any]]]],
+    failed: tuple[str, ...] = (),
 ) -> str:
-    """Generate the review summary body line."""
+    """Generate the review summary body line, naming agents that did not finish."""
+    body = _count_line(results)
+    if failed:
+        body += f"\n\nIncomplete: {', '.join(failed)} could not finish."
+    return body
+
+
+def _count_line(results: list[tuple[Agent, list[dict[str, Any]]]]) -> str:
+    """Summarize finding counts by severity."""
     counts: dict[str, int] = {}
     total = 0
     for _, findings in results:
@@ -130,12 +135,14 @@ def format_review_body(
 async def post_pr_review(
     results: list[tuple[Agent, list[dict[str, Any]]]],
     request_changes: bool,
+    failed: tuple[str, ...] = (),
 ) -> bool:
     """Post findings as a GitHub PR review via the GitHub REST API.
 
     When request_changes is True the review is submitted as REQUEST_CHANGES;
     otherwise (including advisory mode) it is a plain COMMENT that never gates
-    the merge. Returns True on success, False on failure.
+    the merge. ``failed`` names agents that could not finish; the review body
+    says so. Returns True on success, False on failure.
     """
     context = detect_pr_context()
     if context is None:
@@ -162,13 +169,15 @@ async def post_pr_review(
             line = finding.get("lineStart", 0)
             if not file_path or line <= 0:
                 continue
-            comments.append({
-                "path": file_path,
-                "line": line,
-                "body": _format_comment_body(agent.name, finding),
-            })
+            comments.append(
+                {
+                    "path": file_path,
+                    "line": line,
+                    "body": _format_comment_body(agent.name, finding),
+                }
+            )
 
-    body = format_review_body(results)
+    body = format_review_body(results, failed)
     event = "REQUEST_CHANGES" if request_changes else "COMMENT"
 
     payload: dict[str, Any] = {
@@ -195,8 +204,7 @@ async def post_pr_review(
             )
         if response.status_code >= 400:
             print(
-                f"Warning: GitHub API returned {response.status_code}: "
-                f"{response.text[:200]}",
+                f"Warning: GitHub API returned {response.status_code}: {response.text[:200]}",
                 file=sys.stderr,
             )
             return False

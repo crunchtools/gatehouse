@@ -61,16 +61,16 @@ fall back to the raw unified format.
 |------|---------|
 | 0 | No issues or advisory-only findings |
 | 1 | Blocking findings detected (critical/high) |
-| 2 | Usage error (missing API key, bad arguments) |
+| 2 | Usage error (missing API key, bad arguments), or an agent could not finish (reported, but exit 0, under `--advisory`) |
 
 ## GitHub Actions
 
 Drop in [`examples/gatehouse.yml`](examples/gatehouse.yml) to review every PR (forks included) via the reusable `review.yml` workflow — the diff is piped as data, never checked out or executed.
 
-The review is **advisory by default**: findings post as PR comments and the check always passes, so a non-deterministic LLM finding can never block a merge. Do not mark it a required status check. To let critical/high findings fail the check (still not recommended as a required gate), opt in:
+The review is **advisory by default**: findings post as PR comments and the check always passes (an agent that could not finish is named in the review instead of failing it), so a non-deterministic LLM finding can never block a merge. Do not mark it a required status check. To let critical/high findings fail the check (still not recommended as a required gate), opt in:
 
 ```yaml
-uses: crunchtools/gatehouse/.github/workflows/review.yml@v0.9.0
+uses: crunchtools/gatehouse/.github/workflows/review.yml@v0.10.0
 with:
   blocking: true
 ```

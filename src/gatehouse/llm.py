@@ -22,11 +22,13 @@ REQUEST_TIMEOUT = 120.0
 MAX_RETRIES = 5
 INITIAL_BACKOFF = 2.0
 MAX_RETRY_AFTER = 90.0
-RETRYABLE_STATUSES = frozenset({
-    http.HTTPStatus.TOO_MANY_REQUESTS,
-    http.HTTPStatus.BAD_GATEWAY,
-    http.HTTPStatus.SERVICE_UNAVAILABLE,
-})
+RETRYABLE_STATUSES = frozenset(
+    {
+        http.HTTPStatus.TOO_MANY_REQUESTS,
+        http.HTTPStatus.BAD_GATEWAY,
+        http.HTTPStatus.SERVICE_UNAVAILABLE,
+    }
+)
 _FENCE = re.compile(r"^```(?:json)?\s*|\s*```$")
 
 
@@ -43,12 +45,13 @@ def _parse_retry_after(value: str | None) -> float | None:
     return min(seconds, MAX_RETRY_AFTER)
 
 
-def _backoff(response: httpx.Response, attempt: int) -> float:
+def _backoff(response: httpx.Response | None, attempt: int) -> float:
     """Seconds to wait before the next attempt, with jitter when unhinted."""
-    hinted = _parse_retry_after(response.headers.get("Retry-After"))
-    if hinted is not None:
-        return hinted
-    return INITIAL_BACKOFF * (2.0 ** attempt) * (0.5 + random.random())
+    if response is not None:
+        hinted = _parse_retry_after(response.headers.get("Retry-After"))
+        if hinted is not None:
+            return hinted
+    return INITIAL_BACKOFF * (2.0**attempt) * (0.5 + random.random())
 
 
 def _models_for(model: str) -> list[str]:
@@ -56,20 +59,22 @@ def _models_for(model: str) -> list[str]:
     return [model, *(m for m in FALLBACK_MODELS if m != model)]
 
 
-def _message_text(body: dict[str, Any]) -> str | None:
-    """Return the first choice's content, fences stripped; None on an error body.
+def _message_text(body: Any) -> str | None:
+    """Return the first choice's content, fences stripped, or None if there is none.
 
     OpenRouter can answer 200 with an ``error`` object when the upstream
-    provider fails mid-request, so the status code alone is not enough.
+    provider fails mid-request, so the status code alone is not enough. A body
+    of the wrong shape, or an empty reply, is no more a review than an error.
     """
-    if "error" in body:
+    if not isinstance(body, dict) or "error" in body:
         return None
-    choices: list[Any] = body.get("choices") or []
-    if not choices:
-        return "[]"
-    content = choices[0].get("message", {}).get("content")
+    choices = body.get("choices")
+    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+        return None
+    message = choices[0].get("message")
+    content = message.get("content") if isinstance(message, dict) else None
     if not isinstance(content, str) or not content.strip():
-        return "[]"
+        return None
     return _FENCE.sub("", content.strip())
 
 
@@ -82,9 +87,10 @@ async def call_model(
 ) -> str:
     """Call OpenRouter chat completions and return the response text.
 
-    Retries on 429/502/503, and on 200 responses carrying an upstream error,
-    with exponential backoff and random jitter so concurrent agents do not
-    retry in lockstep (thundering herd).
+    Retries on 429/502/503, on 200 responses carrying an upstream error, and
+    on transport errors (timeouts, dropped connections), with exponential
+    backoff and random jitter so concurrent agents do not retry in lockstep
+    (thundering herd). Raises the last error once retries are exhausted.
     """
     payload: dict[str, Any] = {
         "model": model,
@@ -101,16 +107,26 @@ async def call_model(
         "X-Title": "gatehouse",
     }
 
-    last_error: httpx.HTTPStatusError | None = None
+    last_error: httpx.HTTPError | None = None
+    delay = 0.0
     for attempt in range(MAX_RETRIES):
-        response = await client.post(
-            OPENROUTER_API_URL,
-            headers=headers,
-            json=payload,
-            timeout=REQUEST_TIMEOUT,
-        )
+        # Back off between attempts only; the last failure raises at once.
+        if attempt:
+            await asyncio.sleep(delay)
+        try:
+            response = await client.post(
+                OPENROUTER_API_URL,
+                headers=headers,
+                json=payload,
+                timeout=REQUEST_TIMEOUT,
+            )
+        except httpx.TransportError as exc:
+            # A large diff can outlast the read timeout; a retry usually lands.
+            last_error = exc
+            delay = _backoff(None, attempt)
+            continue
         if response.status_code in RETRYABLE_STATUSES:
-            await asyncio.sleep(_backoff(response, attempt))
+            delay = _backoff(response, attempt)
             last_error = httpx.HTTPStatusError(
                 f"{response.status_code}",
                 request=response.request,
@@ -120,9 +136,9 @@ async def call_model(
         response.raise_for_status()
         text = _message_text(response.json())
         if text is None:
-            await asyncio.sleep(_backoff(response, attempt))
+            delay = _backoff(response, attempt)
             last_error = httpx.HTTPStatusError(
-                "upstream error in 200 response",
+                "no review in 200 response",
                 request=response.request,
                 response=response,
             )
