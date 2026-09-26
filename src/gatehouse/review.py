@@ -20,6 +20,7 @@ from gatehouse.agents import (
     get_agents,
 )
 from gatehouse.github import fetch_repo_file, post_pr_review
+from gatehouse.ignore import IGNORE_FILE, filter_diff, filter_listing, parse_ignore
 from gatehouse.llm import DEFAULT_MODEL, call_model
 from gatehouse.output import format_results, print_summary
 
@@ -104,27 +105,35 @@ def _context_source() -> tuple[str, str] | None:
     return None
 
 
-def load_styleguide() -> str | None:
-    """Load the styleguide from the trusted base via API, else local disk."""
+def _load_context_file(relpath: str) -> str | None:
+    """Load a context file from the trusted base via API, else local disk.
+
+    Under GATEHOUSE_CONTEXT_REPO/REF only the base copy counts, even when the
+    base has none: a PR cannot supply the rules it is reviewed by (for the
+    ignore file, that would hide its own changes).
+    """
     source = _context_source()
     if source is not None:
         token = os.environ.get("GITHUB_TOKEN", "")
-        content = fetch_repo_file(source[0], source[1], STYLEGUIDE_PATH, token)
-        if content is not None:
-            return content
+        return fetch_repo_file(source[0], source[1], relpath, token)
 
-    path = Path(STYLEGUIDE_PATH)
+    path = Path(relpath)
     if path.exists():
         return path.read_text()
     return None
+
+
+def load_styleguide() -> str | None:
+    """Load the styleguide: trusted base only when one is set, else local disk."""
+    return _load_context_file(STYLEGUIDE_PATH)
 
 
 def load_constitution(override_path: str | None = None) -> str | None:
     """Load a project constitution file.
 
     Search order: explicit override, then — when GATEHOUSE_CONTEXT_REPO/REF are
-    set — the trusted base repo via the API, then local disk (.specify/,
-    AGENTS.md, CLAUDE.md).
+    set — the trusted base repo via the API and nothing else, otherwise local
+    disk (.specify/, AGENTS.md, CLAUDE.md).
     """
     if override_path is not None:
         path = Path(override_path)
@@ -143,6 +152,7 @@ def load_constitution(override_path: str | None = None) -> str | None:
             content = fetch_repo_file(source[0], source[1], candidate, token)
             if content is not None:
                 return content
+        return None
 
     for candidate in CONSTITUTION_SEARCH_PATHS:
         path = Path(candidate)
@@ -224,13 +234,17 @@ async def run_review(
     --advisory, which never fails the run: there it is reported, not raised.
     """
     diff = stdin_diff if stdin_diff is not None else get_git_diff(base, staged)
+    spec = parse_ignore(_load_context_file(IGNORE_FILE)) if diff.strip() else None
+    diff, ignored = filter_diff(diff, spec)
+    if ignored:
+        print(f"Ignored {len(ignored)} file(s) per {IGNORE_FILE}.", file=sys.stderr)
     if not diff.strip():
         print("No changes to review.")
         return 0
 
     agents = get_agents(agent_slugs)
     styleguide = load_styleguide()
-    file_listing = get_file_listing()
+    file_listing = filter_listing(get_file_listing(), spec)
     user_prompt = build_user_prompt(diff, styleguide, file_listing)
 
     constitution = load_constitution(constitution_path)
@@ -297,6 +311,6 @@ async def run_review(
     print_summary(all_results, exit_code)
 
     if comment:
-        await post_pr_review(all_results, request_changes, failed)
+        await post_pr_review(all_results, request_changes, failed, len(ignored))
 
     return exit_code

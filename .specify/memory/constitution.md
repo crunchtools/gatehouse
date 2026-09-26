@@ -49,6 +49,10 @@ Eight agents run concurrently via `asyncio.gather`; high/critical findings from 
 
 Findings filtered at confidence >= 80%.
 
+## Ignored Paths
+
+`.gatehouse-ignore` (gitignore syntax, repo root) removes matching files from the diff and file listing before review. Under the fork-safe workflow it MUST be loaded from the trusted base, never the PR head. A change to `.gatehouse-ignore` itself is always reviewed, and the posted review states how many files were skipped.
+
 ## Container
 
 Built on the `quay.io/hummingbird/python:latest-fips-builder` image (git is needed at runtime) with a venv. Published to `quay.io/crunchtools/gatehouse`.

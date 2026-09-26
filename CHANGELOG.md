@@ -5,6 +5,22 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-09-26
+
+### Added
+- **`.gatehouse-ignore`**: gitignore-syntax paths that are never reviewed.
+  Matching files leave the diff and the file listing before any agent runs;
+  on crunchtools/petit#61 that cuts each agent's diff from 263 KB of deleted
+  fingerprint data to 3 KB. A change is skipped only when every path it
+  touches matches, changes to the ignore file itself are always reviewed,
+  and in CI the file comes from the base branch so a PR cannot hide its own
+  changes. The posted review says how many files were skipped (when every changed
+  file is ignored, nothing is posted).
+- Under a trusted base (`GATEHOUSE_CONTEXT_REPO`/`REF`), the styleguide,
+  ignore file and auto-discovered constitution come only from the base; a
+  missing base copy no longer falls back to the working tree. An explicit
+  `--constitution` path still wins, as before.
+
 ## [0.11.0] - 2026-09-25
 
 ### Added

@@ -72,7 +72,7 @@ Add [`examples/gatehouse-retriage.yml`](examples/gatehouse-retriage.yml) as well
 The review is **advisory by default**: findings post as PR comments and the check always passes (an agent that could not finish is named in the review instead of failing it), so a non-deterministic LLM finding can never block a merge. Do not mark it a required status check. To let critical/high findings fail the check (still not recommended as a required gate), opt in:
 
 ```yaml
-uses: crunchtools/gatehouse/.github/workflows/review.yml@v0.11.0
+uses: crunchtools/gatehouse/.github/workflows/review.yml@v0.12.0
 with:
   blocking: true
 ```
@@ -80,6 +80,18 @@ with:
 ## Configuration
 
 Set `OPENROUTER_API_KEY`, or `OPENROUTER_API_KEY_FILE` pointing at a file that holds the key (the file wins when both are set). Either can live in `~/.config/mcp-env/gatehouse.env`. If `.gemini/styleguide.md` exists in the reviewed project, it is injected as context.
+
+### Ignoring files
+
+List paths that should never be reviewed in `.gatehouse-ignore` at the repo root, in gitignore syntax (`*`, `**`, trailing `/`, `!` negation). Their diff sections and file-listing entries are dropped before any agent sees them, so data files, fixtures, lockfiles and generated output stop costing tokens. A change is skipped only when every path it touches is ignored, so a rename out of an ignored directory is still reviewed, and so is any change to `.gatehouse-ignore` itself.
+
+```gitignore
+uv.lock
+tests/fixtures/
+*.fp
+```
+
+In CI the file is read from the base branch, like the styleguide and constitution: a pull request cannot widen it to hide its own changes. The posted review says how many files were skipped; when every changed file is ignored, gatehouse prints `No changes to review.`, exits 0 and posts nothing.
 
 ### Model
 
