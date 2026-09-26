@@ -37,9 +37,11 @@ jobs:
   retriage:
     name: Re-run Gatehouse triage
     runs-on: ubuntu-latest
-    # Replies queue per commit: a re-run cannot start while one is running.
+    # Replies queue per PR head: a re-run cannot start while one is running.
     concurrency:
-      group: gatehouse-retriage-${{ github.event.workflow_run.head_sha }}
+      group: >-
+        gatehouse-retriage-${{ github.event.workflow_run.head_repository.full_name }}-${{
+        github.event.workflow_run.head_branch }}-${{ github.event.workflow_run.head_sha }}
     permissions:
       actions: write
     steps:
@@ -49,6 +51,8 @@ jobs:
           EVENT: ${{ github.event_name }}
           WORKFLOW_ID: ${{ github.event.workflow_run.workflow_id }}
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          HEAD_REPO: ${{ github.event.workflow_run.head_repository.full_name }}
           CHECK: ${{ inputs.check }}
         run: |
           set -euo pipefail
@@ -57,10 +61,13 @@ jobs:
             exit 1
           fi
 
-          # Same workflow file, same commit, the event whose suite counts.
+          # Same workflow file, same PR head (repo, branch, commit: two PRs can
+          # share a commit), the event whose suite counts. Newest first.
           runs="repos/$GITHUB_REPOSITORY/actions/workflows/$WORKFLOW_ID/runs"
-          run_id="$(gh api "$runs?event=pull_request_target&head_sha=$HEAD_SHA&per_page=1" \
-            --jq '.workflow_runs[0].id // empty')"
+          run_id="$(gh api "$runs?event=pull_request_target&head_sha=$HEAD_SHA&per_page=100" \
+            -X GET -f branch="$HEAD_BRANCH" \
+            --jq '[.workflow_runs[] | select(.head_repository.full_name == env.HEAD_REPO)]
+                  | first | .id // empty')"
           if [ -z "$run_id" ]; then
             echo "No pull_request_target run for $HEAD_SHA; nothing to re-run."
             exit 0
