@@ -28,7 +28,7 @@ on:
   pull_request_target:
     types: [opened, synchronize, reopened]
   # A reply rings the doorbell: this run's own checks do not count toward
-  # branch rules, so examples/gatehouse-retriage.yml answers it by re-running
+  # branch rules, so gatehouse-retriage.yml answers it by re-running
   # triage inside the pull_request_target run. Add that file too.
   pull_request_review_comment:
     types: [created, edited, deleted]
