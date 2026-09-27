@@ -122,6 +122,18 @@ def test_build_constitution_prompt_with_context() -> None:
     assert "diff" in prompt
 
 
+def test_constitution_agent_reviews_amendments_as_amendments() -> None:
+    """An amendment used to be flagged critical for contradicting the rule it replaced."""
+    from gatehouse.agents import CONSTITUTION
+
+    assert "amendment" in CONSTITUTION.system_prompt
+    assert "Do NOT flag an amendment" in CONSTITUTION.system_prompt
+    assert "today's date" in CONSTITUTION.system_prompt
+    # Both sides: the amendment is still reviewed, and nothing else escapes.
+    assert "contradict each other or the code" in CONSTITUTION.system_prompt
+    assert "still judged by the constitution in force" in CONSTITUTION.system_prompt
+
+
 def test_agent_prompts_contain_anti_noise() -> None:
     for agent in ALL_AGENTS:
         assert "Do NOT flag" in agent.system_prompt

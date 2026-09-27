@@ -5,6 +5,19 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-09-26
+
+### Changed
+- **The Constitution agent reviews amendments as amendments.** A diff that
+  changes the constitution file itself is reviewed for rules that contradict
+  each other or the code, not against the text it replaces, which it can
+  only ever contradict. crunchtools/petit#77 and #78 each drew CRITICAL
+  findings for changing the rule they were changing. Other files in the
+  same diff are still judged by the base branch's constitution, so a PR
+  still cannot relax a rule and use the relaxation at once. The agent is
+  also told it does not know today's date, which made it flag same-day
+  `Amended:` lines as stale.
+
 ## [0.12.0] - 2026-09-26
 
 ### Added
