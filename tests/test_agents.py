@@ -129,6 +129,9 @@ def test_constitution_agent_reviews_amendments_as_amendments() -> None:
     assert "amendment" in CONSTITUTION.system_prompt
     assert "Do NOT flag an amendment" in CONSTITUTION.system_prompt
     assert "today's date" in CONSTITUTION.system_prompt
+    # Both sides: the amendment is still reviewed, and nothing else escapes.
+    assert "contradict each other or the code" in CONSTITUTION.system_prompt
+    assert "still judged by the constitution in force" in CONSTITUTION.system_prompt
 
 
 def test_agent_prompts_contain_anti_noise() -> None:
