@@ -35,6 +35,17 @@ ARE findings
 - Issues in test files unless they mask real bugs
 - TODOs or missing features (those are intentional)"""
 
+AMENDMENTS = """\
+AMENDMENTS: The constitution above is the copy in force on the base \
+branch. A change in the diff to a constitution file itself \
+(.specify/memory/constitution.md, AGENTS.md or CLAUDE.md) is an \
+amendment. Do NOT flag an amendment for contradicting, loosening or \
+removing the text it replaces: changing the rules is what an amendment \
+is for, and maintainer approval of the PR is the check on it. Review the \
+amended text only for rules that contradict each other or the code. Any \
+other file in the same diff is still judged by the constitution in force. \
+You do not know today's date: never flag a date as stale or unchanged."""
+
 WORKFLOW_SECURITY = """\
 In .github/workflows/*.yml files, additionally check for:
 - Secret exfiltration: steps that send ${{ secrets.* }} to external URLs \
@@ -195,7 +206,7 @@ CONSTITUTION = Agent(
         "- high: missing a mandated requirement\n"
         "- medium: borderline or ambiguous violation worth flagging\n"
         "- low: tangential concern related to constitution spirit\n\n"
-        f"{ANTI_NOISE}\n\n{FINDING_SCHEMA}"
+        f"{AMENDMENTS}\n\n{ANTI_NOISE}\n\n{FINDING_SCHEMA}"
     ),
 )
 
