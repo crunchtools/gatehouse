@@ -67,7 +67,7 @@ fall back to the raw unified format.
 
 Drop in [`examples/gatehouse.yml`](examples/gatehouse.yml) to review every PR (forks included) via the reusable `review.yml` workflow — the diff is piped as data, never checked out or executed.
 
-The example also runs `Gatehouse triage`, a deterministic check that every required finding has a reply (`fixed in <sha>` or `not a bug: <reason>`). CRITICAL, HIGH and MEDIUM findings are required from every agent; LOW findings only from Bug Hunter and Security Scan, and the triage input `required_low_agents` changes that list. Other LOWs still post, as advisory.
+The example also runs `Gatehouse triage`, a deterministic check that every required inline finding has a reply (`fixed in <sha>` or `not a bug: <reason>`). Findings without a file and line appear only in the review summary and are not counted. CRITICAL, HIGH and MEDIUM findings are required from every agent; LOW findings only from Bug Hunter and Security Scan, and the `required_low_agents` input changes that list (pass the same value to the review and triage jobs, so the review never caps a LOW that triage requires). Other LOWs still post, as advisory.
 
 Before posting, gatehouse drops three kinds of finding, and the review summary counts each: a finding whose quoted evidence appears nowhere in the diff (or the styleguide and constitution the agents were given), a MEDIUM or LOW that repeats an answered thread by the same agent within 5 lines, and advisory LOWs beyond the 5 most confident. Every finding comment carries a hidden `<!-- gatehouse agent=… confidence=… -->` marker for tuning.
 

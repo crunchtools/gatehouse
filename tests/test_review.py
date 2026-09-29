@@ -1283,3 +1283,12 @@ def test_cap_keeps_most_confident_advisory_lows() -> None:
 def test_cap_leaves_small_reviews_alone() -> None:
     results = [(DOCUMENTATION, [_finding(1)]), (BUG_HUNTER, [_finding(2)])]
     assert _cap_advisory_lows(results) == (results, 0)
+
+
+def test_cap_exempts_every_required_low_agent() -> None:
+    docs = [_finding(i, confidence=90) for i in range(MAX_ADVISORY_LOWS + 2)]
+    results = [(DOCUMENTATION, docs), (BUG_HUNTER, [_finding(1)])]
+    assert _cap_advisory_lows(results, frozenset({"Documentation"})) == (results, 0)
+    kept, capped = _cap_advisory_lows(results, frozenset())
+    assert capped == 3
+    assert sum(len(f) for _, f in kept) == MAX_ADVISORY_LOWS

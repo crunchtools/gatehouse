@@ -102,7 +102,8 @@ jobs:
   # Runs after the review on a push, and alone on a reply (review is skipped
   # then, hence always()). Read-only, no secrets. LOW findings need an answer
   # only from Bug Hunter and Security Scan; other LOWs are advisory. To change
-  # which agents' LOWs are required (agent names, comma-separated):
+  # which agents' LOWs are required (agent names, comma-separated), set the
+  # same list here and on the review job above, so the review posts them all:
   #   with:
   #     required_low_agents: "Bug Hunter,Security Scan,Test Coverage"
   triage:

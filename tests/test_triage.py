@@ -187,8 +187,17 @@ def test_retriage_example_listens_for_reply_runs_only() -> None:
 
 def test_required_low_agents_input_reaches_the_filter() -> None:
     text = TRIAGE.read_text()
-    assert re.search(
-        r"required_low_agents:\n(?:\s+.*\n)*?\s+default: \"Bug Hunter,Security Scan\"", text
-    )
+    lines = text.splitlines()
+    start = lines.index("      required_low_agents:")
+    assert '        default: "Bug Hunter,Security Scan"' in lines[start : start + 8]
     assert "REQUIRED_LOW_AGENTS: ${{ inputs.required_low_agents }}" in text
     assert '--arg required_low "$REQUIRED_LOW_AGENTS"' in text
+
+
+def test_review_takes_the_same_required_low_agents() -> None:
+    """The review's advisory LOW cap must not hide a LOW triage requires."""
+    text = (TRIAGE.parent / "review.yml").read_text()
+    lines = text.splitlines()
+    start = lines.index("      required_low_agents:")
+    assert '        default: "Bug Hunter,Security Scan"' in lines[start : start + 8]
+    assert '--required-low-agents "$REQUIRED_LOW_AGENTS"' in text

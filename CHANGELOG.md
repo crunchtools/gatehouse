@@ -5,7 +5,7 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
-## [0.14.0] - 2026-09-28
+## [0.14.0] - 2026-09-29
 
 LOW findings were 26% of the threads triage required an answer to, and a
 30-finding sample from four crunchtools PRs held 18 noise, 6 re-raises of
@@ -22,13 +22,15 @@ answered threads and 1 with invented evidence (#56).
   HIGH and CRITICAL always post: next to a "fixed in" thread they may be a
   regression.
 - **At most 5 advisory LOWs per review**, highest confidence first. LOWs
-  from Bug Hunter and Security Scan are never capped.
+  from the `--required-low-agents` list (Bug Hunter and Security Scan by
+  default) are never capped.
 - The review summary counts each kind of dropped finding.
 - Each finding comment carries a hidden `agent` and `confidence` marker, so
   replies can be joined to confidence before deciding whether LOW needs a
   higher threshold.
-- `triage.yml` input `required_low_agents` (default `Bug Hunter,Security
-  Scan`).
+- `required_low_agents` input on `triage.yml` and `review.yml` (default
+  `Bug Hunter,Security Scan`), and `--required-low-agents` on the CLI. Give
+  both workflows the same list.
 
 ### Changed
 - **Triage requires an answer to LOW findings only from `required_low_agents`.**

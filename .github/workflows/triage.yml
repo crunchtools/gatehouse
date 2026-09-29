@@ -41,6 +41,7 @@ on:
         required: false
         default: "github-actions[bot]"
       required_low_agents:
+        # Pass the same list to review.yml, whose advisory LOW cap exempts it.
         description: "Comma-separated agent names whose LOW findings need an answer."
         type: string
         required: false

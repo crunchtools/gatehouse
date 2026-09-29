@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 
 from gatehouse.llm import DEFAULT_MODEL
-from gatehouse.review import run_review
+from gatehouse.review import REQUIRED_LOW_AGENTS, run_review
 
 ENV_FILE = Path.home() / ".config" / "mcp-env" / "gatehouse.env"
 
@@ -95,6 +95,13 @@ def main() -> None:
         help="Path to constitution file (default: auto-discover)",
     )
     parser.add_argument(
+        "--required-low-agents",
+        type=str,
+        default=",".join(sorted(REQUIRED_LOW_AGENTS)),
+        help="Comma-separated agent names whose LOW findings are never capped "
+        "(default: %(default)s); match triage's required_low_agents",
+    )
+    parser.add_argument(
         "--advisory",
         action="store_true",
         help="Advisory mode: never exit non-zero",
@@ -147,6 +154,9 @@ def main() -> None:
             api_key=api_key,
             constitution_path=args.constitution,
             comment=args.comment,
+            required_low_agents=frozenset(
+                name.strip() for name in args.required_low_agents.split(",") if name.strip()
+            ),
         )
     )
     sys.exit(exit_code)

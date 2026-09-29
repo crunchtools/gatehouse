@@ -29,9 +29,10 @@ CONFIDENCE_THRESHOLD = 80
 
 BLOCKING_SEVERITIES = frozenset({"critical", "high"})
 
-# LOWs from these agents are required answers in triage.yml's default; every
-# other agent's LOWs are advisory, and only the most confident few are posted.
-REQUIRED_LOW_AGENTS = frozenset({"bugs", "security"})
+# LOWs from these agents (by name, as printed in each finding) are required
+# answers, matching triage.yml's `required_low_agents` default; every other
+# agent's LOWs are advisory, and only the most confident few are posted.
+REQUIRED_LOW_AGENTS = frozenset({"Bug Hunter", "Security Scan"})
 MAX_ADVISORY_LOWS = 5
 
 # A new finding this close to an answered thread by the same agent is a
@@ -275,12 +276,14 @@ def _drop_reraised(results: Results, threads: list[tuple[str, str, int]]) -> tup
     return kept, dropped
 
 
-def _cap_advisory_lows(results: Results) -> tuple[Results, int]:
-    """Keep the MAX_ADVISORY_LOWS most confident advisory LOWs across all agents."""
+def _cap_advisory_lows(
+    results: Results, required_low: frozenset[str] = REQUIRED_LOW_AGENTS
+) -> tuple[Results, int]:
+    """Keep the MAX_ADVISORY_LOWS most confident LOWs from agents not in required_low."""
     advisory = [
         f
         for agent, findings in results
-        if agent.slug not in REQUIRED_LOW_AGENTS
+        if agent.name not in required_low
         for f in findings
         if f.get("severity", "low") == "low"
     ]
@@ -293,7 +296,10 @@ def _cap_advisory_lows(results: Results) -> tuple[Results, int]:
 
 
 def _filter_findings(
-    results: Results, haystack: str, answered: list[tuple[str, str, int]]
+    results: Results,
+    haystack: str,
+    answered: list[tuple[str, str, int]],
+    required_low: frozenset[str] = REQUIRED_LOW_AGENTS,
 ) -> tuple[Results, dict[str, int]]:
     """Drop unverifiable evidence, re-raises of answered threads, excess LOWs.
 
@@ -302,7 +308,7 @@ def _filter_findings(
     """
     results, unverified = _drop_unverified(results, haystack)
     results, reraised = _drop_reraised(results, answered)
-    results, capped = _cap_advisory_lows(results)
+    results, capped = _cap_advisory_lows(results, required_low)
     if unverified:
         print(f"Dropped {unverified} finding(s): evidence not in the diff.", file=sys.stderr)
     if reraised:
@@ -354,6 +360,7 @@ async def run_review(
     api_key: str = "",
     constitution_path: str | None = None,
     comment: bool = False,
+    required_low_agents: frozenset[str] = REQUIRED_LOW_AGENTS,
 ) -> int:
     """Run the full review pipeline.
 
@@ -361,6 +368,8 @@ async def run_review(
     Returns exit code (0 clean, 1 blocking, 2 usage error or an agent that
     could not finish). An unfinished agent outranks findings, except under
     --advisory, which never fails the run: there it is reported, not raised.
+    LOWs from agents named in required_low_agents are exempt from the
+    advisory LOW cap, so triage sees every LOW it requires an answer to.
     """
     diff = stdin_diff if stdin_diff is not None else get_git_diff(base, staged)
     spec = parse_ignore(_load_context_file(IGNORE_FILE)) if diff.strip() else None
@@ -429,7 +438,7 @@ async def run_review(
 
     haystack = _evidence_haystack(diff, styleguide, constitution)
     answered = await threads if threads else []
-    all_results, dropped = _filter_findings(all_results, haystack, answered)
+    all_results, dropped = _filter_findings(all_results, haystack, answered, required_low_agents)
 
     format_results(all_results)
 
