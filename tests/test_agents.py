@@ -7,6 +7,8 @@ import pytest
 from gatehouse.agents import (
     AGENT_BY_SLUG,
     ALL_AGENTS,
+    CONSISTENCY_CHECK,
+    DOCUMENTATION,
     build_constitution_prompt,
     build_user_prompt,
     get_agents,
@@ -197,3 +199,14 @@ def test_diff_section_falls_back_to_raw_diff() -> None:
     assert "Git Diff to Review" in prompt
     assert "```diff" in prompt
     assert "not a parseable diff" in prompt
+
+
+def test_documentation_does_not_solicit_private_helper_docstrings() -> None:
+    prompt = DOCUMENTATION.system_prompt
+    assert "internal helpers or simple wrappers" not in prompt
+    assert "- low:" not in prompt
+    assert "leading underscore" in prompt
+
+
+def test_consistency_findings_must_cite_their_counterpart() -> None:
+    assert "file:line" in CONSISTENCY_CHECK.system_prompt

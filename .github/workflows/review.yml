@@ -55,6 +55,13 @@ on:
         type: string
         required: false
         default: ""
+      required_low_agents:
+        # Keep in step with triage.yml's input of the same name: LOWs from
+        # these agents skip the advisory cap, so triage sees all it requires.
+        description: "Comma-separated agent names whose LOW findings are never capped."
+        type: string
+        required: false
+        default: "Bug Hunter,Security Scan"
       blocking:
         # Advisory by default: the review posts findings as PR comments but the
         # check ALWAYS passes (exit 0), so a non-deterministic LLM finding can
@@ -72,7 +79,7 @@ on:
         description: "Gatehouse release image tag. Bump per release."
         type: string
         required: false
-        default: "quay.io/crunchtools/gatehouse:0.13.0"
+        default: "quay.io/crunchtools/gatehouse:0.14.0"
     secrets:
       OPENROUTER_API_KEY:
         required: true
@@ -97,6 +104,7 @@ jobs:
           MODEL: ${{ inputs.model }}
           AGENTS: ${{ inputs.agents }}
           BLOCKING: ${{ inputs.blocking }}
+          REQUIRED_LOW_AGENTS: ${{ inputs.required_low_agents }}
         run: |
           set -euo pipefail
 
@@ -112,7 +120,7 @@ jobs:
           # Advisory by default: unless the caller sets `blocking: true`, add
           # --advisory so gatehouse exits 0 regardless of findings. The review
           # is still posted; it just never fails the check.
-          args=( --stdin --comment )
+          args=( --stdin --comment --required-low-agents "$REQUIRED_LOW_AGENTS" )
           [ "$BLOCKING" = "true" ] || args+=( --advisory )
           [ -n "$MODEL" ]  && args+=( --model "$MODEL" )
           [ -n "$AGENTS" ] && args+=( --agents "$AGENTS" )

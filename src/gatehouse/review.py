@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -19,14 +20,31 @@ from gatehouse.agents import (
     build_user_prompt,
     get_agents,
 )
-from gatehouse.github import fetch_repo_file, post_pr_review
+from gatehouse.github import fetch_answered_threads, fetch_repo_file, post_pr_review
 from gatehouse.ignore import IGNORE_FILE, filter_diff, filter_listing, parse_ignore
 from gatehouse.llm import DEFAULT_MODEL, call_model
-from gatehouse.output import format_results, print_summary
+from gatehouse.output import format_results, print_summary, strip_ansi
 
 CONFIDENCE_THRESHOLD = 80
 
 BLOCKING_SEVERITIES = frozenset({"critical", "high"})
+
+# LOWs from these agents (by name, as printed in each finding) are required
+# answers, matching triage.yml's `required_low_agents` default; every other
+# agent's LOWs are advisory, and only the most confident few are posted.
+REQUIRED_LOW_AGENTS = frozenset({"Bug Hunter", "Security Scan"})
+MAX_ADVISORY_LOWS = 5
+
+# A new finding this close to an answered thread by the same agent is a
+# re-raise. HIGH/CRITICAL are always posted: next to a "fixed in" thread
+# they may be a regression.
+RERAISE_WINDOW = 5
+RERAISE_SEVERITIES = frozenset({"medium", "low"})
+
+_EVIDENCE_LINE_NO_RE = re.compile(r"^\s*(?:line\s+)?\d+\s*(?:\[[+-]\])?\s*[:|]\s?", re.I)
+_EVIDENCE_MIN_CHARS = 4
+
+Results = list[tuple[Agent, list[dict[str, Any]]]]
 
 MAX_CONCURRENT_AGENTS = 5
 
@@ -189,6 +207,121 @@ def _parse_findings(response_text: str) -> list[dict[str, Any]]:
     return [f for f in findings_raw if f.get("confidence", 0) >= CONFIDENCE_THRESHOLD]
 
 
+def _squash(text: str) -> str:
+    return "".join(strip_ansi(text).split())
+
+
+def _evidence_haystack(diff: str, *context: str | None) -> str:
+    """Everything an agent was shown, whitespace removed, diff markers dropped.
+
+    Lines are joined without a separator so a quote reflowed across lines
+    still matches.
+    """
+    parts = [_squash(line[1:]) for line in diff.splitlines()]
+    parts.extend(_squash(c) for c in context if c)
+    return "".join(parts)
+
+
+def _evidence_is_real(evidence: str, haystack: str) -> bool:
+    """True unless a quoted piece of the evidence appears nowhere agents looked.
+
+    Line-number prefixes (``Line 10:``, the diff view's ``  10 [+]|``) and
+    +/- markers are stripped, ``...`` elisions split a line into pieces, and
+    whitespace is ignored, so reflowed or trimmed quotes still match. Evidence
+    with nothing checkable in it is given the benefit of the doubt.
+    """
+    for raw in strip_ansi(evidence).splitlines():
+        if raw.lstrip().startswith("```"):
+            continue
+        code = _EVIDENCE_LINE_NO_RE.sub("", raw).lstrip()
+        if code[:1] in ("+", "-"):
+            code = code[1:]
+        for piece in re.split(r"\.\.\.|…", code):
+            squashed = _squash(piece)
+            if len(squashed) >= _EVIDENCE_MIN_CHARS and squashed not in haystack:
+                return False
+    return True
+
+
+def _drop_unverified(results: Results, haystack: str) -> tuple[Results, int]:
+    kept: Results = []
+    dropped = 0
+    for agent, findings in results:
+        real = [f for f in findings if _evidence_is_real(str(f.get("evidence", "")), haystack)]
+        dropped += len(findings) - len(real)
+        kept.append((agent, real))
+    return kept, dropped
+
+
+def _drop_reraised(results: Results, threads: list[tuple[str, str, int]]) -> tuple[Results, int]:
+    answered_lines: dict[tuple[str, str], set[int]] = {}
+    for name, path, t_line in threads:
+        answered_lines.setdefault((name, path), set()).add(t_line)
+
+    def reraises(agent: Agent, finding: dict[str, Any]) -> bool:
+        if finding.get("severity", "low") not in RERAISE_SEVERITIES:
+            return False
+        lines = answered_lines.get((agent.name, finding.get("file", "")))
+        if not lines:
+            return False
+        line = finding.get("lineStart", 0)
+        return any(n in lines for n in range(line - RERAISE_WINDOW, line + RERAISE_WINDOW + 1))
+
+    kept: Results = []
+    dropped = 0
+    for agent, findings in results:
+        new = [f for f in findings if not reraises(agent, f)]
+        dropped += len(findings) - len(new)
+        kept.append((agent, new))
+    return kept, dropped
+
+
+def _cap_advisory_lows(
+    results: Results, required_low: frozenset[str] = REQUIRED_LOW_AGENTS
+) -> tuple[Results, int]:
+    """Keep the MAX_ADVISORY_LOWS most confident LOWs from agents not in required_low."""
+    advisory = [
+        f
+        for agent, findings in results
+        if agent.name not in required_low
+        for f in findings
+        if f.get("severity", "low") == "low"
+    ]
+    advisory.sort(key=lambda f: f.get("confidence", 0), reverse=True)
+    cut = {id(f) for f in advisory[MAX_ADVISORY_LOWS:]}
+    kept: Results = [
+        (agent, [f for f in findings if id(f) not in cut]) for agent, findings in results
+    ]
+    return kept, len(cut)
+
+
+def _filter_findings(
+    results: Results,
+    haystack: str,
+    answered: list[tuple[str, str, int]],
+    required_low: frozenset[str] = REQUIRED_LOW_AGENTS,
+) -> tuple[Results, dict[str, int]]:
+    """Drop unverifiable evidence, re-raises of answered threads, excess LOWs.
+
+    Returns the kept results and the count dropped by each filter, keyed as
+    post_pr_review takes them.
+    """
+    results, unverified = _drop_unverified(results, haystack)
+    results, reraised = _drop_reraised(results, answered)
+    results, capped = _cap_advisory_lows(results, required_low)
+    if unverified:
+        print(f"Dropped {unverified} finding(s): evidence not in the diff.", file=sys.stderr)
+    if reraised:
+        print(f"Skipped {reraised} finding(s) already answered on this PR.", file=sys.stderr)
+    if capped:
+        print(
+            f"Held back {capped} low finding(s) from advisory agents "
+            f"(at most {MAX_ADVISORY_LOWS} are shown).",
+            file=sys.stderr,
+        )
+    return results, {"unverified": unverified, "reraised": reraised, "capped": capped}
+
+
 async def run_agent(
     client: httpx.AsyncClient,
     agent: Agent,
@@ -227,6 +360,7 @@ async def run_review(
     api_key: str = "",
     constitution_path: str | None = None,
     comment: bool = False,
+    required_low_agents: frozenset[str] = REQUIRED_LOW_AGENTS,
 ) -> int:
     """Run the full review pipeline.
 
@@ -234,6 +368,8 @@ async def run_review(
     Returns exit code (0 clean, 1 blocking, 2 usage error or an agent that
     could not finish). An unfinished agent outranks findings, except under
     --advisory, which never fails the run: there it is reported, not raised.
+    LOWs from agents named in required_low_agents are exempt from the
+    advisory LOW cap, so triage sees every LOW it requires an answer to.
     """
     diff = stdin_diff if stdin_diff is not None else get_git_diff(base, staged)
     spec = parse_ignore(_load_context_file(IGNORE_FILE)) if diff.strip() else None
@@ -262,6 +398,7 @@ async def run_review(
         print("Skipping Constitution agent: no constitution file found.")
         constitution_agent = None
 
+    threads = asyncio.create_task(asyncio.to_thread(fetch_answered_threads)) if comment else None
     async with httpx.AsyncClient() as client:
         semaphore = asyncio.Semaphore(MAX_CONCURRENT_AGENTS)
         coros = [
@@ -297,9 +434,11 @@ async def run_review(
         raw = await asyncio.gather(*coros)
 
     failed = tuple(agent.name for agent, findings in raw if findings is None)
-    all_results: list[tuple[Agent, list[dict[str, Any]]]] = [
-        (agent, findings) for agent, findings in raw if findings is not None
-    ]
+    all_results: Results = [(agent, findings) for agent, findings in raw if findings is not None]
+
+    haystack = _evidence_haystack(diff, styleguide, constitution)
+    answered = await threads if threads else []
+    all_results, dropped = _filter_findings(all_results, haystack, answered, required_low_agents)
 
     format_results(all_results)
 
@@ -313,6 +452,12 @@ async def run_review(
     print_summary(all_results, exit_code)
 
     if comment:
-        await post_pr_review(all_results, request_changes, failed, len(ignored))
+        await post_pr_review(
+            all_results,
+            request_changes,
+            failed,
+            len(ignored),
+            **dropped,
+        )
 
     return exit_code

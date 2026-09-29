@@ -14,14 +14,46 @@ if TYPE_CHECKING:
 
 import pytest
 
-from gatehouse.agents import BUG_HUNTER, CONSISTENCY_CHECK
+from gatehouse.agents import (
+    BUG_HUNTER,
+    CONSISTENCY_CHECK,
+    DOCUMENTATION,
+    SECURITY_SCAN,
+    TEST_COVERAGE,
+)
 from gatehouse.review import (
     BLOCKING_SEVERITIES,
     CONFIDENCE_THRESHOLD,
+    MAX_ADVISORY_LOWS,
+    _cap_advisory_lows,
+    _drop_reraised,
+    _evidence_haystack,
+    _evidence_is_real,
     _has_blocking_findings,
     load_constitution,
     run_review,
 )
+
+# Quotes every fixture's evidence: findings whose evidence is not in the
+# diff are dropped before they are reported.
+MOCK_DIFF = """\
+diff --git a/src/app.py b/src/app.py
+--- a/src/app.py
++++ b/src/app.py
+@@ -1,3 +1,3 @@
+-my_var = 1
++myVar = 1
+ x = get_data()
++user.name.lower()
+"""
+
+
+@pytest.fixture(autouse=True)
+def github_threads():
+    """CI sets GITHUB_REPOSITORY; never let a test fetch real review threads."""
+    with patch("gatehouse.review.fetch_answered_threads", return_value=[]) as fetch:
+        yield fetch
+
 
 MOCK_BLOCKING_FINDINGS = json.dumps(
     [
@@ -103,7 +135,7 @@ async def test_run_review_no_diff() -> None:
 async def test_run_review_blocking_finding() -> None:
     """High-severity finding from blocking agent exits 1."""
     with (
-        patch("gatehouse.review.get_git_diff", return_value="some diff"),
+        patch("gatehouse.review.get_git_diff", return_value=MOCK_DIFF),
         patch("gatehouse.review.get_file_listing", return_value="src/app.py"),
         patch("gatehouse.review.load_styleguide", return_value=None),
         patch(
@@ -128,7 +160,7 @@ async def test_run_review_blocking_finding() -> None:
 async def test_run_review_advisory_mode() -> None:
     """Advisory mode exits 0 even with blocking findings."""
     with (
-        patch("gatehouse.review.get_git_diff", return_value="some diff"),
+        patch("gatehouse.review.get_git_diff", return_value=MOCK_DIFF),
         patch("gatehouse.review.get_file_listing", return_value="src/app.py"),
         patch("gatehouse.review.load_styleguide", return_value=None),
         patch(
@@ -153,7 +185,7 @@ async def test_run_review_advisory_mode() -> None:
 async def test_run_review_advisory_agent_only() -> None:
     """Advisory-only agents never cause exit 1."""
     with (
-        patch("gatehouse.review.get_git_diff", return_value="some diff"),
+        patch("gatehouse.review.get_git_diff", return_value=MOCK_DIFF),
         patch("gatehouse.review.get_file_listing", return_value="src/app.py"),
         patch("gatehouse.review.load_styleguide", return_value=None),
         patch(
@@ -178,7 +210,7 @@ async def test_run_review_advisory_agent_only() -> None:
 async def test_confidence_filtering() -> None:
     """Findings below confidence threshold are filtered out."""
     with (
-        patch("gatehouse.review.get_git_diff", return_value="some diff"),
+        patch("gatehouse.review.get_git_diff", return_value=MOCK_DIFF),
         patch("gatehouse.review.get_file_listing", return_value="src/app.py"),
         patch("gatehouse.review.load_styleguide", return_value=None),
         patch(
@@ -208,7 +240,7 @@ async def test_run_review_api_error_graceful() -> None:
     mock_response = httpx.Response(429, request=mock_request)
     error = httpx.HTTPStatusError("rate limited", request=mock_request, response=mock_response)
     with (
-        patch("gatehouse.review.get_git_diff", return_value="some diff"),
+        patch("gatehouse.review.get_git_diff", return_value=MOCK_DIFF),
         patch("gatehouse.review.get_file_listing", return_value="src/app.py"),
         patch("gatehouse.review.load_styleguide", return_value=None),
         patch(
@@ -233,7 +265,7 @@ async def test_run_review_api_error_graceful() -> None:
 async def test_run_review_invalid_json_graceful() -> None:
     """Invalid JSON from the model marks the review incomplete: exit 2."""
     with (
-        patch("gatehouse.review.get_git_diff", return_value="some diff"),
+        patch("gatehouse.review.get_git_diff", return_value=MOCK_DIFF),
         patch("gatehouse.review.get_file_listing", return_value="src/app.py"),
         patch("gatehouse.review.load_styleguide", return_value=None),
         patch(
@@ -258,7 +290,7 @@ async def test_run_review_invalid_json_graceful() -> None:
 async def test_run_review_empty_array_response() -> None:
     """Empty findings array exits 0."""
     with (
-        patch("gatehouse.review.get_git_diff", return_value="some diff"),
+        patch("gatehouse.review.get_git_diff", return_value=MOCK_DIFF),
         patch("gatehouse.review.get_file_listing", return_value="src/app.py"),
         patch("gatehouse.review.load_styleguide", return_value=None),
         patch(
@@ -283,7 +315,7 @@ async def test_run_review_empty_array_response() -> None:
 async def test_run_review_multiple_agents() -> None:
     """Multiple agents run concurrently and results are aggregated."""
     with (
-        patch("gatehouse.review.get_git_diff", return_value="some diff"),
+        patch("gatehouse.review.get_git_diff", return_value=MOCK_DIFF),
         patch("gatehouse.review.get_file_listing", return_value="src/app.py"),
         patch("gatehouse.review.load_styleguide", return_value=None),
         patch(
@@ -458,7 +490,7 @@ def test_load_constitution_none(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
 async def test_run_review_constitution_skipped() -> None:
     """Constitution agent is skipped when no constitution file found."""
     with (
-        patch("gatehouse.review.get_git_diff", return_value="some diff"),
+        patch("gatehouse.review.get_git_diff", return_value=MOCK_DIFF),
         patch("gatehouse.review.get_file_listing", return_value=None),
         patch("gatehouse.review.load_styleguide", return_value=None),
         patch("gatehouse.review.load_constitution", return_value=None),
@@ -537,7 +569,7 @@ def test_has_blocking_findings_empty() -> None:
 async def test_run_review_comment_flag_calls_post() -> None:
     """When comment=True, post_pr_review is called."""
     with (
-        patch("gatehouse.review.get_git_diff", return_value="some diff"),
+        patch("gatehouse.review.get_git_diff", return_value=MOCK_DIFF),
         patch("gatehouse.review.get_file_listing", return_value=None),
         patch("gatehouse.review.load_styleguide", return_value=None),
         patch(
@@ -569,7 +601,7 @@ async def test_run_review_comment_flag_calls_post() -> None:
 async def test_run_review_advisory_posts_comment_not_request_changes() -> None:
     """Advisory mode posts a COMMENT review even when findings are blocking."""
     with (
-        patch("gatehouse.review.get_git_diff", return_value="some diff"),
+        patch("gatehouse.review.get_git_diff", return_value=MOCK_DIFF),
         patch("gatehouse.review.get_file_listing", return_value=None),
         patch("gatehouse.review.load_styleguide", return_value=None),
         patch(
@@ -602,7 +634,7 @@ async def test_run_review_advisory_posts_comment_not_request_changes() -> None:
 async def test_run_review_no_comment_flag_skips_post() -> None:
     """When comment=False (default), post_pr_review is not called."""
     with (
-        patch("gatehouse.review.get_git_diff", return_value="some diff"),
+        patch("gatehouse.review.get_git_diff", return_value=MOCK_DIFF),
         patch("gatehouse.review.get_file_listing", return_value=None),
         patch("gatehouse.review.load_styleguide", return_value=None),
         patch(
@@ -884,7 +916,7 @@ async def test_run_review_agent_failure_advisory_exits_zero(
         ),
     ):
         exit_code = await run_review(
-            stdin_diff="some diff",
+            stdin_diff=MOCK_DIFF,
             agent_slugs=["bugs"],
             advisory=True,
             api_key="test-key",
@@ -911,7 +943,7 @@ async def test_run_review_partial_failure_still_reports_findings(
         patch("gatehouse.review.call_model", side_effect=fake),
     ):
         exit_code = await run_review(
-            stdin_diff="some diff",
+            stdin_diff=MOCK_DIFF,
             agent_slugs=["bugs", "consistency"],
             api_key="test-key",
         )
@@ -971,9 +1003,7 @@ async def test_run_review_non_numeric_confidence_is_agent_failure() -> None:
         patch("gatehouse.review.load_styleguide", return_value=None),
         patch("gatehouse.review.call_model", new_callable=AsyncMock, return_value=bad),
     ):
-        exit_code = await run_review(
-            stdin_diff="some diff", agent_slugs=["bugs"], api_key="test-key"
-        )
+        exit_code = await run_review(stdin_diff=MOCK_DIFF, agent_slugs=["bugs"], api_key="test-key")
     assert exit_code == 2
 
 
@@ -994,7 +1024,7 @@ async def test_run_review_comment_names_failed_agents() -> None:
             "gatehouse.review.post_pr_review", new_callable=AsyncMock, return_value=True
         ) as mock_post,
     ):
-        await run_review(stdin_diff="some diff", agent_slugs=["bugs"], api_key="k", comment=True)
+        await run_review(stdin_diff=MOCK_DIFF, agent_slugs=["bugs"], api_key="k", comment=True)
     assert mock_post.call_args.args[2] == (BUG_HUNTER.name,)
 
 
@@ -1007,7 +1037,7 @@ async def test_run_review_wrong_shape_is_agent_failure(reply: str) -> None:
         patch("gatehouse.review.load_styleguide", return_value=None),
         patch("gatehouse.review.call_model", new_callable=AsyncMock, return_value=reply),
     ):
-        exit_code = await run_review(stdin_diff="some diff", agent_slugs=["bugs"], api_key="k")
+        exit_code = await run_review(stdin_diff=MOCK_DIFF, agent_slugs=["bugs"], api_key="k")
     assert exit_code == 2
 
 
@@ -1058,7 +1088,7 @@ async def test_run_review_advisory_blocking_and_failed(
         patch("gatehouse.review.call_model", side_effect=fake),
     ):
         exit_code = await run_review(
-            stdin_diff="some diff",
+            stdin_diff=MOCK_DIFF,
             agent_slugs=["bugs", "consistency"],
             advisory=True,
             api_key="k",
@@ -1088,7 +1118,177 @@ async def test_run_review_incomplete_summary_says_exit_2(
         patch("gatehouse.review.call_model", side_effect=fake),
     ):
         exit_code = await run_review(
-            stdin_diff="some diff", agent_slugs=["bugs", "consistency"], api_key="k"
+            stdin_diff=MOCK_DIFF, agent_slugs=["bugs", "consistency"], api_key="k"
         )
     assert exit_code == 2
     assert "Exit: 2 (review incomplete)" in capsys.readouterr().out
+
+
+# --- #56: evidence check, re-raise suppression, advisory LOW cap ---
+
+CASES_DIFF = """\
+diff --git a/src/cases.py b/src/cases.py
+--- a/src/cases.py
++++ b/src/cases.py
+@@ -10,2 +10,4 @@
+-def _cases(split, csv_bytes):
++def _cases(split: str, csv_bytes: bytes) -> list[Case]:
++    rows = [Case.from_row(r) for r in csv.reader(io.StringIO(csv_bytes.decode()))]
+     return rows
+"""
+
+
+@pytest.mark.parametrize(
+    "evidence",
+    [
+        "def _cases(split: str, csv_bytes: bytes) -> list[Case]:",
+        "Line 11: def _cases(split: str, csv_bytes: bytes) -> list[Case]:",
+        "   11 [+]| def _cases(split: str, csv_bytes: bytes) -> list[Case]:",
+        "-def _cases(split, csv_bytes):",
+        (
+            "```python\nrows = [Case.from_row(r)\n"
+            "    for r in csv.reader(io.StringIO(csv_bytes.decode()))]\n```"
+        ),
+        "def _cases(split: str, ...) -> list[Case]:",
+        "",
+        "n/a",
+    ],
+)
+def test_real_evidence_is_kept(evidence: str) -> None:
+    assert _evidence_is_real(evidence, _evidence_haystack(CASES_DIFF))
+
+
+@pytest.mark.parametrize(
+    "evidence",
+    [
+        # mcp-trentina#258: the quoted signature does not exist in the code.
+        "def _cases(split: str, csv_bytes: bytes):",
+        "def _cases(split: str, csv_bytes: bytes) -> list[Case]:\n    cache.clear()",
+    ],
+)
+def test_fabricated_evidence_is_dropped(evidence: str) -> None:
+    assert not _evidence_is_real(evidence, _evidence_haystack(CASES_DIFF))
+
+
+def test_evidence_may_quote_the_constitution() -> None:
+    haystack = _evidence_haystack(CASES_DIFF, None, "Every repo MUST keep a CHANGELOG.md.")
+    assert _evidence_is_real("Every repo MUST keep a CHANGELOG.md", haystack)
+
+
+@pytest.mark.asyncio
+async def test_run_review_drops_fabricated_high_finding() -> None:
+    fabricated = json.dumps(
+        [{**json.loads(MOCK_BLOCKING_FINDINGS)[0], "evidence": "user.email.lower()"}]
+    )
+    with (
+        patch("gatehouse.review.get_file_listing", return_value=None),
+        patch("gatehouse.review.load_styleguide", return_value=None),
+        patch("gatehouse.review.call_model", new_callable=AsyncMock, return_value=fabricated),
+        patch("gatehouse.review.post_pr_review", new_callable=AsyncMock) as mock_post,
+    ):
+        exit_code = await run_review(
+            stdin_diff=MOCK_DIFF, agent_slugs=["bugs"], api_key="k", comment=True
+        )
+    assert exit_code == 0
+    assert mock_post.call_args.args[0] == [(BUG_HUNTER, [])]
+    assert mock_post.call_args.kwargs["unverified"] == 1
+
+
+def _finding(line: int, severity: str = "low", path: str = "src/app.py", confidence: int = 90):
+    return {"file": path, "lineStart": line, "severity": severity, "confidence": confidence}
+
+
+def test_reraise_near_answered_thread_is_dropped() -> None:
+    threads = [("Consistency Check", "src/app.py", 40)]
+    results = [
+        (
+            CONSISTENCY_CHECK,
+            [_finding(44), _finding(35), _finding(46), _finding(40, path="src/other.py")],
+        ),
+        (DOCUMENTATION, [_finding(40)]),
+    ]
+    kept, dropped = _drop_reraised(results, threads)
+    assert dropped == 2
+    assert kept == [
+        (CONSISTENCY_CHECK, [_finding(46), _finding(40, path="src/other.py")]),
+        (DOCUMENTATION, [_finding(40)]),
+    ]
+
+
+def test_medium_reraise_is_dropped() -> None:
+    results = [(CONSISTENCY_CHECK, [_finding(42, "medium")])]
+    kept, dropped = _drop_reraised(results, [("Consistency Check", "src/app.py", 40)])
+    assert (kept, dropped) == ([(CONSISTENCY_CHECK, [])], 1)
+
+
+@pytest.mark.parametrize("severity", ["high", "critical"])
+def test_serious_finding_near_answered_thread_is_kept(severity: str) -> None:
+    results = [(BUG_HUNTER, [_finding(40, severity)])]
+    kept, dropped = _drop_reraised(results, [("Bug Hunter", "src/app.py", 40)])
+    assert (kept, dropped) == (results, 0)
+
+
+@pytest.mark.asyncio
+async def test_run_review_suppresses_reraise_only_when_commenting(
+    github_threads: AsyncMock,
+) -> None:
+    github_threads.return_value = [("Consistency Check", "src/app.py", 1)]
+    common = {
+        "stdin_diff": MOCK_DIFF,
+        "agent_slugs": ["consistency"],
+        "api_key": "k",
+    }
+    with (
+        patch("gatehouse.review.get_file_listing", return_value=None),
+        patch("gatehouse.review.load_styleguide", return_value=None),
+        patch(
+            "gatehouse.review.call_model",
+            new_callable=AsyncMock,
+            return_value=MOCK_ADVISORY_FINDINGS,
+        ),
+        patch("gatehouse.review.post_pr_review", new_callable=AsyncMock) as mock_post,
+        patch("gatehouse.review.format_results") as mock_format,
+    ):
+        await run_review(**common, comment=False)
+        assert mock_format.call_args.args[0] == [
+            (CONSISTENCY_CHECK, json.loads(MOCK_ADVISORY_FINDINGS))
+        ]
+        await run_review(**common, comment=True)
+    assert mock_post.call_args.args[0] == [(CONSISTENCY_CHECK, [])]
+    assert mock_post.call_args.kwargs["reraised"] == 1
+
+
+def test_cap_keeps_most_confident_advisory_lows() -> None:
+    docs = [_finding(i, confidence=80 + i) for i in range(4)]
+    tests = [_finding(i, confidence=90 + i) for i in range(4)]
+    bugs = [_finding(i, confidence=80) for i in range(3)]
+    security = [_finding(1, confidence=80)]
+    medium = [_finding(1, "medium", confidence=80)]
+    results = [
+        (DOCUMENTATION, docs + medium),
+        (TEST_COVERAGE, tests),
+        (BUG_HUNTER, bugs),
+        (SECURITY_SCAN, security),
+    ]
+    kept, capped = _cap_advisory_lows(results)
+    assert capped == 8 - MAX_ADVISORY_LOWS
+    assert kept == [
+        (DOCUMENTATION, [docs[3], *medium]),
+        (TEST_COVERAGE, tests),
+        (BUG_HUNTER, bugs),
+        (SECURITY_SCAN, security),
+    ]
+
+
+def test_cap_leaves_small_reviews_alone() -> None:
+    results = [(DOCUMENTATION, [_finding(1)]), (BUG_HUNTER, [_finding(2)])]
+    assert _cap_advisory_lows(results) == (results, 0)
+
+
+def test_cap_exempts_every_required_low_agent() -> None:
+    docs = [_finding(i, confidence=90) for i in range(MAX_ADVISORY_LOWS + 2)]
+    results = [(DOCUMENTATION, docs), (BUG_HUNTER, [_finding(1)])]
+    assert _cap_advisory_lows(results, frozenset({"Documentation"})) == (results, 0)
+    kept, capped = _cap_advisory_lows(results, frozenset())
+    assert capped == 3
+    assert sum(len(f) for _, f in kept) == MAX_ADVISORY_LOWS
