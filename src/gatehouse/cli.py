@@ -112,6 +112,18 @@ def main() -> None:
         help="Post findings as GitHub PR review comments (requires gh CLI)",
     )
     parser.add_argument(
+        "--incremental",
+        action="store_true",
+        help="With --comment on a PR, review only commits since the last complete "
+        "Gatehouse review (needs GATEHOUSE_HEAD_SHA); falls back to the whole PR",
+    )
+    parser.add_argument(
+        "--usage-json",
+        metavar="PATH",
+        default=None,
+        help="Write per-agent model and token usage to PATH as JSON",
+    )
+    parser.add_argument(
         "-v",
         "--verbose",
         action="store_true",
@@ -154,6 +166,8 @@ def main() -> None:
             api_key=api_key,
             constitution_path=args.constitution,
             comment=args.comment,
+            incremental=args.incremental,
+            usage_json=args.usage_json,
             required_low_agents=frozenset(
                 name.strip() for name in args.required_low_agents.split(",") if name.strip()
             ),

@@ -118,33 +118,8 @@ def fetch_answered_threads() -> list[tuple[str, str, int]]:
     Outside a PR context, or on any API error, returns [] with a
     warning: suppression is an optimization, never a reason to fail.
     """
-    context = detect_pr_context()
-    token = os.environ.get("GITHUB_TOKEN", "")
-    if context is None or not token:
-        return []
-    repo, pr_number = context
-    url = f"{GITHUB_API_URL}/repos/{repo}/pulls/{pr_number}/comments"
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-    }
-
-    comments: list[dict[str, Any]] = []
-    page = 1
-    try:
-        while True:
-            response = httpx.get(
-                url, headers=headers, params={"per_page": 100, "page": page}, timeout=15.0
-            )
-            response.raise_for_status()
-            batch = response.json()
-            comments.extend(batch)
-            if len(batch) < 100:
-                break
-            page += 1
-    except (httpx.HTTPError, ValueError) as exc:
-        print(f"Warning: could not fetch existing review threads: {exc}", file=sys.stderr)
+    comments = _fetch_pr_list("comments", "existing review threads")
+    if not comments:
         return []
 
     # A deleted account comes back as "user": null.
@@ -170,6 +145,113 @@ def fetch_answered_threads() -> list[tuple[str, str, int]]:
     return threads
 
 
+# Hidden in the body of every review in which all agents finished. The
+# newest such review's commit is where an incremental re-review starts; an
+# incomplete review must not be one, or what its failed agents missed would
+# never be reviewed.
+REVIEW_MARKER = "<!-- gatehouse review complete -->"
+
+
+def _get_pages(url: str, headers: dict[str, str]) -> list[dict[str, Any]]:
+    """GET every page of a GitHub list endpoint. Raises httpx.HTTPError or ValueError."""
+    items: list[dict[str, Any]] = []
+    page = 1
+    while True:
+        response = httpx.get(
+            url, headers=headers, params={"per_page": 100, "page": page}, timeout=15.0
+        )
+        response.raise_for_status()
+        batch = response.json()
+        items.extend(batch)
+        if len(batch) < 100:
+            return items
+        page += 1
+
+
+def _pr_auth() -> tuple[tuple[str, int], str] | None:
+    """((repo, PR number), token) for API calls on this PR, or None outside one."""
+    context = detect_pr_context()
+    token = os.environ.get("GITHUB_TOKEN", "")
+    if context is None or not token:
+        return None
+    return context, token
+
+
+def _fetch_pr_list(endpoint: str, what: str) -> list[dict[str, Any]]:
+    """Every item of this PR's pulls/{n}/<endpoint> list.
+
+    Outside a PR context, without a token, or on any API error (warning
+    that `what` could not be fetched), returns [].
+    """
+    auth = _pr_auth()
+    if auth is None:
+        return []
+    (repo, pr_number), token = auth
+    url = f"{GITHUB_API_URL}/repos/{repo}/pulls/{pr_number}/{endpoint}"
+    try:
+        return _get_pages(url, _headers(token))
+    except (httpx.HTTPError, ValueError) as exc:
+        print(f"Warning: could not fetch {what}: {exc}", file=sys.stderr)
+        return []
+
+
+def fetch_last_reviewed_commit() -> str | None:
+    """Return the commit of the newest complete Gatehouse review on this PR.
+
+    A Gatehouse review is one posted by a bot account whose body carries
+    REVIEW_MARKER; requiring a bot keeps a PR participant from planting a
+    base that would skip their commits. Outside a PR context, with no such
+    review, or on any API error, returns None (with a warning on error):
+    the caller then reviews the whole PR.
+    """
+    commits = [
+        r["commit_id"]
+        for r in _fetch_pr_list("reviews", "earlier reviews")
+        if (r.get("user") or {}).get("type") == "Bot"
+        and REVIEW_MARKER in (r.get("body") or "")
+        and r.get("commit_id")
+    ]
+    return commits[-1] if commits else None
+
+
+def fetch_compare(base: str, head: str) -> tuple[str, int] | None:
+    """Return (unified diff, commit count) from base to head, when head descends from base.
+
+    Fetched over the API, so nothing is checked out. Returns None when head
+    does not strictly descend from base (a force-push or rebase leaves
+    "diverged"; a re-run on the same commit is "identical"), or on any API
+    error: the caller then reviews the whole PR.
+    """
+    auth = _pr_auth()
+    if auth is None:
+        return None
+    (repo, _), token = auth
+    url = f"{GITHUB_API_URL}/repos/{repo}/compare/{base}...{head}"
+    try:
+        response = httpx.get(url, headers=_headers(token), timeout=30.0)
+        response.raise_for_status()
+        compare = response.json()
+        if compare.get("status") != "ahead":
+            return None
+        response = httpx.get(
+            url, headers=_headers(token, "application/vnd.github.diff"), timeout=30.0
+        )
+        response.raise_for_status()
+    except (httpx.HTTPError, ValueError, AttributeError) as exc:
+        print(f"Warning: could not compare {base[:7]}...{head[:7]}: {exc}", file=sys.stderr)
+        return None
+    return response.text, int(compare.get("ahead_by") or 0)
+
+
+def _headers(token: str, accept: str = "application/vnd.github+json") -> dict[str, str]:
+    """Authenticated GitHub API headers; accept picks the media type (JSON, or a diff)."""
+    return {
+        "Authorization": f"Bearer {token}",
+        "Accept": accept,
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+
+
 def format_review_body(
     results: list[tuple[Agent, list[dict[str, Any]]]],
     failed: tuple[str, ...] = (),
@@ -178,14 +260,24 @@ def format_review_body(
     unverified: int = 0,
     reraised: int = 0,
     capped: int = 0,
+    offdiff: int = 0,
+    scope: str = "",
+    fallbacks: dict[str, int] | None = None,
+    agent_count: int = 0,
 ) -> str:
-    """Generate the review summary body: counts, skipped files and findings, unfinished agents.
+    """Generate the review summary body: counts, scope, skipped files and findings, fallbacks.
 
-    ``unverified``, ``reraised`` and ``capped`` are the findings dropped for
-    fabricated evidence, repeating an answered thread, and exceeding the
-    advisory LOW cap; see post_pr_review.
+    ``unverified``, ``reraised``, ``capped`` and ``offdiff`` are the findings
+    dropped for fabricated evidence, repeating an answered thread, exceeding
+    the advisory LOW cap, and pointing outside the PR diff; see
+    post_pr_review. ``fallbacks`` counts agents by the fallback model that
+    served them, out of ``agent_count``, the agents that ran. A review in
+    which at least one agent ran and every one finished ends with
+    REVIEW_MARKER; with none run, nothing was reviewed.
     """
     body = _count_line(results)
+    if scope:
+        body += f"\n\n{scope}"
     if ignored:
         body += f"\n\n{ignored} file(s) not reviewed, per `.gatehouse-ignore` on the base branch."
     if unverified:
@@ -194,8 +286,14 @@ def format_review_body(
         body += f"\n\n{reraised} finding(s) not re-raised: already answered on this PR."
     if capped:
         body += f"\n\n{capped} more low finding(s) from advisory agents not posted."
+    if offdiff:
+        body += f"\n\n{offdiff} finding(s) not posted: their line is outside the PR diff."
+    for served, count in sorted((fallbacks or {}).items()):
+        body += f"\n\n{count} of {agent_count} agents served by {served} (primary unavailable)."
     if failed:
         body += f"\n\nIncomplete: {', '.join(failed)} could not finish."
+    elif agent_count:
+        body += f"\n\n{REVIEW_MARKER}"
     return body
 
 
@@ -229,6 +327,11 @@ async def post_pr_review(
     unverified: int = 0,
     reraised: int = 0,
     capped: int = 0,
+    offdiff: int = 0,
+    scope: str = "",
+    fallbacks: dict[str, int] | None = None,
+    agent_count: int = 0,
+    commit_id: str = "",
 ) -> bool:
     """Post findings as a GitHub PR review via the GitHub REST API.
 
@@ -239,9 +342,12 @@ async def post_pr_review(
     findings filtered out before posting: ``unverified`` quoted evidence
     not found in the diff or review context, ``reraised`` were MEDIUM or LOW
     within a few lines of an answered thread from the same agent, and
-    ``capped`` were advisory LOWs beyond the per-review limit. The review
-    body reports each non-zero count. Returns True on success, False on
-    failure.
+    ``capped`` were advisory LOWs beyond the per-review limit, and
+    ``offdiff`` pointed at lines GitHub cannot anchor a comment to. The
+    review body reports each non-zero count, plus ``scope`` and any
+    ``fallbacks`` (see format_review_body). ``commit_id`` pins the review to
+    the commit that was reviewed, not whatever head is current when it
+    posts. Returns True on success, False on failure.
     """
     context = detect_pr_context()
     if context is None:
@@ -277,7 +383,16 @@ async def post_pr_review(
             )
 
     body = format_review_body(
-        results, failed, ignored, unverified=unverified, reraised=reraised, capped=capped
+        results,
+        failed,
+        ignored,
+        unverified=unverified,
+        reraised=reraised,
+        capped=capped,
+        offdiff=offdiff,
+        scope=scope,
+        fallbacks=fallbacks,
+        agent_count=agent_count,
     )
     event = "REQUEST_CHANGES" if request_changes else "COMMENT"
 
@@ -287,13 +402,11 @@ async def post_pr_review(
     }
     if comments:
         payload["comments"] = comments
+    if commit_id:
+        payload["commit_id"] = commit_id
 
     url = f"{GITHUB_API_URL}/repos/{repo}/pulls/{pr_number}/reviews"
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-    }
+    headers = _headers(token)
 
     try:
         async with httpx.AsyncClient() as client:

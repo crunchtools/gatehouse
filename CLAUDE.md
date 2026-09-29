@@ -14,6 +14,7 @@ OPENROUTER_API_KEY=your_key gatehouse
 gatehouse --staged
 gatehouse --agents bugs,security
 gatehouse --advisory
+gatehouse --usage-json usage.json   # per-agent model/tokens/cost
 ```
 
 ## Architecture
@@ -21,7 +22,8 @@ gatehouse --advisory
 - `src/gatehouse/cli.py` -- argparse entry point
 - `src/gatehouse/agents.py` -- 8 agent prompt definitions
 - `src/gatehouse/diffview.py` -- unified diff to BEFORE/AFTER view for agents
-- `src/gatehouse/llm.py` -- httpx async OpenRouter client (Luna default, Flash Lite fallback, ZDR-only)
+- `src/gatehouse/llm.py` -- httpx async OpenRouter client (Luna default, Flash Lite fallback, ZDR-only); returns a `Completion` with serving model and usage
+- `src/gatehouse/github.py` -- PR review posting, answered threads, last reviewed commit and compare diff for `--incremental`
 - `src/gatehouse/review.py` -- orchestration and exit code logic
 - `src/gatehouse/ignore.py` -- `.gatehouse-ignore` (gitignore syntax) filtering of diff and file listing
 - `src/gatehouse/output.py` -- terminal output with ANSI colors

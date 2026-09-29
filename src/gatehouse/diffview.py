@@ -237,3 +237,26 @@ def render_diff_view(diff: str) -> str | None:
         sections.append("\n\n".join(parts))
 
     return "\n\n".join(sections)
+
+
+def right_side_lines(diff: str) -> dict[str, set[int]] | None:
+    """Map each file to the new-side line numbers its hunks show.
+
+    These are the lines GitHub accepts a review comment on (side RIGHT):
+    added and unchanged-context lines inside a hunk. None when the diff
+    cannot be parsed: then nothing is known to be off the diff.
+    """
+    try:
+        files = _parse_diff(diff)
+    except ValueError:
+        return None
+    lines: dict[str, set[int]] = {}
+    for file in files:
+        shown = lines.setdefault(file.path, set())
+        for hunk in file.hunks:
+            number = hunk.new_start
+            for tag, _ in hunk.lines:
+                if tag != "-":
+                    shown.add(number)
+                    number += 1
+    return lines

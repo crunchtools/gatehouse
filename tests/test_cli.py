@@ -29,3 +29,13 @@ def test_required_low_agents_parses_names(monkeypatch: pytest.MonkeyPatch) -> No
     got = _required_low(monkeypatch, "--required-low-agents", " Bug Hunter, Test Coverage ,,")
     assert got == frozenset({"Bug Hunter", "Test Coverage"})
     assert _required_low(monkeypatch, "--required-low-agents", "") == frozenset()
+
+
+def test_incremental_and_usage_json_are_passed(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+    monkeypatch.setattr("sys.argv", ["gatehouse", "--incremental", "--usage-json", "usage.json"])
+    review = AsyncMock(return_value=0)
+    with patch("gatehouse.cli.run_review", review), pytest.raises(SystemExit):
+        main()
+    assert review.call_args.kwargs["incremental"] is True
+    assert review.call_args.kwargs["usage_json"] == "usage.json"

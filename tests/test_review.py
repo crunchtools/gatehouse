@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, patch
 if TYPE_CHECKING:
     from pathlib import Path
 
+import httpx
 import pytest
 
 from gatehouse.agents import (
@@ -21,6 +22,7 @@ from gatehouse.agents import (
     SECURITY_SCAN,
     TEST_COVERAGE,
 )
+from gatehouse.llm import Completion
 from gatehouse.review import (
     BLOCKING_SEVERITIES,
     CONFIDENCE_THRESHOLD,
@@ -40,7 +42,7 @@ MOCK_DIFF = """\
 diff --git a/src/app.py b/src/app.py
 --- a/src/app.py
 +++ b/src/app.py
-@@ -1,3 +1,3 @@
+@@ -1,2 +1,3 @@
 -my_var = 1
 +myVar = 1
  x = get_data()
@@ -59,13 +61,13 @@ MOCK_BLOCKING_FINDINGS = json.dumps(
     [
         {
             "file": "src/app.py",
-            "lineStart": 10,
-            "lineEnd": 12,
+            "lineStart": 3,
+            "lineEnd": 3,
             "severity": "high",
             "category": "bug",
             "description": "Null reference on user input",
             "suggestion": "Add null check",
-            "evidence": "Line 10: user.name.lower()",
+            "evidence": "Line 3: user.name.lower()",
             "confidence": 95,
         },
     ]
@@ -141,7 +143,7 @@ async def test_run_review_blocking_finding() -> None:
         patch(
             "gatehouse.review.call_model",
             new_callable=AsyncMock,
-            return_value=MOCK_BLOCKING_FINDINGS,
+            return_value=Completion(MOCK_BLOCKING_FINDINGS),
         ),
     ):
         exit_code = await run_review(
@@ -166,7 +168,7 @@ async def test_run_review_advisory_mode() -> None:
         patch(
             "gatehouse.review.call_model",
             new_callable=AsyncMock,
-            return_value=MOCK_BLOCKING_FINDINGS,
+            return_value=Completion(MOCK_BLOCKING_FINDINGS),
         ),
     ):
         exit_code = await run_review(
@@ -191,7 +193,7 @@ async def test_run_review_advisory_agent_only() -> None:
         patch(
             "gatehouse.review.call_model",
             new_callable=AsyncMock,
-            return_value=MOCK_ADVISORY_FINDINGS,
+            return_value=Completion(MOCK_ADVISORY_FINDINGS),
         ),
     ):
         exit_code = await run_review(
@@ -216,7 +218,7 @@ async def test_confidence_filtering() -> None:
         patch(
             "gatehouse.review.call_model",
             new_callable=AsyncMock,
-            return_value=MOCK_LOW_CONFIDENCE,
+            return_value=Completion(MOCK_LOW_CONFIDENCE),
         ),
     ):
         exit_code = await run_review(
@@ -271,7 +273,7 @@ async def test_run_review_invalid_json_graceful() -> None:
         patch(
             "gatehouse.review.call_model",
             new_callable=AsyncMock,
-            return_value="not valid json{{{",
+            return_value=Completion("not valid json{{{"),
         ),
     ):
         exit_code = await run_review(
@@ -296,7 +298,7 @@ async def test_run_review_empty_array_response() -> None:
         patch(
             "gatehouse.review.call_model",
             new_callable=AsyncMock,
-            return_value="[]",
+            return_value=Completion("[]"),
         ),
     ):
         exit_code = await run_review(
@@ -321,7 +323,7 @@ async def test_run_review_multiple_agents() -> None:
         patch(
             "gatehouse.review.call_model",
             new_callable=AsyncMock,
-            return_value=MOCK_BLOCKING_FINDINGS,
+            return_value=Completion(MOCK_BLOCKING_FINDINGS),
         ),
     ):
         exit_code = await run_review(
@@ -359,7 +361,7 @@ async def test_llm_retries_on_429() -> None:
     with patch("asyncio.sleep", new_callable=AsyncMock):
         text = await call_model(mock_client, "system", "user", "openai/gpt-6-luna", "key")
 
-    assert text == "[]"
+    assert text.text == "[]"
     assert mock_client.post.call_count == 2
 
 
@@ -388,7 +390,7 @@ async def test_llm_honors_retry_after_header() -> None:
     with patch("asyncio.sleep", sleep_mock):
         text = await call_model(mock_client, "system", "user", "openai/gpt-6-luna", "key")
 
-    assert text == "[]"
+    assert text.text == "[]"
     sleep_mock.assert_awaited_once_with(7.0)
 
 
@@ -425,7 +427,7 @@ async def test_run_review_stdin_diff() -> None:
         patch(
             "gatehouse.review.call_model",
             new_callable=AsyncMock,
-            return_value="[]",
+            return_value=Completion("[]"),
         ),
     ):
         exit_code = await run_review(
@@ -497,7 +499,7 @@ async def test_run_review_constitution_skipped() -> None:
         patch(
             "gatehouse.review.call_model",
             new_callable=AsyncMock,
-            return_value="[]",
+            return_value=Completion("[]"),
         ),
     ):
         exit_code = await run_review(
@@ -575,7 +577,7 @@ async def test_run_review_comment_flag_calls_post() -> None:
         patch(
             "gatehouse.review.call_model",
             new_callable=AsyncMock,
-            return_value=MOCK_BLOCKING_FINDINGS,
+            return_value=Completion(MOCK_BLOCKING_FINDINGS),
         ),
         patch(
             "gatehouse.review.post_pr_review",
@@ -607,7 +609,7 @@ async def test_run_review_advisory_posts_comment_not_request_changes() -> None:
         patch(
             "gatehouse.review.call_model",
             new_callable=AsyncMock,
-            return_value=MOCK_BLOCKING_FINDINGS,
+            return_value=Completion(MOCK_BLOCKING_FINDINGS),
         ),
         patch(
             "gatehouse.review.post_pr_review",
@@ -640,7 +642,7 @@ async def test_run_review_no_comment_flag_skips_post() -> None:
         patch(
             "gatehouse.review.call_model",
             new_callable=AsyncMock,
-            return_value=MOCK_BLOCKING_FINDINGS,
+            return_value=Completion(MOCK_BLOCKING_FINDINGS),
         ),
         patch(
             "gatehouse.review.post_pr_review",
@@ -834,7 +836,7 @@ async def test_llm_retries_upstream_error_in_200() -> None:
     mock_client.post = AsyncMock(side_effect=[error_200, _ok("[]")])
     with patch("asyncio.sleep", new_callable=AsyncMock):
         text = await call_model(mock_client, "s", "u", "openai/gpt-6-luna", "k")
-    assert text == "[]"
+    assert text.text == "[]"
     assert mock_client.post.call_count == 2
 
 
@@ -848,7 +850,7 @@ async def test_llm_strips_code_fences() -> None:
     mock_client = AsyncMock(spec=httpx.AsyncClient)
     mock_client.post = AsyncMock(return_value=_ok('```json\n[{"a": 1}]\n```'))
     text = await call_model(mock_client, "s", "u", "openai/gpt-6-luna", "k")
-    assert text == '[{"a": 1}]'
+    assert text.text == '[{"a": 1}]'
 
 
 @pytest.mark.asyncio
@@ -873,9 +875,9 @@ async def test_run_agent_accepts_wrapped_array() -> None:
     with patch(
         "gatehouse.review.call_model",
         new_callable=AsyncMock,
-        return_value=json.dumps({"findings": [finding]}),
+        return_value=Completion(json.dumps({"findings": [finding]})),
     ):
-        _, findings = await review.run_agent(
+        _, findings, _ = await review.run_agent(
             AsyncMock(spec=httpx.AsyncClient),
             BUG_HUNTER,
             user_prompt="u",
@@ -932,9 +934,9 @@ async def test_run_review_partial_failure_still_reports_findings(
     """Findings from agents that finished are printed; failed ones are named."""
     import httpx
 
-    async def fake(_c: Any, system_prompt: str, *_a: Any) -> str:
+    async def fake(_c: Any, system_prompt: str, *_a: Any) -> Completion:
         if system_prompt == BUG_HUNTER.system_prompt:
-            return MOCK_BLOCKING_FINDINGS
+            return Completion(MOCK_BLOCKING_FINDINGS)
         raise httpx.ReadTimeout("timed out")
 
     with (
@@ -970,7 +972,7 @@ async def test_llm_retries_on_read_timeout() -> None:
 
     with patch("asyncio.sleep", new_callable=AsyncMock):
         text = await call_model(mock_client, "system", "user", "openai/gpt-6-luna", "key")
-    assert text == "[]"
+    assert text.text == "[]"
     assert mock_client.post.call_count == 2
 
 
@@ -1001,7 +1003,7 @@ async def test_run_review_non_numeric_confidence_is_agent_failure() -> None:
     with (
         patch("gatehouse.review.get_file_listing", return_value="a.py"),
         patch("gatehouse.review.load_styleguide", return_value=None),
-        patch("gatehouse.review.call_model", new_callable=AsyncMock, return_value=bad),
+        patch("gatehouse.review.call_model", new_callable=AsyncMock, return_value=Completion(bad)),
     ):
         exit_code = await run_review(stdin_diff=MOCK_DIFF, agent_slugs=["bugs"], api_key="test-key")
     assert exit_code == 2
@@ -1035,7 +1037,9 @@ async def test_run_review_wrong_shape_is_agent_failure(reply: str) -> None:
     with (
         patch("gatehouse.review.get_file_listing", return_value=None),
         patch("gatehouse.review.load_styleguide", return_value=None),
-        patch("gatehouse.review.call_model", new_callable=AsyncMock, return_value=reply),
+        patch(
+            "gatehouse.review.call_model", new_callable=AsyncMock, return_value=Completion(reply)
+        ),
     ):
         exit_code = await run_review(stdin_diff=MOCK_DIFF, agent_slugs=["bugs"], api_key="k")
     assert exit_code == 2
@@ -1077,9 +1081,9 @@ async def test_run_review_advisory_blocking_and_failed(
     """Advisory with a blocking finding and a failed agent: both shown, exit 0."""
     import httpx
 
-    async def fake(_c: Any, system_prompt: str, *_a: Any) -> str:
+    async def fake(_c: Any, system_prompt: str, *_a: Any) -> Completion:
         if system_prompt == BUG_HUNTER.system_prompt:
-            return MOCK_BLOCKING_FINDINGS
+            return Completion(MOCK_BLOCKING_FINDINGS)
         raise httpx.ReadTimeout("timed out")
 
     with (
@@ -1107,9 +1111,9 @@ async def test_run_review_incomplete_summary_says_exit_2(
     """The printed summary agrees with the returned exit code."""
     import httpx
 
-    async def fake(_c: Any, system_prompt: str, *_a: Any) -> str:
+    async def fake(_c: Any, system_prompt: str, *_a: Any) -> Completion:
         if system_prompt == BUG_HUNTER.system_prompt:
-            return MOCK_BLOCKING_FINDINGS
+            return Completion(MOCK_BLOCKING_FINDINGS)
         raise httpx.ReadTimeout("timed out")
 
     with (
@@ -1183,7 +1187,11 @@ async def test_run_review_drops_fabricated_high_finding() -> None:
     with (
         patch("gatehouse.review.get_file_listing", return_value=None),
         patch("gatehouse.review.load_styleguide", return_value=None),
-        patch("gatehouse.review.call_model", new_callable=AsyncMock, return_value=fabricated),
+        patch(
+            "gatehouse.review.call_model",
+            new_callable=AsyncMock,
+            return_value=Completion(fabricated),
+        ),
         patch("gatehouse.review.post_pr_review", new_callable=AsyncMock) as mock_post,
     ):
         exit_code = await run_review(
@@ -1244,7 +1252,7 @@ async def test_run_review_suppresses_reraise_only_when_commenting(
         patch(
             "gatehouse.review.call_model",
             new_callable=AsyncMock,
-            return_value=MOCK_ADVISORY_FINDINGS,
+            return_value=Completion(MOCK_ADVISORY_FINDINGS),
         ),
         patch("gatehouse.review.post_pr_review", new_callable=AsyncMock) as mock_post,
         patch("gatehouse.review.format_results") as mock_format,
@@ -1292,3 +1300,219 @@ def test_cap_exempts_every_required_low_agent() -> None:
     kept, capped = _cap_advisory_lows(results, frozenset())
     assert capped == 3
     assert sum(len(f) for _, f in kept) == MAX_ADVISORY_LOWS
+
+
+def _ok_body(**extra: Any) -> httpx.Response:
+    return httpx.Response(
+        200,
+        json={"choices": [{"message": {"content": "[]"}}], **extra},
+        request=httpx.Request("POST", "https://example.com"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_llm_returns_serving_model_and_usage() -> None:
+    from gatehouse.llm import call_model
+
+    usage = {
+        "prompt_tokens": 15690,
+        "completion_tokens": 327,
+        "completion_tokens_details": {"reasoning_tokens": 320},
+        "cost": 0.0021,
+    }
+    mock_client = AsyncMock(spec=httpx.AsyncClient)
+    mock_client.post = AsyncMock(
+        return_value=_ok_body(model="google/gemini-3.1-flash-lite", usage=usage)
+    )
+    reply = await call_model(mock_client, "s", "u", "openai/gpt-6-luna", "k")
+    assert reply.model == "google/gemini-3.1-flash-lite"
+    assert reply.fallback is True
+    assert reply.tokens() == (15690, 327, 320, 0.0021)
+
+
+@pytest.mark.asyncio
+async def test_llm_reply_without_usage_is_zero() -> None:
+    from gatehouse.llm import call_model
+
+    mock_client = AsyncMock(spec=httpx.AsyncClient)
+    mock_client.post = AsyncMock(return_value=_ok_body(usage="junk"))
+    reply = await call_model(mock_client, "s", "u", "openai/gpt-6-luna", "k")
+    assert reply.fallback is False
+    assert reply.tokens() == (0, 0, 0, 0.0)
+
+
+def test_dated_variant_of_requested_model_is_not_fallback() -> None:
+    reply = Completion("[]", requested="openai/gpt-6-luna", model="openai/gpt-6-luna-20260901")
+    assert reply.fallback is False
+
+
+def _served(model: str, requested: str = "openai/gpt-6-luna") -> Completion:
+    return Completion(
+        "[]",
+        requested=requested,
+        model=model,
+        usage={"prompt_tokens": 100, "completion_tokens": 10, "cost": 0.001},
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_review_logs_usage_and_reports_fallback(
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    summary = tmp_path / "summary.md"
+    usage_json = tmp_path / "usage.json"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+
+    async def fake(_c: Any, system_prompt: str, *_a: Any) -> Completion:
+        if system_prompt == BUG_HUNTER.system_prompt:
+            return _served("openai/gpt-6-luna")
+        return _served("google/gemini-3.1-flash-lite")
+
+    with (
+        patch("gatehouse.review.get_file_listing", return_value=None),
+        patch("gatehouse.review.load_styleguide", return_value=None),
+        patch("gatehouse.review.call_model", side_effect=fake),
+        patch("gatehouse.review.post_pr_review", new_callable=AsyncMock) as post,
+    ):
+        await run_review(
+            stdin_diff=MOCK_DIFF,
+            agent_slugs=["bugs", "security"],
+            api_key="k",
+            comment=True,
+            usage_json=str(usage_json),
+        )
+    err = capsys.readouterr().err
+    assert (
+        "agent=bugs model=openai/gpt-6-luna prompt=100 completion=10 reasoning=0 "
+        "cost=$0.0010 fallback=no"
+    ) in err
+    assert "agent=security model=google/gemini-3.1-flash-lite" in err
+    assert "fallback=yes" in err
+    assert "usage: calls=2 prompt=200 completion=20 reasoning=0 cost=$0.0020 fallback=1/2" in err
+    assert "| **total** |" in summary.read_text()
+    assert json.loads(usage_json.read_text())["total"]["fallback"] == 1
+    kwargs = post.call_args.kwargs
+    assert kwargs["fallbacks"] == {"google/gemini-3.1-flash-lite": 1}
+    assert kwargs["agent_count"] == 2
+    assert kwargs["scope"] == "Full review."
+
+
+# The PR diff: app.py lines 1-3 plus util.py line 1.
+PR_DIFF = (
+    MOCK_DIFF
+    + """\
+diff --git a/src/util.py b/src/util.py
+--- a/src/util.py
++++ b/src/util.py
+@@ -0,0 +1 @@
++def helper(): pass
+"""
+)
+
+# Since the last review: only util.py changed, plus a base-branch file
+# merged in that the PR itself does not touch.
+SINCE_DIFF = """\
+diff --git a/src/util.py b/src/util.py
+--- a/src/util.py
++++ b/src/util.py
+@@ -0,0 +1 @@
++def helper(): pass
+diff --git a/src/from_base.py b/src/from_base.py
+--- a/src/from_base.py
++++ b/src/from_base.py
+@@ -0,0 +1 @@
++merged_from_base = True
+"""
+
+
+@pytest.fixture
+def pr_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GITHUB_REPOSITORY", "crunchtools/gatehouse")
+    monkeypatch.setenv("GITHUB_REF", "refs/pull/7/merge")
+    monkeypatch.setenv("GITHUB_TOKEN", "t")
+    monkeypatch.setenv("GATEHOUSE_HEAD_SHA", "head1234567")
+    monkeypatch.delenv("GATEHOUSE_CONTEXT_REPO", raising=False)
+    monkeypatch.delenv("GATEHOUSE_CONTEXT_REF", raising=False)
+
+
+async def _incremental_run(
+    last: str | None, compared: tuple[str, int] | None, reply: str = "[]"
+) -> tuple[str, AsyncMock]:
+    """Run an incremental review; return the prompt the agent saw and the post mock."""
+    call_model = AsyncMock(return_value=Completion(reply))
+    with (
+        patch("gatehouse.review.get_file_listing", return_value=None),
+        patch("gatehouse.review.load_styleguide", return_value=None),
+        patch("gatehouse.review.fetch_last_reviewed_commit", return_value=last),
+        patch("gatehouse.review.fetch_compare", return_value=compared) as compare,
+        patch("gatehouse.review.call_model", call_model),
+        patch("gatehouse.review.post_pr_review", new_callable=AsyncMock) as post,
+    ):
+        await run_review(
+            stdin_diff=PR_DIFF,
+            agent_slugs=["bugs"],
+            api_key="k",
+            comment=True,
+            incremental=True,
+        )
+    if last is not None:
+        compare.assert_called_once_with(last, "head1234567")
+    return call_model.call_args.args[2], post
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("pr_env")
+async def test_incremental_reviews_only_the_compare_range() -> None:
+    prompt, post = await _incremental_run("last7654321", (SINCE_DIFF, 2))
+    assert "def helper()" in prompt
+    assert "user.name.lower()" not in prompt  # reviewed already
+    assert "merged_from_base" not in prompt  # not the PR's change
+    kwargs = post.call_args.kwargs
+    assert kwargs["scope"] == "Reviewed 2 commits since last765 (incremental)."
+    assert kwargs["commit_id"] == "head1234567"
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("pr_env")
+async def test_incremental_force_push_falls_back_to_full() -> None:
+    prompt, post = await _incremental_run("last7654321", None)
+    assert "user.name.lower()" in prompt
+    assert post.call_args.kwargs["scope"] == "Full review."
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("pr_env")
+async def test_incremental_without_earlier_review_falls_back_to_full() -> None:
+    prompt, post = await _incremental_run(None, None)
+    assert "user.name.lower()" in prompt
+    assert post.call_args.kwargs["scope"] == "Full review."
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("pr_env")
+async def test_finding_outside_pr_diff_is_not_posted() -> None:
+    inside = {**json.loads(MOCK_BLOCKING_FINDINGS)[0], "evidence": "user.name.lower()"}
+    outside = {**inside, "lineStart": 40, "lineEnd": 40}
+    _, post = await _incremental_run(None, None, json.dumps([inside, outside]))
+    posted = post.call_args.args[0][0][1]
+    assert [f["lineStart"] for f in posted] == [3]
+    assert post.call_args.kwargs["offdiff"] == 1
+
+
+def test_right_side_lines_counts_added_and_context_only() -> None:
+    from gatehouse.diffview import right_side_lines
+
+    assert right_side_lines(PR_DIFF) == {"src/app.py": {1, 2, 3}, "src/util.py": {1}}
+    assert right_side_lines("not a diff") is None
+
+
+def test_restrict_diff_keeps_only_listed_files() -> None:
+    from gatehouse.ignore import diff_paths, restrict_diff
+
+    assert diff_paths(PR_DIFF) == {"src/app.py", "src/util.py"}
+    kept = restrict_diff(SINCE_DIFF, {"src/util.py"})
+    assert "helper" in kept
+    assert "from_base" not in kept
+    assert restrict_diff(SINCE_DIFF, {"nope.py"}) == ""

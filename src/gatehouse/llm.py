@@ -6,6 +6,7 @@ import asyncio
 import http
 import random
 import re
+from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
@@ -30,6 +31,44 @@ RETRYABLE_STATUSES = frozenset(
     }
 )
 _FENCE = re.compile(r"^```(?:json)?\s*|\s*```$")
+
+
+@dataclass(frozen=True)
+class Completion:
+    """One model reply: its text, the model asked for, the model that served it, and usage."""
+
+    text: str
+    requested: str = ""
+    model: str = ""
+    usage: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def fallback(self) -> bool:
+        """True when a model other than the one requested served the reply.
+
+        OpenRouter may report a dated variant of the requested slug, so a
+        served model that starts with the requested one is not a fallback.
+        """
+        return bool(self.model) and not self.model.startswith(self.requested)
+
+    def tokens(self) -> tuple[int, int, int, float]:
+        """Return (prompt, completion, reasoning, cost); anything missing counts as 0."""
+        usage = self.usage if isinstance(self.usage, dict) else {}
+        details = usage.get("completion_tokens_details")
+        reasoning = details.get("reasoning_tokens") if isinstance(details, dict) else None
+        return (
+            int(_number(usage.get("prompt_tokens"))),
+            int(_number(usage.get("completion_tokens"))),
+            int(_number(reasoning)),
+            _number(usage.get("cost")),
+        )
+
+
+def _number(value: Any) -> float:
+    """A usage value as a float, or 0.0 when it is absent or not a number."""
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return 0.0
+    return float(value)
 
 
 def _parse_retry_after(value: str | None) -> float | None:
@@ -84,8 +123,11 @@ async def call_model(
     user_prompt: str,
     model: str,
     api_key: str,
-) -> str:
-    """Call OpenRouter chat completions and return the response text.
+) -> Completion:
+    """Call OpenRouter chat completions and return the reply.
+
+    The reply carries the serving model and the usage block from the response
+    body, so a fallback to FALLBACK_MODELS is visible to the caller.
 
     Retries on 429/502/503, on 200 responses carrying an upstream error, and
     on transport errors (timeouts, dropped connections), with exponential
@@ -134,7 +176,8 @@ async def call_model(
             )
             continue
         response.raise_for_status()
-        text = _message_text(response.json())
+        body = response.json()
+        text = _message_text(body)
         if text is None:
             delay = _backoff(response, attempt)
             last_error = httpx.HTTPStatusError(
@@ -143,8 +186,15 @@ async def call_model(
                 response=response,
             )
             continue
-        return text
+        served = body.get("model")
+        usage = body.get("usage")
+        return Completion(
+            text=text,
+            requested=model,
+            model=served if isinstance(served, str) else "",
+            usage=usage if isinstance(usage, dict) else {},
+        )
 
     if last_error is not None:
         raise last_error
-    return "[]"
+    return Completion(text="[]", requested=model)

@@ -9,7 +9,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
@@ -20,10 +20,28 @@ from gatehouse.agents import (
     build_user_prompt,
     get_agents,
 )
-from gatehouse.github import fetch_answered_threads, fetch_repo_file, post_pr_review
-from gatehouse.ignore import IGNORE_FILE, filter_diff, filter_listing, parse_ignore
-from gatehouse.llm import DEFAULT_MODEL, call_model
+from gatehouse.diffview import right_side_lines
+from gatehouse.github import (
+    detect_pr_context,
+    fetch_answered_threads,
+    fetch_compare,
+    fetch_last_reviewed_commit,
+    fetch_repo_file,
+    post_pr_review,
+)
+from gatehouse.ignore import (
+    IGNORE_FILE,
+    diff_paths,
+    filter_diff,
+    filter_listing,
+    parse_ignore,
+    restrict_diff,
+)
+from gatehouse.llm import DEFAULT_MODEL, Completion, call_model
 from gatehouse.output import format_results, print_summary, strip_ansi
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 CONFIDENCE_THRESHOLD = 80
 
@@ -243,14 +261,21 @@ def _evidence_is_real(evidence: str, haystack: str) -> bool:
     return True
 
 
-def _drop_unverified(results: Results, haystack: str) -> tuple[Results, int]:
-    kept: Results = []
-    dropped = 0
-    for agent, findings in results:
-        real = [f for f in findings if _evidence_is_real(str(f.get("evidence", "")), haystack)]
-        dropped += len(findings) - len(real)
-        kept.append((agent, real))
+def _keep_where(
+    results: Results, keep: Callable[[Agent, dict[str, Any]], bool]
+) -> tuple[Results, int]:
+    """Keep the findings keep() accepts; return them and how many were dropped."""
+    kept: Results = [
+        (agent, [f for f in findings if keep(agent, f)]) for agent, findings in results
+    ]
+    dropped = sum(len(f) for _, f in results) - sum(len(f) for _, f in kept)
     return kept, dropped
+
+
+def _drop_unverified(results: Results, haystack: str) -> tuple[Results, int]:
+    return _keep_where(
+        results, lambda _, f: _evidence_is_real(str(f.get("evidence", "")), haystack)
+    )
 
 
 def _drop_reraised(results: Results, threads: list[tuple[str, str, int]]) -> tuple[Results, int]:
@@ -267,13 +292,7 @@ def _drop_reraised(results: Results, threads: list[tuple[str, str, int]]) -> tup
         line = finding.get("lineStart", 0)
         return any(n in lines for n in range(line - RERAISE_WINDOW, line + RERAISE_WINDOW + 1))
 
-    kept: Results = []
-    dropped = 0
-    for agent, findings in results:
-        new = [f for f in findings if not reraises(agent, f)]
-        dropped += len(findings) - len(new)
-        kept.append((agent, new))
-    return kept, dropped
+    return _keep_where(results, lambda agent, f: not reraises(agent, f))
 
 
 def _cap_advisory_lows(
@@ -295,22 +314,45 @@ def _cap_advisory_lows(
     return kept, len(cut)
 
 
+def _drop_offdiff(results: Results, anchors: dict[str, set[int]] | None) -> tuple[Results, int]:
+    """Drop findings whose file line is not shown in the PR diff.
+
+    GitHub rejects a whole review if one comment points outside the diff.
+    Findings with no file or line are kept: they are never posted inline.
+    With no anchors (not commenting), nothing is dropped.
+    """
+    if anchors is None:
+        return results, 0
+
+    def anchored(_: Agent, finding: dict[str, Any]) -> bool:
+        path, line = finding.get("file", ""), finding.get("lineStart", 0)
+        if not path or not isinstance(line, int) or line <= 0:
+            return True
+        return line in anchors.get(path, ())
+
+    return _keep_where(results, anchored)
+
+
 def _filter_findings(
     results: Results,
     haystack: str,
     answered: list[tuple[str, str, int]],
     required_low: frozenset[str] = REQUIRED_LOW_AGENTS,
+    anchors: dict[str, set[int]] | None = None,
 ) -> tuple[Results, dict[str, int]]:
-    """Drop unverifiable evidence, re-raises of answered threads, excess LOWs.
+    """Drop unverifiable evidence, off-diff lines, re-raises of answered threads, excess LOWs.
 
     Returns the kept results and the count dropped by each filter, keyed as
     post_pr_review takes them.
     """
     results, unverified = _drop_unverified(results, haystack)
+    results, offdiff = _drop_offdiff(results, anchors)
     results, reraised = _drop_reraised(results, answered)
     results, capped = _cap_advisory_lows(results, required_low)
     if unverified:
         print(f"Dropped {unverified} finding(s): evidence not in the diff.", file=sys.stderr)
+    if offdiff:
+        print(f"Dropped {offdiff} finding(s): line outside the PR diff.", file=sys.stderr)
     if reraised:
         print(f"Skipped {reraised} finding(s) already answered on this PR.", file=sys.stderr)
     if capped:
@@ -319,7 +361,12 @@ def _filter_findings(
             f"(at most {MAX_ADVISORY_LOWS} are shown).",
             file=sys.stderr,
         )
-    return results, {"unverified": unverified, "reraised": reraised, "capped": capped}
+    return results, {
+        "unverified": unverified,
+        "offdiff": offdiff,
+        "reraised": reraised,
+        "capped": capped,
+    }
 
 
 async def run_agent(
@@ -331,21 +378,200 @@ async def run_agent(
     api_key: str,
     verbose: bool,
     semaphore: asyncio.Semaphore,
-) -> tuple[Agent, list[dict[str, Any]] | None]:
-    """Run a single agent and return its findings, or None if it failed."""
+) -> tuple[Agent, list[dict[str, Any]] | None, Completion | None]:
+    """Run a single agent; return its findings (None if it failed) and the model's reply.
+
+    Logs the serving model and token usage of every reply, even one whose
+    findings do not parse: the tokens were spent either way.
+    """
+    reply: Completion | None = None
     async with semaphore:
         try:
-            response_text = await call_model(
-                client, agent.system_prompt, user_prompt, model, api_key
-            )
+            reply = await call_model(client, agent.system_prompt, user_prompt, model, api_key)
+            print(_usage_line(agent.slug, reply), file=sys.stderr)
             if verbose:
                 print(f"\n--- {agent.name} raw response ---", file=sys.stderr)
-                print(response_text, file=sys.stderr)
-            findings: list[dict[str, Any]] | None = _parse_findings(response_text)
+                print(reply.text, file=sys.stderr)
+            findings: list[dict[str, Any]] | None = _parse_findings(reply.text)
         except (httpx.HTTPError, ValueError, TypeError) as exc:
             print(f"Error: {agent.name} did not finish: {exc!r}", file=sys.stderr)
             findings = None
-    return agent, findings
+    return agent, findings, reply
+
+
+def _usage_record(slug: str, reply: Completion) -> dict[str, Any]:
+    """One agent's serving model, token counts, cost and fallback flag."""
+    prompt, completion, reasoning, cost = reply.tokens()
+    return {
+        "agent": slug,
+        "model": reply.model or reply.requested,
+        "prompt": prompt,
+        "completion": completion,
+        "reasoning": reasoning,
+        "cost": cost,
+        "fallback": reply.fallback,
+    }
+
+
+def _usage_line(slug: str, reply: Completion) -> str:
+    """The stderr log line for one agent's call."""
+    r = _usage_record(slug, reply)
+    return (
+        f"agent={r['agent']} model={r['model']} prompt={r['prompt']} "
+        f"completion={r['completion']} reasoning={r['reasoning']} cost=${r['cost']:.4f} "
+        f"fallback={'yes' if r['fallback'] else 'no'}"
+    )
+
+
+def _usage_total(records: list[dict[str, Any]]) -> dict[str, Any]:
+    """Calls, summed tokens and cost, and fallback count across usage records."""
+    return {
+        "calls": len(records),
+        "prompt": sum(r["prompt"] for r in records),
+        "completion": sum(r["completion"] for r in records),
+        "reasoning": sum(r["reasoning"] for r in records),
+        "cost": sum(r["cost"] for r in records),
+        "fallback": sum(1 for r in records if r["fallback"]),
+    }
+
+
+def _write_step_summary(path: str, records: list[dict[str, Any]], total: dict[str, Any]) -> None:
+    """Append a per-agent usage table, with a total row, to the GHA step summary."""
+    rows = [
+        "| Agent | Model | Prompt | Completion | Reasoning | Cost | Fallback |",
+        "|---|---|---:|---:|---:|---:|---|",
+        *(
+            f"| {r['agent']} | {r['model']} | {r['prompt']} | {r['completion']} | "
+            f"{r['reasoning']} | ${r['cost']:.4f} | {'yes' if r['fallback'] else 'no'} |"
+            for r in records
+        ),
+        (
+            f"| **total** | | {total['prompt']} | {total['completion']} | {total['reasoning']} | "
+            f"${total['cost']:.4f} | {total['fallback']}/{total['calls']} |"
+        ),
+    ]
+    with open(path, "a") as f:
+        f.write("### Gatehouse usage\n\n" + "\n".join(rows) + "\n")
+
+
+def _report_usage(records: list[dict[str, Any]]) -> dict[str, int]:
+    """Print the review's usage total; return the count of agents per fallback model."""
+    total = _usage_total(records)
+    print(
+        f"usage: calls={total['calls']} prompt={total['prompt']} "
+        f"completion={total['completion']} reasoning={total['reasoning']} "
+        f"cost=${total['cost']:.4f} fallback={total['fallback']}/{total['calls']}",
+        file=sys.stderr,
+    )
+    fallbacks: dict[str, int] = {}
+    for r in records:
+        if r["fallback"]:
+            fallbacks[r["model"]] = fallbacks.get(r["model"], 0) + 1
+    return fallbacks
+
+
+def _save_usage(records: list[dict[str, Any]], usage_json: str | None) -> None:
+    """Write usage to the GHA step summary (when set) and to usage_json.
+
+    Runs after the review is posted, so a bad path costs the exit status,
+    never the findings.
+    """
+    total = _usage_total(records)
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary and records:
+        _write_step_summary(summary, records, total)
+    if usage_json:
+        Path(usage_json).write_text(json.dumps({"agents": records, "total": total}, indent=2))
+
+
+def _incremental_diff(pr_diff: str) -> tuple[str, str] | None:
+    """Return (diff, scope line) covering only commits since the last complete review.
+
+    None — review the whole PR — when not in a PR with a known head, when
+    there is no earlier complete review, or when head does not descend from
+    it. The compare diff is cut to files the PR touches, so merging the base
+    branch in does not put the base's own changes up for review.
+    """
+    head = os.environ.get("GATEHOUSE_HEAD_SHA", "")
+    if not head or detect_pr_context() is None:
+        print("Full review: no PR head to compare against.", file=sys.stderr)
+        return None
+    base = fetch_last_reviewed_commit()
+    if base is None:
+        print("Full review: no earlier complete Gatehouse review.", file=sys.stderr)
+        return None
+    compared = fetch_compare(base, head)
+    if compared is None:
+        print(
+            f"Full review: {head[:7]} does not build on reviewed {base[:7]}.",
+            file=sys.stderr,
+        )
+        return None
+    diff, commits = compared
+    diff = restrict_diff(diff, diff_paths(pr_diff))
+    noun = "commit" if commits == 1 else "commits"
+    scope = f"Reviewed {commits} {noun} since {base[:7]} (incremental)."
+    print(scope, file=sys.stderr)
+    return diff, scope
+
+
+async def _review_scope(pr_diff: str, spec: Any, *, incremental: bool) -> tuple[str, str]:
+    """Return the diff to review and the scope line for the posted review body.
+
+    The whole PR unless incremental review applies and finds a range; the
+    range is filtered by the same ignore spec as the PR diff. The GitHub
+    lookups block, so they run in a thread.
+    """
+    if incremental:
+        since = await asyncio.to_thread(_incremental_diff, pr_diff)
+        if since is not None:
+            return filter_diff(since[0], spec)[0], since[1]
+    return pr_diff, "Full review."
+
+
+async def _run_agents(
+    prompts: list[tuple[Agent, str]], *, model: str, api_key: str, verbose: bool
+) -> list[tuple[Agent, list[dict[str, Any]] | None, Completion | None]]:
+    """Run each agent on its prompt concurrently, at most MAX_CONCURRENT_AGENTS at once."""
+    async with httpx.AsyncClient() as client:
+        semaphore = asyncio.Semaphore(MAX_CONCURRENT_AGENTS)
+        return await asyncio.gather(
+            *(
+                run_agent(
+                    client,
+                    agent,
+                    user_prompt=prompt,
+                    model=model,
+                    api_key=api_key,
+                    verbose=verbose,
+                    semaphore=semaphore,
+                )
+                for agent, prompt in prompts
+            )
+        )
+
+
+def _agent_prompts(
+    agents: list[Agent],
+    user_prompt: str,
+    *,
+    constitution: str | None,
+    diff: str,
+    styleguide: str | None,
+    file_listing: str | None,
+) -> list[tuple[Agent, str]]:
+    """Pair each agent with its prompt; Constitution is skipped without a constitution."""
+    prompts: list[tuple[Agent, str]] = []
+    for agent in agents:
+        if agent.slug != CONSTITUTION.slug:
+            prompts.append((agent, user_prompt))
+        elif constitution:
+            prompts.append(
+                (agent, build_constitution_prompt(diff, constitution, styleguide, file_listing))
+            )
+        else:
+            print("Skipping Constitution agent: no constitution file found.")
+    return prompts
 
 
 async def run_review(
@@ -361,6 +587,8 @@ async def run_review(
     constitution_path: str | None = None,
     comment: bool = False,
     required_low_agents: frozenset[str] = REQUIRED_LOW_AGENTS,
+    incremental: bool = False,
+    usage_json: str | None = None,
 ) -> int:
     """Run the full review pipeline.
 
@@ -370,6 +598,13 @@ async def run_review(
     --advisory, which never fails the run: there it is reported, not raised.
     LOWs from agents named in required_low_agents are exempt from the
     advisory LOW cap, so triage sees every LOW it requires an answer to.
+
+    With incremental=True (and comment=True) on a PR, only the commits since
+    the last complete Gatehouse review are reviewed; the given diff is the
+    whole PR's, used as the fallback and to anchor comments.
+
+    usage_json, when set, receives each agent's usage record and the total
+    as JSON, written after the review is posted.
     """
     diff = stdin_diff if stdin_diff is not None else get_git_diff(base, staged)
     spec = parse_ignore(_load_context_file(IGNORE_FILE)) if diff.strip() else None
@@ -380,65 +615,42 @@ async def run_review(
         print("No changes to review.")
         return 0
 
+    anchors, scope = None, ""
+    if comment:
+        anchors = right_side_lines(diff)
+        diff, scope = await _review_scope(diff, spec, incremental=incremental)
+    if not diff.strip():
+        print("No changes to review since the last review.")
+        return 0
+
     agents = get_agents(agent_slugs)
     styleguide = load_styleguide()
     file_listing = filter_listing(get_file_listing(), spec)
     user_prompt = build_user_prompt(diff, styleguide, file_listing)
 
     constitution = load_constitution(constitution_path)
-    constitution_agent = None
-    standard_agents = []
-    for agent in agents:
-        if agent.slug == CONSTITUTION.slug:
-            constitution_agent = agent
-        else:
-            standard_agents.append(agent)
-
-    if constitution_agent and not constitution:
-        print("Skipping Constitution agent: no constitution file found.")
-        constitution_agent = None
+    prompts = _agent_prompts(
+        agents,
+        user_prompt,
+        constitution=constitution,
+        diff=diff,
+        styleguide=styleguide,
+        file_listing=file_listing,
+    )
 
     threads = asyncio.create_task(asyncio.to_thread(fetch_answered_threads)) if comment else None
-    async with httpx.AsyncClient() as client:
-        semaphore = asyncio.Semaphore(MAX_CONCURRENT_AGENTS)
-        coros = [
-            run_agent(
-                client,
-                agent,
-                user_prompt=user_prompt,
-                model=model,
-                api_key=api_key,
-                verbose=verbose,
-                semaphore=semaphore,
-            )
-            for agent in standard_agents
-        ]
-        if constitution_agent and constitution:
-            const_prompt = build_constitution_prompt(
-                diff,
-                constitution,
-                styleguide,
-                file_listing,
-            )
-            coros.append(
-                run_agent(
-                    client,
-                    constitution_agent,
-                    user_prompt=const_prompt,
-                    model=model,
-                    api_key=api_key,
-                    verbose=verbose,
-                    semaphore=semaphore,
-                )
-            )
-        raw = await asyncio.gather(*coros)
+    raw = await _run_agents(prompts, model=model, api_key=api_key, verbose=verbose)
 
-    failed = tuple(agent.name for agent, findings in raw if findings is None)
-    all_results: Results = [(agent, findings) for agent, findings in raw if findings is not None]
+    failed = tuple(agent.name for agent, findings, _ in raw if findings is None)
+    all_results: Results = [(agent, findings) for agent, findings, _ in raw if findings is not None]
+    usage = [_usage_record(agent.slug, reply) for agent, _, reply in raw if reply is not None]
+    fallbacks = _report_usage(usage)
 
     haystack = _evidence_haystack(diff, styleguide, constitution)
     answered = await threads if threads else []
-    all_results, dropped = _filter_findings(all_results, haystack, answered, required_low_agents)
+    all_results, dropped = _filter_findings(
+        all_results, haystack, answered, required_low_agents, anchors
+    )
 
     format_results(all_results)
 
@@ -458,6 +670,11 @@ async def run_review(
             failed,
             len(ignored),
             **dropped,
+            scope=scope,
+            fallbacks=fallbacks,
+            agent_count=len(raw),
+            commit_id=os.environ.get("GATEHOUSE_HEAD_SHA", ""),
         )
+    _save_usage(usage, usage_json)
 
     return exit_code
