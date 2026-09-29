@@ -170,6 +170,7 @@ jobs:
             "$IMAGE" \
             "${args[@]}" < "$diff_file" || rc=$?
           if [ -s "$out_dir/step-summary.md" ]; then
-            cat "$out_dir/step-summary.md" >> "$GITHUB_STEP_SUMMARY" || true
+            cat "$out_dir/step-summary.md" >> "$GITHUB_STEP_SUMMARY" \
+              || echo "::warning::Could not append Gatehouse usage to the step summary."
           fi
           exit "$rc"
