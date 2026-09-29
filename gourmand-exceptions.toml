@@ -77,3 +77,9 @@ check = "copy_paste_detection"
 path = "src/gatehouse/output.py"
 justification = "format_finding renders a finding for the terminal; the GitHub comment and summary renderers it resembles emit Markdown for a different sink. The overlap is the shared finding fields, not duplicated logic."
 classification = "by_design"
+
+[[exceptions]]
+check = "redundant_error_handling"
+path = "src/gatehouse/review.py"
+justification = "_write_step_summary runs after the review is posted and the step summary is cosmetic. Warning and continuing is the recovery (#61): an unwritable summary must not fail a finished review or skip --usage-json."
+classification = "by_design"

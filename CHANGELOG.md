@@ -5,6 +5,15 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+## [0.15.1] - 2026-09-29
+
+### Fixed
+- **Review no longer fails writing the step summary (#61, #62).** Container
+  root got `PermissionError` on the bind-mounted `$GITHUB_STEP_SUMMARY`, so a
+  finished review exited 1. `review.yml` now gives the container a scratch
+  directory and appends the usage table from the host, keeping gatehouse's
+  exit code. A failed summary write only warns.
+
 ## [0.15.0] - 2026-09-29
 
 ### Added

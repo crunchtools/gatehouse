@@ -450,8 +450,11 @@ def _write_step_summary(path: str, records: list[dict[str, Any]], total: dict[st
             f"${total['cost']:.4f} | {total['fallback']}/{total['calls']} |"
         ),
     ]
-    with open(path, "a") as f:
-        f.write("### Gatehouse usage\n\n" + "\n".join(rows) + "\n")
+    try:
+        with open(path, "a") as f:
+            f.write("### Gatehouse usage\n\n" + "\n".join(rows) + "\n")
+    except OSError as e:
+        print(f"Warning: could not write step summary {path}: {e}", file=sys.stderr)
 
 
 def _report_usage(records: list[dict[str, Any]]) -> dict[str, int]:
@@ -473,8 +476,9 @@ def _report_usage(records: list[dict[str, Any]]) -> dict[str, int]:
 def _save_usage(records: list[dict[str, Any]], usage_json: str | None) -> None:
     """Write usage to the GHA step summary (when set) and to usage_json.
 
-    Runs after the review is posted, so a bad path costs the exit status,
-    never the findings.
+    Runs after the review is posted, so a bad usage_json path costs the exit
+    status, never the findings. The step summary is cosmetic: a failed write
+    only warns.
     """
     total = _usage_total(records)
     summary = os.environ.get("GITHUB_STEP_SUMMARY")

@@ -79,7 +79,7 @@ on:
         description: "Gatehouse release image tag. Bump per release."
         type: string
         required: false
-        default: "quay.io/crunchtools/gatehouse:0.15.0"
+        default: "quay.io/crunchtools/gatehouse:0.15.1"
     secrets:
       OPENROUTER_API_KEY:
         required: true
@@ -138,7 +138,12 @@ jobs:
           #    terminal fixtures); the diff goes to a pipe, not a terminal, and
           #    gatehouse strips escapes from everything it prints or posts.
           diff_file="$(mktemp)"
-          trap 'rm -f "$diff_file"' EXIT
+          # Container root cannot write the runner's $GITHUB_STEP_SUMMARY
+          # (EACCES, #61), so gatehouse writes into a scratch dir and the host
+          # appends it after the run.
+          out_dir="$(mktemp -d)"
+          chmod 0777 "$out_dir"
+          trap 'rm -rf "$diff_file" "$out_dir"' EXIT
           if ! gh pr diff "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --patch \
               --allow-escape-sequences > "$diff_file"; then
             echo "::error::Could not fetch the diff for PR #${PR_NUMBER}." >&2
@@ -149,8 +154,9 @@ jobs:
           #    - GITHUB_REF is synthesized as refs/pull/N/merge so gatehouse's
           #      detect_pr_context() resolves (repo, PR) without mounting the event file.
           #    - GITHUB_TOKEN authorizes gatehouse to POST the PR review via the REST API.
-          #    - The step summary file is mounted so gatehouse can append its
-          #      per-agent model/token/cost table.
+          #    - gatehouse appends its per-agent model/token/cost table to
+          #      out_dir; the host copies it into the step summary.
+          rc=0
           docker run --rm -i \
             -e OPENROUTER_API_KEY \
             -e GITHUB_TOKEN="$GH_TOKEN" \
@@ -159,7 +165,11 @@ jobs:
             -e GATEHOUSE_CONTEXT_REPO="$GITHUB_REPOSITORY" \
             -e GATEHOUSE_CONTEXT_REF="$BASE_REF" \
             -e GATEHOUSE_HEAD_SHA="$HEAD_SHA" \
-            -v "$GITHUB_STEP_SUMMARY:/tmp/step-summary.md" \
-            -e GITHUB_STEP_SUMMARY=/tmp/step-summary.md \
+            -v "$out_dir:/out" \
+            -e GITHUB_STEP_SUMMARY=/out/step-summary.md \
             "$IMAGE" \
-            "${args[@]}" < "$diff_file"
+            "${args[@]}" < "$diff_file" || rc=$?
+          if [ -s "$out_dir/step-summary.md" ]; then
+            cat "$out_dir/step-summary.md" >> "$GITHUB_STEP_SUMMARY" || true
+          fi
+          exit "$rc"
