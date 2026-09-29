@@ -16,9 +16,12 @@ import httpx
 from gatehouse.agents import BUG_HUNTER, GENERAL, SECURITY_SCAN
 from gatehouse.github import (
     FINDING_HEADER_RE,
+    REVIEW_MARKER,
     _format_comment_body,
     detect_pr_context,
     fetch_answered_threads,
+    fetch_compare,
+    fetch_last_reviewed_commit,
     fetch_repo_file,
     format_review_body,
     post_pr_review,
@@ -120,7 +123,14 @@ def test_format_review_body_counts() -> None:
 
 def test_format_review_body_no_findings() -> None:
     results = [(BUG_HUNTER, []), (GENERAL, [])]
-    assert format_review_body(results) == "Gatehouse found no issues."
+    assert (
+        format_review_body(results, agent_count=2)
+        == f"Gatehouse found no issues.\n\n{REVIEW_MARKER}"
+    )
+
+
+def test_format_review_body_no_marker_when_no_agent_ran() -> None:
+    assert REVIEW_MARKER not in format_review_body([], agent_count=0)
 
 
 @pytest.mark.asyncio
@@ -418,3 +428,103 @@ def test_fetch_answered_threads_outside_pr_is_empty(monkeypatch: pytest.MonkeyPa
     with patch("gatehouse.github.httpx.get") as get:
         assert fetch_answered_threads() == []
     get.assert_not_called()
+
+
+def _review(user: str, commit: str, body: str) -> dict:
+    return {
+        "user": {"login": user, "type": "Bot" if user == BOT_LOGIN else "User"},
+        "commit_id": commit,
+        "body": body,
+    }
+
+
+def test_fetch_last_reviewed_commit_takes_newest_complete_bot_review(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _pr_env(monkeypatch)
+    reviews = [
+        _review(BOT_LOGIN, "aaa", f"Gatehouse found no issues.\n\n{REVIEW_MARKER}"),
+        _review(BOT_LOGIN, "bbb", "Gatehouse found no issues.\n\nIncomplete: Bug Hunter"),
+        _review("mallory", "ccc", f"lgtm {REVIEW_MARKER}"),
+        {**_review(BOT_LOGIN, "ddd", "some other bot"), "body": None},
+    ]
+    with patch("gatehouse.github.httpx.get", side_effect=_pages(reviews)):
+        assert fetch_last_reviewed_commit() == "aaa"
+
+
+def test_fetch_last_reviewed_commit_skips_newer_incomplete_review(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _pr_env(monkeypatch)
+    reviews = [
+        _review(BOT_LOGIN, "aaa", f"Gatehouse found no issues.\n\n{REVIEW_MARKER}"),
+        _review(BOT_LOGIN, "bbb", f"Gatehouse found 1 issue.\n\n{REVIEW_MARKER}"),
+        _review(BOT_LOGIN, "ccc", "Gatehouse found no issues.\n\nIncomplete: Bug Hunter"),
+    ]
+    with patch("gatehouse.github.httpx.get", side_effect=_pages(reviews)):
+        assert fetch_last_reviewed_commit() == "bbb"
+
+
+def test_fetch_last_reviewed_commit_none_without_review(monkeypatch: pytest.MonkeyPatch) -> None:
+    _pr_env(monkeypatch)
+    with patch("gatehouse.github.httpx.get", side_effect=_pages([])):
+        assert fetch_last_reviewed_commit() is None
+    with patch("gatehouse.github.httpx.get", side_effect=httpx.ConnectError("down")):
+        assert fetch_last_reviewed_commit() is None
+
+
+def _compare(status: str, ahead_by: int = 2, diff: str = "diff --git a/x b/x\n") -> list:
+    req = httpx.Request("GET", "https://example.com")
+    return [
+        httpx.Response(200, json={"status": status, "ahead_by": ahead_by}, request=req),
+        httpx.Response(200, text=diff, request=req),
+    ]
+
+
+def test_fetch_compare_returns_diff_when_head_is_ahead(monkeypatch: pytest.MonkeyPatch) -> None:
+    _pr_env(monkeypatch)
+    with patch("gatehouse.github.httpx.get", side_effect=_compare("ahead")) as get:
+        assert fetch_compare("aaa", "bbb") == ("diff --git a/x b/x\n", 2)
+    assert get.call_args_list[0].args[0].endswith("/compare/aaa...bbb")
+    assert get.call_args.kwargs["headers"]["Accept"] == "application/vnd.github.diff"
+
+
+@pytest.mark.parametrize("status", ["diverged", "behind", "identical"])
+def test_fetch_compare_none_unless_ahead(monkeypatch: pytest.MonkeyPatch, status: str) -> None:
+    _pr_env(monkeypatch)
+    with patch("gatehouse.github.httpx.get", side_effect=_compare(status)):
+        assert fetch_compare("aaa", "bbb") is None
+
+
+def test_fetch_compare_none_on_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    _pr_env(monkeypatch)
+    with patch("gatehouse.github.httpx.get", side_effect=httpx.ConnectError("down")):
+        assert fetch_compare("aaa", "bbb") is None
+
+
+def test_format_review_body_scope_fallback_and_offdiff() -> None:
+    body = format_review_body(
+        [(BUG_HUNTER, [])],
+        scope="Reviewed 2 commits since abc1234 (incremental).",
+        offdiff=1,
+        fallbacks={"google/gemini-3.1-flash-lite": 3},
+        agent_count=8,
+    )
+    assert "Reviewed 2 commits since abc1234 (incremental)." in body
+    assert "1 finding(s) not posted: their line is outside the PR diff." in body
+    assert "3 of 8 agents served by google/gemini-3.1-flash-lite" in body
+    assert body.endswith(REVIEW_MARKER)
+
+
+def test_format_review_body_incomplete_has_no_marker() -> None:
+    body = format_review_body([(BUG_HUNTER, [])], ("Security Scan",))
+    assert REVIEW_MARKER not in body
+
+
+@pytest.mark.asyncio
+async def test_post_pr_review_pins_commit_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    _pr_env(monkeypatch)
+    ok = httpx.Response(200, request=httpx.Request("POST", "https://example.com"))
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=ok) as post:
+        assert await post_pr_review([], request_changes=False, commit_id="abc123")
+    assert post.call_args.kwargs["json"]["commit_id"] == "abc123"

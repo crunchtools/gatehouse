@@ -59,3 +59,21 @@ check = "hidden_env_config"
 path = "src/gatehouse/cli.py"
 justification = "OPENROUTER_API_KEY_FILE is the _FILE credential variant the CLI-tool profile (section I.3) makes mandatory; documented in README Configuration"
 classification = "by_design"
+
+[[exceptions]]
+check = "copy_paste_detection"
+path = "src/gatehouse/github.py"
+justification = "The shared PR-auth, pagination and PR-list logic is already factored out (_pr_auth, _get_pages, _fetch_pr_list). What remains matches on shape only: two env reads then a guard (_pr_auth vs review._context_source), and a guard-then-try preamble around different endpoints and error policies (_fetch_pr_list vs fetch_compare)."
+classification = "by_design"
+
+[[exceptions]]
+check = "copy_paste_detection"
+path = "src/gatehouse/review.py"
+justification = "_context_source and _save_usage share only the shape of reading an env var and branching on it; one resolves the trusted context source, the other writes usage files."
+classification = "by_design"
+
+[[exceptions]]
+check = "copy_paste_detection"
+path = "src/gatehouse/output.py"
+justification = "format_finding renders a finding for the terminal; the GitHub comment and summary renderers it resembles emit Markdown for a different sink. The overlap is the shared finding fields, not duplicated logic."
+classification = "by_design"

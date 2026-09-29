@@ -153,3 +153,29 @@ def filter_listing(listing: str | None, spec: pathspec.GitIgnoreSpec | None) -> 
     return "".join(
         line for line in listing.splitlines(keepends=True) if not spec.match_file(line.rstrip("\n"))
     )
+
+
+def diff_paths(diff: str) -> set[str]:
+    """Every path any file section of a diff touches."""
+    return {
+        path
+        for section in _sections(diff)
+        if section[0].startswith("diff --git ")
+        for path in _segment_paths(section)
+    }
+
+
+def restrict_diff(diff: str, paths: set[str]) -> str:
+    """Keep only the file sections of a diff that touch one of paths.
+
+    Empty when no file section survives.
+    """
+    kept: list[str] = []
+    files_kept = 0
+    for section in _sections(diff):
+        if section[0].startswith("diff --git "):
+            if not _segment_paths(section) & paths:
+                continue
+            files_kept += 1
+        kept.extend(section)
+    return "".join(kept) if files_kept else ""

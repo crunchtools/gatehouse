@@ -5,6 +5,34 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-09-29
+
+### Added
+- **Incremental re-review (#57).** On a push to an open PR, `review.yml`
+  passes `--incremental`: gatehouse reviews only the commits since its last
+  complete review, fetched through the compare API with nothing checked
+  out. It falls back to the whole PR for a first review, a force-push or
+  rebase, when the last review had an unfinished agent, or when the compare
+  fails. Files the PR does not touch are cut from the range, so merging the
+  base branch in does not review the base's changes. The review summary
+  states the scope.
+- **Serving model and usage per agent (#58).** Each agent logs
+  `agent=… model=… prompt=… completion=… reasoning=… cost=$… fallback=yes|no`
+  to stderr, followed by a total line. In CI the same table goes to the job's
+  step summary, and `--usage-json PATH` writes it as JSON.
+- **Fallback is visible.** When a fallback model served any agent, the posted
+  review says so, e.g. "3 of 8 agents served by google/gemini-3.1-flash-lite".
+
+### Changed
+- Findings on a line outside the PR diff are not posted, and the summary
+  counts them. GitHub rejects a whole review over one such comment.
+- The posted review is pinned to the head commit that was reviewed, and a
+  review in which every agent finished carries a hidden
+  `<!-- gatehouse review complete -->` marker; incremental review starts
+  from the newest one.
+- `call_model` returns a `Completion` (text, requested and serving model,
+  usage) instead of the bare text.
+
 ## [0.14.0] - 2026-09-29
 
 LOW findings were 26% of the threads triage required an answer to, and a

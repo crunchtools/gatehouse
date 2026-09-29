@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from gatehouse.ignore import IGNORE_FILE, filter_diff, filter_listing, parse_ignore
+from gatehouse.llm import Completion
 from gatehouse.review import run_review
 
 if TYPE_CHECKING:
@@ -164,7 +165,7 @@ async def test_run_review_uses_the_base_ignore_file_not_the_prs(
         return "data/\n" if path == IGNORE_FILE else None
 
     diff = MODIFIED.format(p="src/app.py") + MODIFIED.format(p="data/x.fp")
-    call_model = AsyncMock(return_value="[]")
+    call_model = AsyncMock(return_value=Completion("[]"))
     with (
         patch("gatehouse.review.fetch_repo_file", side_effect=fetch),
         patch("gatehouse.review.get_file_listing", return_value=None),
@@ -187,7 +188,7 @@ async def test_run_review_all_ignored_skips_the_agents(
 ) -> None:
     monkeypatch.chdir(tmp_path)
     (tmp_path / IGNORE_FILE).write_text("data/\n")
-    call_model = AsyncMock(return_value="[]")
+    call_model = AsyncMock(return_value=Completion("[]"))
     with (
         patch("gatehouse.review.call_model", call_model),
         patch("gatehouse.review.post_pr_review", new_callable=AsyncMock) as post,
@@ -247,7 +248,7 @@ async def test_run_review_filters_the_file_listing(
 ) -> None:
     monkeypatch.chdir(tmp_path)
     (tmp_path / IGNORE_FILE).write_text("data/\n")
-    call_model = AsyncMock(return_value="[]")
+    call_model = AsyncMock(return_value=Completion("[]"))
     with (
         patch("gatehouse.review.get_file_listing", return_value="src/app.py\ndata/zz.fp\n"),
         patch("gatehouse.review.call_model", call_model),
