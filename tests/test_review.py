@@ -32,6 +32,7 @@ from gatehouse.review import (
     _evidence_haystack,
     _evidence_is_real,
     _has_blocking_findings,
+    _save_usage,
     load_constitution,
     run_review,
 )
@@ -1397,6 +1398,26 @@ async def test_run_review_logs_usage_and_reports_fallback(
     assert kwargs["fallbacks"] == {"google/gemini-3.1-flash-lite": 1}
     assert kwargs["agent_count"] == 2
     assert kwargs["scope"] == "Full review."
+
+
+def test_step_summary_write_failure_only_warns(
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A directory stands in for an unwritable summary file (#61): open() raises.
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(tmp_path))
+    record = {
+        "agent": "bugs",
+        "model": "m",
+        "prompt": 1,
+        "completion": 1,
+        "reasoning": 0,
+        "cost": 0.0,
+        "fallback": False,
+    }
+    _save_usage([record], None)
+    assert "Warning: could not write step summary" in capsys.readouterr().err
 
 
 # The PR diff: app.py lines 1-3 plus util.py line 1.
