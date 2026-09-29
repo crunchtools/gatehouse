@@ -90,7 +90,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
-    uses: crunchtools/gatehouse/.github/workflows/review.yml@v0.13.0
+    uses: crunchtools/gatehouse/.github/workflows/review.yml@v0.14.0
     # Advisory by default — findings post as comments, the check always passes.
     # Uncomment to let critical/high findings fail the check (still not required):
     #   with:
@@ -100,11 +100,15 @@ jobs:
 
   # ── 3) Every finding answered ──────────────────────────────────────────────
   # Runs after the review on a push, and alone on a reply (review is skipped
-  # then, hence always()). Read-only, no secrets.
+  # then, hence always()). Read-only, no secrets. LOW findings need an answer
+  # only from Bug Hunter and Security Scan; other LOWs are advisory. To change
+  # which agents' LOWs are required (agent names, comma-separated):
+  #   with:
+  #     required_low_agents: "Bug Hunter,Security Scan,Test Coverage"
   triage:
     name: Gatehouse triage
     needs: review
     if: always()
     permissions:
       pull-requests: read
-    uses: crunchtools/gatehouse/.github/workflows/triage.yml@v0.13.0
+    uses: crunchtools/gatehouse/.github/workflows/triage.yml@v0.14.0

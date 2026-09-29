@@ -43,7 +43,7 @@ gatehouse --advisory
 | Consistency Check | Naming patterns, API consistency, error handling patterns | Advisory only |
 | General Review | Over-abstraction, unclear naming, hidden dependencies | Advisory only |
 
-All 8 agents run concurrently. Findings below 80% confidence are filtered out.
+All 8 agents run concurrently. Findings below 80% confidence are filtered out, and so are findings whose quoted evidence is not in the diff. At most 5 LOW findings from advisory agents (all but Bug Hunter and Security Scan) are reported, the most confident first.
 
 ## How Agents See Changes
 
@@ -67,12 +67,16 @@ fall back to the raw unified format.
 
 Drop in [`examples/gatehouse.yml`](examples/gatehouse.yml) to review every PR (forks included) via the reusable `review.yml` workflow — the diff is piped as data, never checked out or executed.
 
+The example also runs `Gatehouse triage`, a deterministic check that every required finding has a reply (`fixed in <sha>` or `not a bug: <reason>`). CRITICAL, HIGH and MEDIUM findings are required from every agent; LOW findings only from Bug Hunter and Security Scan, and the triage input `required_low_agents` changes that list. Other LOWs still post, as advisory.
+
+Before posting, gatehouse drops three kinds of finding, and the review summary counts each: a finding whose quoted evidence appears nowhere in the diff (or the styleguide and constitution the agents were given), a MEDIUM or LOW that repeats an answered thread by the same agent within 5 lines, and advisory LOWs beyond the 5 most confident. Every finding comment carries a hidden `<!-- gatehouse agent=… confidence=… -->` marker for tuning.
+
 Add [`examples/gatehouse-retriage.yml`](examples/gatehouse-retriage.yml) as well if `Gatehouse triage` is a required check. A reply to a finding starts a run whose checks branch rules ignore; the retriage workflow re-runs triage inside the `pull_request_target` run, where the result counts.
 
 The review is **advisory by default**: findings post as PR comments and the check always passes (an agent that could not finish is named in the review instead of failing it), so a non-deterministic LLM finding can never block a merge. Do not mark it a required status check. To let critical/high findings fail the check (still not recommended as a required gate), opt in:
 
 ```yaml
-uses: crunchtools/gatehouse/.github/workflows/review.yml@v0.13.0
+uses: crunchtools/gatehouse/.github/workflows/review.yml@v0.14.0
 with:
   blocking: true
 ```

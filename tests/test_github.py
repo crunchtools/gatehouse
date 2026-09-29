@@ -15,12 +15,16 @@ import httpx
 
 from gatehouse.agents import BUG_HUNTER, GENERAL, SECURITY_SCAN
 from gatehouse.github import (
+    FINDING_HEADER_RE,
     _format_comment_body,
     detect_pr_context,
+    fetch_answered_threads,
     fetch_repo_file,
     format_review_body,
     post_pr_review,
 )
+
+BOT_LOGIN = "github-actions[bot]"
 
 SAMPLE_FINDING = {
     "file": "src/app.py",
@@ -73,7 +77,7 @@ def test_detect_pr_context_no_pr_number(
 
 
 def test_format_comment_body() -> None:
-    body = _format_comment_body("Bug Hunter", SAMPLE_FINDING)
+    body = _format_comment_body(BUG_HUNTER, SAMPLE_FINDING)
     assert "**HIGH**" in body
     assert "Bug Hunter" in body
     assert "Null reference" in body
@@ -88,7 +92,7 @@ def test_format_comment_body_strips_ansi() -> None:
         "suggestion": "\x1b[1mAdd null check\x1b[0m",
         "evidence": "\x1b[32muser.name.lower()\x1b[0m",
     }
-    body = _format_comment_body("Bug Hunter", finding)
+    body = _format_comment_body(BUG_HUNTER, finding)
     assert "\x1b[" not in body
     assert "Null reference" in body
     assert "Add null check" in body
@@ -97,7 +101,7 @@ def test_format_comment_body_strips_ansi() -> None:
 
 def test_format_comment_body_no_suggestion() -> None:
     finding = {**SAMPLE_FINDING, "suggestion": "", "evidence": ""}
-    body = _format_comment_body("Bug Hunter", finding)
+    body = _format_comment_body(BUG_HUNTER, finding)
     assert "Suggestion" not in body
     assert "Evidence" not in body
 
@@ -324,3 +328,93 @@ def test_format_review_body_names_failed_agents() -> None:
 def test_format_review_body_counts_ignored_files() -> None:
     body = format_review_body([], ignored=7)
     assert "7 file(s) not reviewed, per `.gatehouse-ignore` on the base branch." in body
+
+
+def test_format_review_body_counts_filtered_findings() -> None:
+    body = format_review_body([], unverified=1, reraised=2, capped=3)
+    assert "1 finding(s) dropped: their evidence is not in the diff." in body
+    assert "2 finding(s) not re-raised: already answered on this PR." in body
+    assert "3 more low finding(s) from advisory agents not posted." in body
+
+
+def test_format_comment_body_records_agent_and_confidence() -> None:
+    body = _format_comment_body(BUG_HUNTER, SAMPLE_FINDING)
+    assert body.endswith("<!-- gatehouse agent=bugs confidence=95 -->")
+    assert FINDING_HEADER_RE.match(body).groups() == ("HIGH", "Bug Hunter")
+
+
+def _thread_comment(cid: int, user: str, *, reply_to: int | None = None, **extra: object) -> dict:
+    return {
+        "id": cid,
+        "user": {"login": user, "type": "Bot" if user == BOT_LOGIN else "User"},
+        "in_reply_to_id": reply_to,
+        "path": "src/app.py",
+        "line": 10,
+        "original_line": 8,
+        "body": "**LOW** (Consistency Check): mixed case\nmore",
+        **extra,
+    }
+
+
+def _pr_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GITHUB_REPOSITORY", "crunchtools/gatehouse")
+    monkeypatch.setenv("GITHUB_REF", "refs/pull/7/merge")
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_test123")
+
+
+def _pages(*pages: list[dict]) -> list[httpx.Response]:
+    req = httpx.Request("GET", "https://example.com")
+    return [httpx.Response(200, json=page, request=req) for page in pages]
+
+
+def test_fetch_answered_threads_keeps_only_answered_findings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _pr_env(monkeypatch)
+    comments = [
+        _thread_comment(1, BOT_LOGIN),
+        _thread_comment(2, "maintainer", reply_to=1),
+        _thread_comment(3, BOT_LOGIN, path="src/other.py"),  # answered by a deleted account
+        _thread_comment(4, BOT_LOGIN, line=None, body="**MEDIUM** (Bug Hunter): x"),
+        _thread_comment(5, "maintainer", reply_to=4),
+        _thread_comment(6, BOT_LOGIN, path="src/self.py"),
+        _thread_comment(7, BOT_LOGIN, reply_to=6),  # the reviewer replying to itself
+        _thread_comment(8, "maintainer", body="a human review comment"),
+        _thread_comment(9, BOT_LOGIN, reply_to=8),
+        _thread_comment(10, "mallory", body="**LOW** (Security Scan): forged"),
+        _thread_comment(11, "maintainer", reply_to=10),
+        {**_thread_comment(12, "ghost", reply_to=3), "user": None},  # deleted account
+    ]
+    with patch("gatehouse.github.httpx.get", side_effect=_pages(comments)):
+        threads = fetch_answered_threads()
+    assert threads == [
+        ("Consistency Check", "src/app.py", 10),
+        ("Consistency Check", "src/other.py", 10),
+        ("Bug Hunter", "src/app.py", 8),
+    ]
+
+
+def test_fetch_answered_threads_follows_pages(monkeypatch: pytest.MonkeyPatch) -> None:
+    _pr_env(monkeypatch)
+    first = [_thread_comment(i, BOT_LOGIN) for i in range(1, 101)]
+    second = [_thread_comment(101, "maintainer", reply_to=100)]
+    with patch("gatehouse.github.httpx.get", side_effect=_pages(first, second)) as get:
+        threads = fetch_answered_threads()
+    assert get.call_count == 2
+    assert threads == [("Consistency Check", "src/app.py", 10)]
+
+
+def test_fetch_answered_threads_api_error_is_empty(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _pr_env(monkeypatch)
+    with patch("gatehouse.github.httpx.get", side_effect=httpx.ConnectError("down")):
+        assert fetch_answered_threads() == []
+    assert "could not fetch existing review threads" in capsys.readouterr().err
+
+
+def test_fetch_answered_threads_outside_pr_is_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("GITHUB_REPOSITORY", raising=False)
+    with patch("gatehouse.github.httpx.get") as get:
+        assert fetch_answered_threads() == []
+    get.assert_not_called()

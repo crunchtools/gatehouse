@@ -22,7 +22,9 @@ BOT = "github-actions[bot]"
 pytestmark = pytest.mark.skipif(shutil.which("jq") is None, reason="jq not installed")
 
 
-def _comment(cid: int, user: str, reply_to: int | None = None) -> dict:
+def _comment(
+    cid: int, user: str, reply_to: int | None = None, header: str = "**HIGH** (Bug Hunter)"
+) -> dict:
     return {
         "id": cid,
         "user": {"login": user},
@@ -31,23 +33,23 @@ def _comment(cid: int, user: str, reply_to: int | None = None) -> dict:
         "path": "src/app.py",
         "line": 10,
         "original_line": 10,
-        "body": f"- **HIGH** (Bug Hunter): finding {cid}\nmore",
+        "body": f"{header}: finding {cid}\nmore",
     }
 
 
-def _unanswered(*pages: list[dict]) -> list[dict]:
+def _unanswered(*pages: list[dict], required_low: str = "Bug Hunter,Security Scan") -> list[dict]:
     block = re.search(
         r"# --- triage filter.*?\n(.*?)# --- end triage filter ---",
         TRIAGE.read_text(),
         re.S,
     )
     assert block, "triage filter markers missing from triage.yml"
-    program = re.search(r"jq -s --arg bot \"\$REVIEWER\" '(.*?)'", block.group(1), re.S)
+    program = re.search(r"jq -s --arg bot .*? '(.*?)'", block.group(1), re.S)
     assert program, "jq program not found between the markers"
     # gh api --paginate emits one JSON array per page; -s slurps them.
     stdin = "".join(json.dumps(page) for page in pages)
     out = subprocess.run(
-        ["jq", "-s", "--arg", "bot", BOT, program.group(1)],
+        ["jq", "-s", "--arg", "bot", BOT, "--arg", "required_low", required_low, program.group(1)],
         input=stdin,
         capture_output=True,
         text=True,
@@ -63,7 +65,7 @@ def test_no_comments_passes() -> None:
 def test_unanswered_finding_is_reported() -> None:
     result = _unanswered([_comment(1, BOT)])
     assert [r["url"] for r in result] == ["https://example.test/c/1"]
-    assert result[0]["finding"] == "- **HIGH** (Bug Hunter): finding 1"
+    assert result[0]["finding"] == "**HIGH** (Bug Hunter): finding 1"
 
 
 def test_human_reply_answers_the_finding() -> None:
@@ -94,6 +96,36 @@ def test_outdated_finding_uses_original_line() -> None:
     finding = _comment(1, BOT)
     finding["line"] = None
     assert _unanswered([finding])[0]["line"] == 10
+
+
+@pytest.mark.parametrize("agent", ["Bug Hunter", "Security Scan"])
+def test_low_from_required_agent_needs_an_answer(agent: str) -> None:
+    assert len(_unanswered([_comment(1, BOT, header=f"**LOW** ({agent})")])) == 1
+
+
+@pytest.mark.parametrize("agent", ["Documentation", "Consistency Check", "Test Coverage"])
+def test_low_from_other_agents_is_advisory(agent: str) -> None:
+    assert _unanswered([_comment(1, BOT, header=f"**LOW** ({agent})")]) == []
+
+
+def test_medium_from_advisory_agent_still_needs_an_answer() -> None:
+    assert len(_unanswered([_comment(1, BOT, header="**MEDIUM** (Documentation)")])) == 1
+
+
+def test_required_low_agents_is_configurable() -> None:
+    comments = [
+        _comment(1, BOT, header="**LOW** (Bug Hunter)"),
+        _comment(2, BOT, header="**LOW** (Documentation)"),
+    ]
+    result = _unanswered(comments, required_low=" Documentation ,Test Coverage")
+    assert [r["url"] for r in result] == ["https://example.test/c/2"]
+    assert _unanswered(comments, required_low="") == []
+
+
+def test_low_in_a_later_line_does_not_make_a_finding_advisory() -> None:
+    finding = _comment(1, BOT)
+    finding["body"] += "\n**LOW** (Documentation): quoted"
+    assert len(_unanswered([finding])) == 1
 
 
 def test_triage_is_read_only() -> None:
@@ -151,3 +183,12 @@ def test_retriage_example_listens_for_reply_runs_only() -> None:
     assert "workflows: [Gatehouse]" in text
     assert "github.event.workflow_run.event == 'pull_request_review_comment'" in text
     assert "retriage.yml@v" in text
+
+
+def test_required_low_agents_input_reaches_the_filter() -> None:
+    text = TRIAGE.read_text()
+    assert re.search(
+        r"required_low_agents:\n(?:\s+.*\n)*?\s+default: \"Bug Hunter,Security Scan\"", text
+    )
+    assert "REQUIRED_LOW_AGENTS: ${{ inputs.required_low_agents }}" in text
+    assert '--arg required_low "$REQUIRED_LOW_AGENTS"' in text

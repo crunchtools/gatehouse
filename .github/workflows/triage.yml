@@ -1,4 +1,4 @@
-# Gatehouse triage — every finding gets an answer before merge (reusable)
+# Gatehouse triage — every required finding gets an answer before merge (reusable)
 #
 # The review job is advisory: an LLM reviewer is non-deterministic, so it never
 # holds merge authority. That left a gap nobody measured — findings were posted
@@ -15,6 +15,10 @@
 #                  not itself a reply (findings without a file/line are posted
 #                  only in the review summary and are not counted here)
 #   • an answer  = any reply in that thread by someone other than the reviewer
+#   • required   = CRITICAL, HIGH and MEDIUM from any agent, and LOW only from
+#                  the agents in `required_low_agents`. Other LOWs still post,
+#                  but as advisory: most were noise, and each one answered
+#                  cost a fix-push-review round (#56).
 # Outdated findings still count: a later commit fixing one is answered by
 # saying so, which is the audit trail this job exists to create.
 #
@@ -36,6 +40,11 @@ on:
         type: string
         required: false
         default: "github-actions[bot]"
+      required_low_agents:
+        description: "Comma-separated agent names whose LOW findings need an answer."
+        type: string
+        required: false
+        default: "Bug Hunter,Security Scan"
 
 permissions: {}
 
@@ -51,6 +60,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REVIEWER: ${{ inputs.reviewer }}
+          REQUIRED_LOW_AGENTS: ${{ inputs.required_low_agents }}
         run: |
           set -euo pipefail
           if [ -z "${PR_NUMBER:-}" ]; then
@@ -62,13 +72,17 @@ jobs:
             > comments.json
 
           # --- triage filter (tests/test_triage.py runs this against fixtures) ---
-          jq -s --arg bot "$REVIEWER" '
+          jq -s --arg bot "$REVIEWER" --arg required_low "$REQUIRED_LOW_AGENTS" '
             (add // []) as $all
+            | ($required_low | split(",") | map(gsub("^\\s+|\\s+$"; ""))) as $low_agents
             | (reduce ($all[] | select(.in_reply_to_id != null and .user.login != $bot)
                 | .in_reply_to_id) as $r ({}; .[$r | tostring] = true)) as $answered
             | [ $all[]
                 | select(.user.login == $bot and .in_reply_to_id == null)
                 | select($answered[.id | tostring] | not)
+                | (.body | split("\n")[0]) as $head
+                | select(($head | startswith("**LOW** (") | not)
+                    or any($low_agents[]; . as $a | $head | startswith("**LOW** (\($a)):")))
                 | { url: .html_url,
                     path: .path,
                     line: (.line // .original_line),

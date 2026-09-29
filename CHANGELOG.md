@@ -5,6 +5,41 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-09-28
+
+LOW findings were 26% of the threads triage required an answer to, and a
+30-finding sample from four crunchtools PRs held 18 noise, 6 re-raises of
+answered threads and 1 with invented evidence (#56).
+
+### Added
+- **Findings with invented evidence are dropped**, at every severity. The
+  quoted evidence must appear in the diff (or the styleguide/constitution
+  agents were given), ignoring whitespace, line-number prefixes and `...`
+  elisions. mcp-trentina#258 quoted `def _cases(split: str, csv_bytes:
+  bytes):` for code that reads `-> list[Case]:`.
+- **Answered threads are not re-raised.** On a PR, a MEDIUM or LOW from the
+  same agent within 5 lines of a thread someone replied to is dropped.
+  HIGH and CRITICAL always post: next to a "fixed in" thread they may be a
+  regression.
+- **At most 5 advisory LOWs per review**, highest confidence first. LOWs
+  from Bug Hunter and Security Scan are never capped.
+- The review summary counts each kind of dropped finding.
+- Each finding comment carries a hidden `agent` and `confidence` marker, so
+  replies can be joined to confidence before deciding whether LOW needs a
+  higher threshold.
+- `triage.yml` input `required_low_agents` (default `Bug Hunter,Security
+  Scan`).
+
+### Changed
+- **Triage requires an answer to LOW findings only from `required_low_agents`.**
+  Other LOWs still post, as advisory. CRITICAL, HIGH and MEDIUM are required
+  from every agent, as before.
+- The Documentation agent no longer asks for docstrings on private or
+  non-exported names, or beyond a file's one-line-docstring-plus-type-hints
+  convention; its `low` tier is gone.
+- Consistency Check findings must cite the in-repo code that sets the
+  convention, as `file:line`, or are not reported.
+
 ## [0.13.0] - 2026-09-26
 
 ### Changed
