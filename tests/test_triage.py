@@ -200,4 +200,5 @@ def test_review_takes_the_same_required_low_agents() -> None:
     lines = text.splitlines()
     start = lines.index("      required_low_agents:")
     assert '        default: "Bug Hunter,Security Scan"' in lines[start : start + 8]
+    assert "REQUIRED_LOW_AGENTS: ${{ inputs.required_low_agents }}" in text
     assert '--required-low-agents "$REQUIRED_LOW_AGENTS"' in text
