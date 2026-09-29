@@ -19,7 +19,7 @@
 #       permissions:                # grant ONLY what the review needs
 #         contents: read
 #         pull-requests: write
-#       uses: crunchtools/gatehouse/.github/workflows/review.yml@v1
+#       uses: crunchtools/gatehouse/.github/workflows/review.yml@v0.15.1
 #       secrets:
 #         OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
 #
