@@ -40,3 +40,11 @@ def test_prose_only_is_unfinished() -> None:
 def test_non_list_value_is_unfinished() -> None:
     with pytest.raises(TypeError):
         _parse_findings("[] 42")
+
+
+def test_surrounding_whitespace() -> None:
+    assert _parse_findings("\n  " + json.dumps([HIT]) + "  \n\n") == [HIT]
+
+
+def test_malformed_second_value_is_trailing_text() -> None:
+    assert _parse_findings(json.dumps([HIT]) + '\n[{"severity": ') == [HIT]
