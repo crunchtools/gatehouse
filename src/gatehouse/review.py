@@ -216,13 +216,39 @@ def _parse_findings(response_text: str) -> list[dict[str, Any]]:
     is not a list of finding objects: that is an unfinished review, not a
     clean one.
     """
-    findings_raw = json.loads(response_text)
-    if isinstance(findings_raw, dict):
+    findings_raw: list[Any] = []
+    for value in _json_values(response_text):
         # Some models wrap the array: {"findings": [...]}.
-        findings_raw = findings_raw.get("findings")
-    if not isinstance(findings_raw, list) or not all(isinstance(f, dict) for f in findings_raw):
-        raise TypeError(f"reply is {type(findings_raw).__name__}, not a list of findings")
+        found = value.get("findings") if isinstance(value, dict) else value
+        if not isinstance(found, list) or not all(isinstance(f, dict) for f in found):
+            raise TypeError(f"reply is {type(found).__name__}, not a list of findings")
+        findings_raw.extend(found)
     return [f for f in findings_raw if f.get("confidence", 0) >= CONFIDENCE_THRESHOLD]
+
+
+def _json_values(text: str) -> list[Any]:
+    """Every JSON value at the start of ``text``, back to back.
+
+    Some models (GLM-5.3) emit a second array, or prose, after the first
+    array. Consecutive JSON values are all kept so no findings are dropped;
+    trailing non-JSON text is ignored. Raises JSONDecodeError when the text
+    does not start with JSON at all.
+    """
+    decoder = json.JSONDecoder()
+    values: list[Any] = []
+    pos = len(text) - len(text.lstrip())
+    while pos < len(text):
+        try:
+            value, pos = decoder.raw_decode(text, pos)
+        except json.JSONDecodeError:
+            if not values:
+                raise
+            break
+        values.append(value)
+        pos += len(text[pos:]) - len(text[pos:].lstrip())
+    if not values:
+        raise json.JSONDecodeError("Expecting value", text, pos)
+    return values
 
 
 def _squash(text: str) -> str:

@@ -5,6 +5,15 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+## [0.15.2] - 2026-09-30
+
+### Fixed
+- **Replies with trailing content no longer abort an agent.** GLM-5.3 often
+  follows its findings array with a second array or prose, and `json.loads`
+  rejected the whole reply as `Extra data`, marking the agent unfinished.
+  Consecutive JSON values are now merged and trailing text is ignored; a reply
+  that does not start with JSON is still an unfinished review.
+
 ## [0.15.1] - 2026-09-29
 
 ### Fixed
