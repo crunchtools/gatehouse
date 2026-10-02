@@ -43,6 +43,9 @@ jobs:
   # hosts gourmand.yml for the whole fleet; keeping a private copy here is the
   # copy-paste drift RT #1468 was filed about.
   gourmand-review:
+    # Named like every fleet caller, so the check reports as the org ruleset's
+    # required `Code Quality (Gourmand) / Code Quality (Gourmand)`.
+    name: Code Quality (Gourmand)
     uses: ./.github/workflows/gourmand.yml
 
   build-container:
