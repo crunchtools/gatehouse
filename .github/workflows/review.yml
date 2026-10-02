@@ -19,7 +19,7 @@
 #       permissions:                # grant ONLY what the review needs
 #         contents: read
 #         pull-requests: write
-#       uses: crunchtools/gatehouse/.github/workflows/review.yml@v0.15.2
+#       uses: crunchtools/gatehouse/.github/workflows/review.yml@v0.15.3
 #       secrets:
 #         OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
 #
@@ -79,7 +79,7 @@ on:
         description: "Gatehouse release image tag. Bump per release."
         type: string
         required: false
-        default: "quay.io/crunchtools/gatehouse:0.15.2"
+        default: "quay.io/crunchtools/gatehouse:0.15.3"
     secrets:
       OPENROUTER_API_KEY:
         required: true

@@ -5,6 +5,8 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+## [0.15.3] - 2026-10-02
+
 ### Changed
 - CI: the Gourmand job reports as `Code Quality (Gourmand) / Code Quality
   (Gourmand)` like the rest of the fleet, so the org ruleset can require it.
