@@ -141,6 +141,12 @@ def test_agent_prompts_contain_anti_noise() -> None:
         assert "Do NOT flag" in agent.system_prompt
 
 
+def test_anti_noise_forbids_unseen_version_claims() -> None:
+    """Dependabot bumps to majors past the model's cutoff were flagged as missing tags."""
+    for agent in ALL_AGENTS:
+        assert "does not exist or is not" in agent.system_prompt
+
+
 def test_anti_noise_includes_diff_direction_awareness() -> None:
     for agent in ALL_AGENTS:
         assert "Fixes being applied" in agent.system_prompt
