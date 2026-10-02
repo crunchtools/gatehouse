@@ -8,8 +8,6 @@ All notable changes to this project are documented here, following
 ### Changed
 - CI: the Gourmand job reports as `Code Quality (Gourmand) / Code Quality
   (Gourmand)` like the rest of the fleet, so the org ruleset can require it.
-
-### Changed
 - Constitution is now a v1.18.0 manifest: purpose, CLI and workflow contract,
   external API, agents and ignored paths; fleet and profile rules apply by
   reference.
