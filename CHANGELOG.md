@@ -5,6 +5,14 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+### Changed
+- Constitution is now a v1.18.0 manifest: purpose, CLI and workflow contract,
+  external API, agents and ignored paths; fleet and profile rules apply by
+  reference.
+- Constitution validation pinned to v1.18.0 via `constitution.yml`, replacing
+  the unpinned validation job in `ci.yml`.
+- Dependabot auto-merges GitHub Actions minor and patch updates.
+
 ### Fixed
 - `examples/gourmand.yml` pinned `gourmand.yml@v0.5.0` and was a bare job
   fragment. It is now a complete workflow on `pull_request` at the current

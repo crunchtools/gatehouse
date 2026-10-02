@@ -1,18 +1,20 @@
 # gatehouse Constitution
 
-> **Version:** 1.2.0
+> **Version:** 1.3.0
 > **Ratified:** 2026-04-04
+> **Amended:** 2026-10-02
 > **Status:** Active
-> **Inherits:** [crunchtools/constitution](https://github.com/crunchtools/constitution) v1.17.0
+> **Inherits:** [crunchtools/constitution](https://github.com/crunchtools/constitution) v1.18.0
 > **Profile:** CLI Tool
+
+This file holds gatehouse's own rules. The fleet rules and the CLI Tool
+profile (license, test standards, Gourmand, quality gates) apply at the
+inherited version and are checked against this repo's files by
+`constitution.yml`. They are not restated here.
 
 ## Purpose
 
 Local AI code review CLI that analyzes git diffs using 8 concurrent LLM agents with anti-noise prompting and confidence-based filtering.
-
-## License
-
-AGPL-3.0-or-later
 
 ## Versioning
 
@@ -55,20 +57,13 @@ Findings filtered at confidence >= 80%.
 
 ## Container
 
-Built on the `quay.io/hummingbird/python:latest-fips-builder` image (git is needed at runtime) with a venv. Published to `quay.io/crunchtools/gatehouse`.
+Built on the `quay.io/hummingbird/python:latest-fips-builder` image (git is needed at runtime) with a venv. Published to `quay.io/crunchtools/gatehouse` and `ghcr.io/crunchtools/gatehouse`.
 
-## Testing
+## History
 
-All OpenRouter calls mocked with httpx. Tests run via `uv run pytest -v`. Exit code contract verified in integration tests.
-
-## Gourmand
-
-Zero violations required. Config in `gourmand.toml`, exceptions in `gourmand-exceptions.toml`.
-
-## Quality Gates
-
-1. Lint -- `uv run ruff check src tests`
-2. Type Check -- `uv run mypy src`
-3. Tests -- `uv run pytest -v`
-4. Gourmand -- `gourmand --full .`
-5. Container Build -- `podman build -f Containerfile .`
+| Version | Date | Changes |
+|---------|------|---------|
+| 1.0.0 | 2026-04-04 | Initial constitution (gatehouse 0.1.0) |
+| 1.1.0 | 2026-09-23 | Triage workflow as the required check (0.8.0) |
+| 1.2.0 | 2026-09-29 | LOW findings triaged by agent (0.14.0) |
+| 1.3.0 | 2026-10-02 | Manifest under constitution v1.18.0: License, Testing, Gourmand and Quality Gates restatements removed |
