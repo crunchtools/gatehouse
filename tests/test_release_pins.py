@@ -29,3 +29,19 @@ def test_review_workflow_fetches_diff_with_escape_sequences():
     assert "--allow-escape-sequences" in text
     assert '< "$diff_file"' in text
     assert "| docker run" not in text
+
+
+def test_examples_pin_this_release():
+    """Every example adopters copy pins the release it ships in.
+
+    examples/gourmand.yml stayed at v0.5.0 for ten releases while the other
+    examples were bumped by hand, so new adopters started out stale.
+    """
+    examples = Path(__file__).parent.parent / "examples"
+    pins = {
+        (path.name, ref)
+        for path in examples.glob("*.y*ml")
+        for ref in re.findall(r"crunchtools/gatehouse/\S+@v(\S+)", path.read_text())
+    }
+    assert pins, "no gatehouse pins found in examples/"
+    assert {ref for _, ref in pins} == {__version__}, sorted(pins)

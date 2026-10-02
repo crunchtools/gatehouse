@@ -5,6 +5,12 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+### Fixed
+- `examples/gourmand.yml` pinned `gourmand.yml@v0.5.0` and was a bare job
+  fragment. It is now a complete workflow on `pull_request` at the current
+  release, and a test fails any example that pins a different release than
+  the one it ships in (crunchtools/constitution#22).
+
 ## [0.15.2] - 2026-09-30
 
 ### Fixed
