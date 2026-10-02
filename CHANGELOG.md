@@ -16,6 +16,10 @@ All notable changes to this project are documented here, following
 - Dependabot auto-merges GitHub Actions minor and patch updates.
 
 ### Fixed
+- Reviewers no longer flag a version, tag or release as nonexistent. Every
+  Dependabot bump to a major newer than the model's cutoff (checkout@v7,
+  setup-python@v7, ...) drew a "tag does not exist" finding, repeated on
+  each rebase.
 - `examples/gourmand.yml` pinned `gourmand.yml@v0.5.0` and was a bare job
   fragment. It is now a complete workflow on `pull_request` at the current
   release, and a test fails any example that pins a different release than

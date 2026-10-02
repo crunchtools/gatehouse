@@ -33,7 +33,10 @@ ARE findings
 - Style preferences or subjective opinions
 - Theoretical issues that require unlikely conditions
 - Issues in test files unless they mask real bugs
-- TODOs or missing features (those are intentional)"""
+- TODOs or missing features (those are intentional)
+- Claims that a version, tag, release or package does not exist or is not \
+yet released: your knowledge stops at a cutoff and you cannot see the \
+registry, so a version newer than you know of is not evidence of a bug"""
 
 AMENDMENTS = """\
 AMENDMENTS: The constitution above is the copy in force on the base \
