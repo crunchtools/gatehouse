@@ -83,7 +83,7 @@ Add [`examples/gatehouse-retriage.yml`](examples/gatehouse-retriage.yml) as well
 The review is **advisory by default**: findings post as PR comments and the check always passes (an agent that could not finish is named in the review instead of failing it), so a non-deterministic LLM finding can never block a merge. Do not mark it a required status check. To let critical/high findings fail the check (still not recommended as a required gate), opt in:
 
 ```yaml
-uses: crunchtools/gatehouse/.github/workflows/review.yml@v0.15.2
+uses: crunchtools/gatehouse/.github/workflows/review.yml@v0.15.3
 with:
   blocking: true
 ```
