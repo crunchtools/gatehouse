@@ -5,6 +5,27 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-10-10
+
+### Changed
+- A review in which fewer than half of the agents finished exits 2 even under
+  `--advisory`, and its posted summary reads "could not review this PR: 0 of 8
+  agents finished" instead of "found no issues". A review with a clean result
+  from only some agents says how many finished (#77).
+- `Gatehouse triage` fails while the newest Gatehouse review on the PR is
+  marked failed. Re-running the review job clears it (#77).
+- The posted review names why an agent could not finish, as a class: `HTTP
+  402 (payment required)`, `HTTP 429 (rate limited)`, `timeout`, `connection
+  error`, `unparseable reply` (#77).
+
+### Fixed
+- The review workflow no longer dies on a PR of more than 300 files, where
+  GitHub refuses the diff with HTTP 406. It rebuilds the diff from the PR's
+  file list instead (#75).
+- When the review workflow cannot run the reviewer at all (no diff, no
+  `OPENROUTER_API_KEY`, image will not start), it posts a failed review, so
+  triage holds the PR instead of passing on "no findings" (#75).
+
 ## [0.15.3] - 2026-10-02
 
 ### Changed

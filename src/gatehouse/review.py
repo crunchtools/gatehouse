@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import http
 import json
 import os
 import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import httpx
 
@@ -28,6 +29,7 @@ from gatehouse.github import (
     fetch_last_reviewed_commit,
     fetch_repo_file,
     post_pr_review,
+    review_failed,
 )
 from gatehouse.ignore import (
     IGNORE_FILE,
@@ -64,7 +66,25 @@ _EVIDENCE_MIN_CHARS = 4
 
 Results = list[tuple[Agent, list[dict[str, Any]]]]
 
+
+class AgentRun(NamedTuple):
+    """One agent's run: findings are None, and reason a failure class, only if it failed."""
+
+    agent: Agent
+    findings: list[dict[str, Any]] | None
+    reply: Completion | None
+    reason: str | None
+
+
 MAX_CONCURRENT_AGENTS = 5
+
+# What a provider status means to whoever has to fix it.
+_STATUS_LABELS: dict[int, str] = {
+    http.HTTPStatus.UNAUTHORIZED: "key rejected",
+    http.HTTPStatus.PAYMENT_REQUIRED: "payment required",
+    http.HTTPStatus.FORBIDDEN: "forbidden",
+    http.HTTPStatus.TOO_MANY_REQUESTS: "rate limited",
+}
 
 
 def detect_default_branch() -> str:
@@ -395,6 +415,21 @@ def _filter_findings(
     }
 
 
+def _failure_class(exc: Exception) -> str:
+    """Name the kind of failure for the posted review: a class, never the provider's own text."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        status = exc.response.status_code
+        if status == http.HTTPStatus.OK:  # call_model: a 200 that carried no review
+            return "no review in the reply"
+        label = _STATUS_LABELS.get(status)
+        return f"HTTP {status} ({label})" if label else f"HTTP {status}"
+    if isinstance(exc, httpx.TimeoutException):
+        return "timeout"
+    if isinstance(exc, httpx.HTTPError):
+        return "connection error"
+    return "unparseable reply"
+
+
 async def run_agent(
     client: httpx.AsyncClient,
     agent: Agent,
@@ -404,13 +439,16 @@ async def run_agent(
     api_key: str,
     verbose: bool,
     semaphore: asyncio.Semaphore,
-) -> tuple[Agent, list[dict[str, Any]] | None, Completion | None]:
-    """Run a single agent; return its findings (None if it failed) and the model's reply.
+) -> AgentRun:
+    """Run a single agent; return its findings, the model's reply, and why it failed.
 
-    Logs the serving model and token usage of every reply, even one whose
-    findings do not parse: the tokens were spent either way.
+    Findings are None, and the reason a failure class (see _failure_class),
+    only when the agent did not finish. Logs the serving model and token
+    usage of every reply, even one whose findings do not parse: the tokens
+    were spent either way.
     """
     reply: Completion | None = None
+    reason: str | None = None
     async with semaphore:
         try:
             reply = await call_model(client, agent.system_prompt, user_prompt, model, api_key)
@@ -422,7 +460,8 @@ async def run_agent(
         except (httpx.HTTPError, ValueError, TypeError) as exc:
             print(f"Error: {agent.name} did not finish: {exc!r}", file=sys.stderr)
             findings = None
-    return agent, findings, reply
+            reason = _failure_class(exc)
+    return AgentRun(agent, findings, reply, reason)
 
 
 def _usage_record(slug: str, reply: Completion) -> dict[str, Any]:
@@ -561,7 +600,7 @@ async def _review_scope(pr_diff: str, spec: Any, *, incremental: bool) -> tuple[
 
 async def _run_agents(
     prompts: list[tuple[Agent, str]], *, model: str, api_key: str, verbose: bool
-) -> list[tuple[Agent, list[dict[str, Any]] | None, Completion | None]]:
+) -> list[AgentRun]:
     """Run each agent on its prompt concurrently, at most MAX_CONCURRENT_AGENTS at once."""
     async with httpx.AsyncClient() as client:
         semaphore = asyncio.Semaphore(MAX_CONCURRENT_AGENTS)
@@ -625,7 +664,8 @@ async def run_review(
     When comment=True, posts findings as a GitHub PR review after printing.
     Returns exit code (0 clean, 1 blocking, 2 usage error or an agent that
     could not finish). An unfinished agent outranks findings, except under
-    --advisory, which never fails the run: there it is reported, not raised.
+    --advisory: there it is reported, not raised, unless fewer than half of
+    the agents finished. That is no review at all, and exits 2 regardless.
     LOWs from agents named in required_low_agents are exempt from the
     advisory LOW cap, so triage sees every LOW it requires an answer to.
 
@@ -671,9 +711,9 @@ async def run_review(
     threads = asyncio.create_task(asyncio.to_thread(fetch_answered_threads)) if comment else None
     raw = await _run_agents(prompts, model=model, api_key=api_key, verbose=verbose)
 
-    failed = tuple(agent.name for agent, findings, _ in raw if findings is None)
-    all_results: Results = [(agent, findings) for agent, findings, _ in raw if findings is not None]
-    usage = [_usage_record(agent.slug, reply) for agent, _, reply in raw if reply is not None]
+    failed = tuple((run.agent.name, run.reason or "unknown") for run in raw if run.findings is None)
+    all_results: Results = [(run.agent, run.findings) for run in raw if run.findings is not None]
+    usage = [_usage_record(run.agent.slug, run.reply) for run in raw if run.reply is not None]
     fallbacks = _report_usage(usage)
 
     haystack = _evidence_haystack(diff, styleguide, constitution)
@@ -682,14 +722,16 @@ async def run_review(
         all_results, haystack, answered, required_low_agents, anchors
     )
 
-    format_results(all_results)
+    if all_results or not failed:  # with no agent finished, there are no results to call clean
+        format_results(all_results)
 
     has_blocking = _has_blocking_findings(all_results)
     request_changes = has_blocking and not advisory
     exit_code = 1 if request_changes else 0
     if failed:
-        print(f"Review incomplete: {', '.join(failed)} could not finish.", file=sys.stderr)
-        if not advisory:
+        names = ", ".join(f"{name} ({reason})" for name, reason in failed)
+        print(f"Review incomplete: {names} could not finish.", file=sys.stderr)
+        if not advisory or review_failed(len(failed), len(raw)):
             exit_code = 2
     print_summary(all_results, exit_code)
 

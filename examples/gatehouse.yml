@@ -13,13 +13,17 @@
 # Three jobs with DIFFERENT authority:
 #   • guard   — a real blocking gate. Mark it a REQUIRED status check so a PR
 #               that tampers with your workflow files is rejected.
-#   • review  — ADVISORY. It posts findings as PR comments and always passes;
-#               do NOT mark it required. An LLM reviewer is non-deterministic,
+#   • review  — ADVISORY. It posts findings as PR comments and no finding
+#               fails it; it fails only when the review did not happen:
+#               fewer than half of the agents finished (provider down,
+#               key refused), or the reviewer could not run at all. Do
+#               NOT mark it required. An LLM reviewer is non-deterministic,
 #               so it must never hold merge authority. (Opt into blocking with
 #               `blocking: true` below only if you accept that tradeoff — and
 #               even then, keep it out of branch protection.)
 #   • triage  — deterministic. Fails while any finding has no reply
-#               (`fixed in <sha>` or `not a bug: <reason>`). Safe to mark
+#               (`fixed in <sha>` or `not a bug: <reason>`), or while the
+#               last review did not finish. Safe to mark
 #               REQUIRED: it never judges code, only whether a human answered.
 
 name: Gatehouse
@@ -90,8 +94,8 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
-    uses: crunchtools/gatehouse/.github/workflows/review.yml@v0.15.3
-    # Advisory by default — findings post as comments, the check always passes.
+    uses: crunchtools/gatehouse/.github/workflows/review.yml@v0.16.0
+    # Advisory by default — findings post as comments and never fail the check.
     # Uncomment to let critical/high findings fail the check (still not required):
     #   with:
     #     blocking: true
@@ -112,4 +116,4 @@ jobs:
     if: always()
     permissions:
       pull-requests: read
-    uses: crunchtools/gatehouse/.github/workflows/triage.yml@v0.15.3
+    uses: crunchtools/gatehouse/.github/workflows/triage.yml@v0.16.0

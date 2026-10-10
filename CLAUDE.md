@@ -55,4 +55,4 @@ podman build -f Containerfile .    # Container build
 
 - 0: No issues or advisory-only
 - 1: Blocking findings (critical/high from blocking agents)
-- 2: Usage error (missing API key, bad args), or an agent could not finish (exit 0 under --advisory)
+- 2: Usage error (missing API key, bad args), or an agent could not finish (exit 0 under --advisory, unless fewer than half of the agents finished)

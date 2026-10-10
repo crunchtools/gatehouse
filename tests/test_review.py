@@ -31,6 +31,7 @@ from gatehouse.review import (
     _drop_reraised,
     _evidence_haystack,
     _evidence_is_real,
+    _failure_class,
     _has_blocking_findings,
     _save_usage,
     load_constitution,
@@ -878,7 +879,7 @@ async def test_run_agent_accepts_wrapped_array() -> None:
         new_callable=AsyncMock,
         return_value=Completion(json.dumps({"findings": [finding]})),
     ):
-        _, findings, _ = await review.run_agent(
+        _, findings, _, reason = await review.run_agent(
             AsyncMock(spec=httpx.AsyncClient),
             BUG_HUNTER,
             user_prompt="u",
@@ -888,6 +889,7 @@ async def test_run_agent_accepts_wrapped_array() -> None:
             semaphore=asyncio.Semaphore(1),
         )
     assert findings == [finding]
+    assert reason is None
 
 
 def test_cli_key_file_wins(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -902,30 +904,77 @@ def test_cli_key_file_wins(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> N
     assert cli.load_api_key() == "from-file"
 
 
-@pytest.mark.asyncio
-async def test_run_review_agent_failure_advisory_exits_zero(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """--advisory never fails the run; an unfinished agent is still reported."""
-    import httpx
+async def _advisory_run(failing: set[str], slugs: list[str]) -> int:
+    """Run --advisory with the agents whose system prompt is in ``failing`` refused a 402."""
+    request = httpx.Request("POST", "https://example.com")
+    refused = httpx.HTTPStatusError(
+        "402", request=request, response=httpx.Response(402, request=request)
+    )
+
+    async def fake(_c: Any, system_prompt: str, *_a: Any) -> Completion:
+        if system_prompt in failing:
+            raise refused
+        return Completion("[]")
 
     with (
         patch("gatehouse.review.get_file_listing", return_value="src/app.py"),
         patch("gatehouse.review.load_styleguide", return_value=None),
-        patch(
-            "gatehouse.review.call_model",
-            new_callable=AsyncMock,
-            side_effect=httpx.ReadTimeout("timed out"),
-        ),
+        patch("gatehouse.review.call_model", side_effect=fake),
     ):
-        exit_code = await run_review(
-            stdin_diff=MOCK_DIFF,
-            agent_slugs=["bugs"],
-            advisory=True,
-            api_key="test-key",
+        return await run_review(
+            stdin_diff=MOCK_DIFF, agent_slugs=slugs, advisory=True, api_key="test-key"
         )
-    assert exit_code == 0
+
+
+@pytest.mark.asyncio
+async def test_run_review_advisory_fails_when_no_agent_finished(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """#77: --advisory forgives a finding, not a review that never happened."""
+    exit_code = await _advisory_run({BUG_HUNTER.system_prompt}, ["bugs"])
+    out = capsys.readouterr()
+    assert exit_code == 2
+    assert "Review incomplete: Bug Hunter (HTTP 402 (payment required))" in out.err
+    assert "No issues found" not in out.out
+
+
+@pytest.mark.asyncio
+async def test_run_review_advisory_fails_when_most_agents_failed() -> None:
+    failing = {BUG_HUNTER.system_prompt, SECURITY_SCAN.system_prompt}
+    assert await _advisory_run(failing, ["bugs", "security", "docs"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_run_review_advisory_tolerates_a_minority_of_failures(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """One flaky agent out of three is reported, and the advisory run still passes."""
+    assert await _advisory_run({BUG_HUNTER.system_prompt}, ["bugs", "security", "docs"]) == 0
     assert "Review incomplete: Bug Hunter" in capsys.readouterr().err
+
+
+def _status_error(status: int) -> httpx.HTTPStatusError:
+    request = httpx.Request("POST", "https://example.com")
+    return httpx.HTTPStatusError(
+        str(status), request=request, response=httpx.Response(status, request=request)
+    )
+
+
+@pytest.mark.parametrize(
+    ("exc", "expected"),
+    [
+        (_status_error(401), "HTTP 401 (key rejected)"),
+        (_status_error(402), "HTTP 402 (payment required)"),
+        (_status_error(429), "HTTP 429 (rate limited)"),
+        (_status_error(500), "HTTP 500"),
+        (_status_error(200), "no review in the reply"),
+        (httpx.ReadTimeout("slow"), "timeout"),
+        (httpx.ConnectError("down"), "connection error"),
+        (ValueError("not JSON"), "unparseable reply"),
+    ],
+)
+def test_failure_class(exc: Exception, expected: str) -> None:
+    assert _failure_class(exc) == expected
 
 
 @pytest.mark.asyncio
@@ -1028,7 +1077,7 @@ async def test_run_review_comment_names_failed_agents() -> None:
         ) as mock_post,
     ):
         await run_review(stdin_diff=MOCK_DIFF, agent_slugs=["bugs"], api_key="k", comment=True)
-    assert mock_post.call_args.args[2] == (BUG_HUNTER.name,)
+    assert mock_post.call_args.args[2] == ((BUG_HUNTER.name, "timeout"),)
 
 
 @pytest.mark.asyncio
