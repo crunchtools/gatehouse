@@ -10,7 +10,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import httpx
 
@@ -65,9 +65,16 @@ _EVIDENCE_LINE_NO_RE = re.compile(r"^\s*(?:line\s+)?\d+\s*(?:\[[+-]\])?\s*[:|]\s
 _EVIDENCE_MIN_CHARS = 4
 
 Results = list[tuple[Agent, list[dict[str, Any]]]]
-# One agent's run: its findings (None if it failed), the model's reply, and
-# the failure class when it failed.
-AgentRun = tuple[Agent, list[dict[str, Any]] | None, Completion | None, str | None]
+
+
+class AgentRun(NamedTuple):
+    """One agent's run: findings are None, and reason a failure class, only if it failed."""
+
+    agent: Agent
+    findings: list[dict[str, Any]] | None
+    reply: Completion | None
+    reason: str | None
+
 
 MAX_CONCURRENT_AGENTS = 5
 
@@ -454,7 +461,7 @@ async def run_agent(
             print(f"Error: {agent.name} did not finish: {exc!r}", file=sys.stderr)
             findings = None
             reason = _failure_class(exc)
-    return agent, findings, reply, reason
+    return AgentRun(agent, findings, reply, reason)
 
 
 def _usage_record(slug: str, reply: Completion) -> dict[str, Any]:
@@ -704,13 +711,9 @@ async def run_review(
     threads = asyncio.create_task(asyncio.to_thread(fetch_answered_threads)) if comment else None
     raw = await _run_agents(prompts, model=model, api_key=api_key, verbose=verbose)
 
-    failed = tuple(
-        (agent.name, reason or "unknown") for agent, findings, _, reason in raw if findings is None
-    )
-    all_results: Results = [
-        (agent, findings) for agent, findings, _, _ in raw if findings is not None
-    ]
-    usage = [_usage_record(agent.slug, reply) for agent, _, reply, _ in raw if reply is not None]
+    failed = tuple((run.agent.name, run.reason or "unknown") for run in raw if run.findings is None)
+    all_results: Results = [(run.agent, run.findings) for run in raw if run.findings is not None]
+    usage = [_usage_record(run.agent.slug, run.reply) for run in raw if run.reply is not None]
     fallbacks = _report_usage(usage)
 
     haystack = _evidence_haystack(diff, styleguide, constitution)
