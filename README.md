@@ -66,7 +66,7 @@ fall back to the raw unified format.
 |------|---------|
 | 0 | No issues or advisory-only findings |
 | 1 | Blocking findings detected (critical/high) |
-| 2 | Usage error (missing API key, bad arguments), or an agent could not finish (reported, but exit 0, under `--advisory`) |
+| 2 | Usage error (missing API key, bad arguments), or an agent could not finish. Under `--advisory` a minority of unfinished agents is reported and exits 0; fewer than half finishing is no review, and exits 2 |
 
 ## GitHub Actions
 
@@ -74,16 +74,16 @@ Drop in [`examples/gatehouse.yml`](examples/gatehouse.yml) to review every PR (f
 
 The example also runs `Gatehouse triage`, a deterministic check that every required inline finding has a reply (`fixed in <sha>` or `not a bug: <reason>`). Findings without a file and line appear only in the review summary and are not counted. CRITICAL, HIGH and MEDIUM findings are required from every agent; LOW findings only from Bug Hunter and Security Scan, and the `required_low_agents` input changes that list (pass the same value to the review and triage jobs, so the review never caps a LOW that triage requires). Other LOWs still post, as advisory.
 
-On a push to an open PR, only the commits since the last complete Gatehouse review are reviewed (`--incremental`), fetched through the compare API. A PR's first review, a force-push or rebase, a review that had an unfinished agent, or a failed compare all fall back to reviewing the whole PR. The review summary says which it was, and says when a fallback model served any agent; the job's step summary shows per-agent tokens and cost.
+On a push to an open PR, only the commits since the last complete Gatehouse review are reviewed (`--incremental`), fetched through the compare API. GitHub refuses the diff of a PR of more than 300 files; the workflow then rebuilds it from the PR's file list (up to 3000 files; files with no patch, such as binaries, are skipped with a warning). A PR's first review, a force-push or rebase, a review that had an unfinished agent, or a failed compare all fall back to reviewing the whole PR. The review summary says which it was, and says when a fallback model served any agent; the job's step summary shows per-agent tokens and cost.
 
 Before posting, gatehouse drops four kinds of finding, and the review summary counts each: a finding whose quoted evidence appears nowhere in the diff (or the styleguide and constitution the agents were given), a finding on a line outside the PR diff (GitHub would reject the whole review), a MEDIUM or LOW that repeats an answered thread by the same agent within 5 lines, and advisory LOWs beyond the 5 most confident. Every finding comment carries a hidden `<!-- gatehouse agent=… confidence=… -->` marker for tuning.
 
 Add [`examples/gatehouse-retriage.yml`](examples/gatehouse-retriage.yml) as well if `Gatehouse triage` is a required check. A reply to a finding starts a run whose checks branch rules ignore; the retriage workflow re-runs triage inside the `pull_request_target` run, where the result counts.
 
-The review is **advisory by default**: findings post as PR comments and the check always passes (an agent that could not finish is named in the review instead of failing it), so a non-deterministic LLM finding can never block a merge. Do not mark it a required status check. To let critical/high findings fail the check (still not recommended as a required gate), opt in:
+The review is **advisory by default**: findings post as PR comments and never fail the check, so a non-deterministic LLM finding can never block a merge. An agent that could not finish is named in the review, with the class of failure (`HTTP 402 (payment required)`, `timeout`, ...). When fewer than half of the agents finish, or the reviewer cannot run at all, nothing was reviewed: the review says so instead of "found no issues", the check fails, and `Gatehouse triage` fails with it until the review job is re-run. Do not mark it a required status check. To let critical/high findings fail the check (still not recommended as a required gate), opt in:
 
 ```yaml
-uses: crunchtools/gatehouse/.github/workflows/review.yml@v0.15.3
+uses: crunchtools/gatehouse/.github/workflows/review.yml@v0.16.0
 with:
   blocking: true
 ```

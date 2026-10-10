@@ -19,6 +19,10 @@
 #                  the agents in `required_low_agents`. Other LOWs still post,
 #                  but as advisory: most were noise, and each one answered
 #                  cost a fix-push-review round (#56).
+#   • a review that did not finish = the newest review by the reviewer account
+#                  is marked failed (fewer than half its agents finished, or
+#                  the reviewer could not run). That fails this job too: no
+#                  findings because nothing was looked at is not a pass (#77).
 # Outdated findings still count: a later commit fixing one is answered by
 # saying so, which is the audit trail this job exists to create.
 #
@@ -66,6 +70,34 @@ jobs:
           set -euo pipefail
           if [ -z "${PR_NUMBER:-}" ]; then
             echo "::error::No pull_request context." >&2
+            exit 1
+          fi
+
+          # A review that did not happen has no findings to answer, and is not
+          # a clean one (#77). The newest Gatehouse review decides, so
+          # re-running the review job is what clears it.
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/reviews?per_page=100" \
+            > reviews.json
+
+          # --- review gate (tests/test_triage.py runs this against fixtures) ---
+          jq -rs --arg bot "$REVIEWER" '
+            [ (add // [])[]
+              | select(.user.login == $bot and ((.body // "") | startswith("Gatehouse"))) ]
+            | last
+            | select(. != null and (.body | contains("<!-- gatehouse review failed -->")))
+            | .html_url
+          ' reviews.json > failed_review.txt
+          # --- end review gate ---
+
+          if [ -s failed_review.txt ]; then
+            {
+              echo "## The last Gatehouse review did not finish"
+              echo
+              echo "Nothing was reviewed: $(cat failed_review.txt)"
+              echo
+              echo "Fix the cause it names, then re-run the review job."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::The last Gatehouse review did not finish: $(cat failed_review.txt)"
             exit 1
           fi
 

@@ -19,7 +19,7 @@
 #       permissions:                # grant ONLY what the review needs
 #         contents: read
 #         pull-requests: write
-#       uses: crunchtools/gatehouse/.github/workflows/review.yml@v0.15.3
+#       uses: crunchtools/gatehouse/.github/workflows/review.yml@v0.16.0
 #       secrets:
 #         OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
 #
@@ -63,9 +63,10 @@ on:
         required: false
         default: "Bug Hunter,Security Scan"
       blocking:
-        # Advisory by default: the review posts findings as PR comments but the
-        # check ALWAYS passes (exit 0), so a non-deterministic LLM finding can
-        # never block a merge. Opt in with `blocking: true` only if you want
+        # Advisory by default: the review posts findings as PR comments and no
+        # finding fails the check, so a non-deterministic LLM finding can never
+        # block a merge. It fails only when the review did not happen: fewer
+        # than half of the agents finished, or the reviewer could not run. Opt in with `blocking: true` only if you want
         # critical/high findings from blocking agents to fail the check. Even
         # then, do NOT mark this a *required* status check — see examples/.
         description: "Fail the check on blocking findings (default: advisory)."
@@ -79,7 +80,7 @@ on:
         description: "Gatehouse release image tag. Bump per release."
         type: string
         required: false
-        default: "quay.io/crunchtools/gatehouse:0.15.3"
+        default: "quay.io/crunchtools/gatehouse:0.16.0"
     secrets:
       OPENROUTER_API_KEY:
         required: true
@@ -121,10 +122,23 @@ jobs:
             exit 1
           fi
 
+          # A review that cannot run still posts one, marked failed, so the
+          # triage check holds the PR open instead of passing on "no
+          # findings" (#75, #77). The marker is github.py's REVIEW_FAILED_MARKER.
+          fail_review() {
+            echo "::error::Gatehouse could not review PR #${PR_NUMBER}: $1" >&2
+            gh api -X POST "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/reviews" --silent \
+              -f event=COMMENT -f commit_id="$HEAD_SHA" \
+              -f body="Gatehouse could not review this PR: $1"$'\n\n''<!-- gatehouse review failed -->' \
+              || echo "::warning::Could not post the failed review." >&2
+            exit 2
+          }
+          [ -n "${OPENROUTER_API_KEY:-}" ] || fail_review "no OPENROUTER_API_KEY reached this run."
+
           # Optional passthrough flags (only added when provided).
           # Advisory by default: unless the caller sets `blocking: true`, add
           # --advisory so gatehouse exits 0 regardless of findings. The review
-          # is still posted; it just never fails the check.
+          # is still posted; no finding fails the check.
           args=( --stdin --comment --required-low-agents "$REQUIRED_LOW_AGENTS" )
           [ "$BLOCKING" = "true" ] || args+=( --advisory )
           [ "$ACTION" = "synchronize" ] && args+=( --incremental )
@@ -138,16 +152,50 @@ jobs:
           #    terminal fixtures); the diff goes to a pipe, not a terminal, and
           #    gatehouse strips escapes from everything it prints or posts.
           diff_file="$(mktemp)"
+          files_file="$(mktemp)"
           # Container root cannot write the runner's $GITHUB_STEP_SUMMARY
           # (EACCES, #61), so gatehouse writes into a scratch dir and the host
           # appends it after the run.
           out_dir="$(mktemp -d)"
           chmod 0777 "$out_dir"
-          trap 'rm -rf "$diff_file" "$out_dir"' EXIT
+          trap 'rm -rf "$diff_file" "$files_file" "$out_dir"' EXIT
           if ! gh pr diff "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --patch \
               --allow-escape-sequences > "$diff_file"; then
-            echo "::error::Could not fetch the diff for PR #${PR_NUMBER}." >&2
-            exit 2
+            # The diff endpoint refuses a PR of more than 300 files (HTTP 406,
+            # #75). The files endpoint pages through up to 3000, each with its
+            # own patch: still data only, still nothing checked out.
+            echo "::warning::Could not fetch the PR diff; rebuilding it from the PR's file list."
+            gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100" \
+              > "$files_file" || fail_review "its diff could not be fetched."
+
+            # --- files to diff (tests/test_files_diff.py runs this against fixtures) ---
+            jq -rs '
+              (add // [])[]
+              | (.previous_filename // .filename) as $old
+              | "diff --git a/\($old) b/\(.filename)",
+                (if .status == "added" then "new file mode 100644"
+                 elif .status == "removed" then "deleted file mode 100644"
+                 elif .status == "renamed" then "rename from \($old)", "rename to \(.filename)"
+                 else empty end),
+                (select(.patch != null)
+                 | (if .status == "added" then "--- /dev/null" else "--- a/\($old)" end),
+                   (if .status == "removed" then "+++ /dev/null" else "+++ b/\(.filename)" end),
+                   .patch)
+            ' "$files_file" > "$diff_file" || fail_review "its diff could not be rebuilt."
+            # --- end files to diff ---
+
+            listed="$(jq -s 'add // [] | length' "$files_file")" \
+              || fail_review "its file list could not be read."
+            changed="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq .changed_files)" \
+              || fail_review "its file count could not be fetched."
+            if [ "$listed" -lt "$changed" ]; then
+              fail_review "it changes ${changed} files and the API lists only ${listed}."
+            fi
+            unpatched="$(jq -s '[(add // [])[] | select(.patch == null)] | length' "$files_file")" \
+              || unpatched=0
+            if [ "$unpatched" -gt 0 ]; then
+              echo "::warning::${unpatched} file(s) carry no patch (binary, too large, or renamed unchanged) and were not reviewed."
+            fi
           fi
 
           # 2) Feed it to the release-tag-pinned container's `gatehouse --stdin --comment`.
@@ -172,5 +220,9 @@ jobs:
           if [ -s "$out_dir/step-summary.md" ]; then
             cat "$out_dir/step-summary.md" >> "$GITHUB_STEP_SUMMARY" \
               || echo "::warning::Could not append Gatehouse usage to the step summary."
+          fi
+          # 125-127 is docker failing to run the image, not gatehouse's verdict.
+          if [ "$rc" -ge 125 ]; then
+            fail_review "the reviewer image could not be run (exit ${rc})."
           fi
           exit "$rc"

@@ -150,6 +150,16 @@ def fetch_answered_threads() -> list[tuple[str, str, int]]:
 # incomplete review must not be one, or what its failed agents missed would
 # never be reviewed.
 REVIEW_MARKER = "<!-- gatehouse review complete -->"
+# Hidden in the body of a review that did not happen: fewer than half of its
+# agents finished. triage.yml fails while the newest Gatehouse review on a PR
+# carries it, and review.yml posts it when it cannot run the reviewer at all.
+REVIEW_FAILED_MARKER = "<!-- gatehouse review failed -->"
+
+
+def review_failed(failed_count: int, agent_count: int) -> bool:
+    """True when fewer than half of the agents that ran finished."""
+    total = max(agent_count, failed_count)
+    return (total - failed_count) * 2 < total
 
 
 def _get_pages(url: str, headers: dict[str, str]) -> list[dict[str, Any]]:
@@ -254,7 +264,7 @@ def _headers(token: str, accept: str = "application/vnd.github+json") -> dict[st
 
 def format_review_body(
     results: list[tuple[Agent, list[dict[str, Any]]]],
-    failed: tuple[str, ...] = (),
+    failed: tuple[tuple[str, str], ...] = (),
     ignored: int = 0,
     *,
     unverified: int = 0,
@@ -271,11 +281,14 @@ def format_review_body(
     dropped for fabricated evidence, repeating an answered thread, exceeding
     the advisory LOW cap, and pointing outside the PR diff; see
     post_pr_review. ``fallbacks`` counts agents by the fallback model that
-    served them, out of ``agent_count``, the agents that ran. A review in
-    which at least one agent ran and every one finished ends with
-    REVIEW_MARKER; with none run, nothing was reviewed.
+    served them, out of ``agent_count``, the agents that ran. ``failed``
+    pairs each agent that could not finish with its failure class; they are
+    listed by class, and the first line never reads as a clean review when
+    one is missing. A review in which at least one agent ran and every one
+    finished ends with REVIEW_MARKER; with none run, nothing was reviewed.
+    One in which fewer than half finished ends with REVIEW_FAILED_MARKER.
     """
-    body = _count_line(results)
+    body = _headline(results, len(failed), max(agent_count, len(failed)))
     if scope:
         body += f"\n\n{scope}"
     if ignored:
@@ -290,11 +303,36 @@ def format_review_body(
         body += f"\n\n{offdiff} finding(s) not posted: their line is outside the PR diff."
     for served, count in sorted((fallbacks or {}).items()):
         body += f"\n\n{count} of {agent_count} agents served by {served} (primary unavailable)."
-    if failed:
-        body += f"\n\nIncomplete: {', '.join(failed)} could not finish."
-    elif agent_count:
-        body += f"\n\n{REVIEW_MARKER}"
-    return body
+    return body + _completion(failed, agent_count)
+
+
+def _completion(failed: tuple[tuple[str, str], ...], agent_count: int) -> str:
+    """The end of the body: unfinished agents by failure class, then the marker, if any."""
+    by_reason: dict[str, list[str]] = {}
+    for name, reason in failed:
+        by_reason.setdefault(reason, []).append(name)
+    tail = "".join(
+        f"\n\nIncomplete: {', '.join(names)} could not finish: {reason}."
+        for reason, names in by_reason.items()
+    )
+    if review_failed(len(failed), agent_count):
+        return f"{tail}\n\n{REVIEW_FAILED_MARKER}"
+    if agent_count and not failed:
+        return f"{tail}\n\n{REVIEW_MARKER}"
+    return tail
+
+
+def _headline(
+    results: list[tuple[Agent, list[dict[str, Any]]]], failed_count: int, total: int
+) -> str:
+    """The count line, qualified by how many of ``total`` agents finished when some did not."""
+    finished = total - failed_count
+    if failed_count and not finished:
+        return f"Gatehouse could not review this PR: 0 of {total} agents finished."
+    line = _count_line(results)
+    if failed_count:
+        return f"{line.removesuffix('.')}, but only {finished} of {total} agents finished."
+    return line
 
 
 def _count_line(results: list[tuple[Agent, list[dict[str, Any]]]]) -> str:
@@ -321,7 +359,7 @@ def _count_line(results: list[tuple[Agent, list[dict[str, Any]]]]) -> str:
 async def post_pr_review(
     results: list[tuple[Agent, list[dict[str, Any]]]],
     request_changes: bool,
-    failed: tuple[str, ...] = (),
+    failed: tuple[tuple[str, str], ...] = (),
     ignored: int = 0,
     *,
     unverified: int = 0,
@@ -337,7 +375,7 @@ async def post_pr_review(
 
     When request_changes is True the review is submitted as REQUEST_CHANGES;
     otherwise (including advisory mode) it is a plain COMMENT that never gates
-    the merge. ``failed`` names agents that could not finish and ``ignored``
+    the merge. ``failed`` pairs agents that could not finish with why, and ``ignored``
     counts files skipped per .gatehouse-ignore. The keyword counts are
     findings filtered out before posting: ``unverified`` quoted evidence
     not found in the diff or review context, ``reraised`` were MEDIUM or LOW

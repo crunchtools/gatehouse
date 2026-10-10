@@ -16,6 +16,7 @@ import httpx
 from gatehouse.agents import BUG_HUNTER, GENERAL, SECURITY_SCAN
 from gatehouse.github import (
     FINDING_HEADER_RE,
+    REVIEW_FAILED_MARKER,
     REVIEW_MARKER,
     _format_comment_body,
     detect_pr_context,
@@ -25,6 +26,7 @@ from gatehouse.github import (
     fetch_repo_file,
     format_review_body,
     post_pr_review,
+    review_failed,
 )
 
 BOT_LOGIN = "github-actions[bot]"
@@ -330,9 +332,49 @@ def test_fetch_repo_file_network_error_warns(
 
 
 def test_format_review_body_names_failed_agents() -> None:
-    body = format_review_body([], failed=("Bug Hunter",))
-    assert body.startswith("Gatehouse found no issues.")
-    assert "Incomplete: Bug Hunter could not finish." in body
+    body = format_review_body([], failed=(("Bug Hunter", "timeout"),))
+    assert "Incomplete: Bug Hunter could not finish: timeout." in body
+
+
+def test_format_review_body_no_agent_finished_is_not_a_clean_review() -> None:
+    """#77: every agent refused by the provider must not read "found no issues"."""
+    failed = tuple((name, "HTTP 402 (payment required)") for name in ("Bug Hunter", "Docs"))
+    body = format_review_body([], failed, agent_count=2)
+    assert body.startswith("Gatehouse could not review this PR: 0 of 2 agents finished.")
+    assert "found no issues" not in body
+    assert "Incomplete: Bug Hunter, Docs could not finish: HTTP 402 (payment required)." in body
+    assert body.endswith(REVIEW_FAILED_MARKER)
+    assert REVIEW_MARKER not in body
+
+
+def test_format_review_body_clean_but_partial_says_how_many_finished() -> None:
+    body = format_review_body([(BUG_HUNTER, [])], (("Docs", "timeout"),), agent_count=2)
+    assert body.startswith("Gatehouse found no issues, but only 1 of 2 agents finished.")
+    assert REVIEW_FAILED_MARKER not in body
+    assert REVIEW_MARKER not in body
+
+
+def test_format_review_body_findings_from_a_partial_review_say_so() -> None:
+    finding = {"severity": "high", "file": "a.py", "lineStart": 1}
+    failed = (("Docs", "timeout"), ("Tests", "timeout"))
+    body = format_review_body([(BUG_HUNTER, [finding])], failed, agent_count=3)
+    assert body.startswith("Gatehouse found 1 issues (1 high), but only 1 of 3 agents finished.")
+    assert body.endswith(REVIEW_FAILED_MARKER)
+
+
+def test_format_review_body_groups_failures_by_class() -> None:
+    failed = (("Bug Hunter", "timeout"), ("Docs", "HTTP 429 (rate limited)"), ("Tests", "timeout"))
+    body = format_review_body([(BUG_HUNTER, [])], failed, agent_count=8)
+    assert "Incomplete: Bug Hunter, Tests could not finish: timeout." in body
+    assert "Incomplete: Docs could not finish: HTTP 429 (rate limited)." in body
+
+
+@pytest.mark.parametrize(
+    ("failed_count", "agent_count", "expected"),
+    [(0, 8, False), (1, 8, False), (4, 8, False), (5, 8, True), (8, 8, True), (1, 1, True)],
+)
+def test_review_failed_below_half(failed_count: int, agent_count: int, expected: bool) -> None:
+    assert review_failed(failed_count, agent_count) is expected
 
 
 def test_format_review_body_counts_ignored_files() -> None:
@@ -517,7 +559,7 @@ def test_format_review_body_scope_fallback_and_offdiff() -> None:
 
 
 def test_format_review_body_incomplete_has_no_marker() -> None:
-    body = format_review_body([(BUG_HUNTER, [])], ("Security Scan",))
+    body = format_review_body([(BUG_HUNTER, [])], (("Security Scan", "timeout"),), agent_count=2)
     assert REVIEW_MARKER not in body
 
 

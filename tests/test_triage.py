@@ -15,6 +15,8 @@ from pathlib import Path
 
 import pytest
 
+from gatehouse.github import REVIEW_FAILED_MARKER, REVIEW_MARKER
+
 TRIAGE = Path(__file__).parent.parent / ".github" / "workflows" / "triage.yml"
 EXAMPLE = Path(__file__).parent.parent / "examples" / "gatehouse.yml"
 BOT = "github-actions[bot]"
@@ -202,3 +204,69 @@ def test_review_takes_the_same_required_low_agents() -> None:
     assert '        default: "Bug Hunter,Security Scan"' in lines[start : start + 8]
     assert "REQUIRED_LOW_AGENTS: ${{ inputs.required_low_agents }}" in text
     assert '--required-low-agents "$REQUIRED_LOW_AGENTS"' in text
+
+
+def _review(rid: int, user: str, body: str) -> dict:
+    return {
+        "id": rid,
+        "user": {"login": user},
+        "body": body,
+        "html_url": f"https://example.test/r/{rid}",
+    }
+
+
+CLEAN = f"Gatehouse found no issues.\n\n{REVIEW_MARKER}"
+FAILED = f"Gatehouse could not review this PR: 0 of 8 agents finished.\n\n{REVIEW_FAILED_MARKER}"
+
+
+def _failed_review(*pages: list[dict]) -> str:
+    """Run triage.yml's review gate; the URL of the failed review holding the PR, or ""."""
+    block = re.search(
+        r"# --- review gate.*?\n(.*?)# --- end review gate ---", TRIAGE.read_text(), re.S
+    )
+    assert block, "review gate markers missing from triage.yml"
+    program = re.search(r"jq -rs --arg bot .*? '(.*?)'", block.group(1), re.S)
+    assert program, "jq program not found between the markers"
+    out = subprocess.run(
+        ["jq", "-rs", "--arg", "bot", BOT, program.group(1)],
+        input="".join(json.dumps(page) for page in pages),
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return out.stdout.strip()
+
+
+def test_review_gate_passes_with_no_reviews() -> None:
+    assert _failed_review([]) == ""
+    assert _failed_review() == ""
+
+
+def test_review_gate_passes_on_a_clean_review() -> None:
+    assert _failed_review([_review(1, BOT, CLEAN)]) == ""
+
+
+def test_review_gate_holds_a_failed_review() -> None:
+    """#77: a review in which nothing was reviewed fails triage."""
+    assert _failed_review([_review(1, BOT, FAILED)]) == "https://example.test/r/1"
+
+
+def test_review_gate_newest_review_decides() -> None:
+    assert _failed_review([_review(1, BOT, FAILED)], [_review(2, BOT, CLEAN)]) == ""
+    assert _failed_review([_review(1, BOT, CLEAN), _review(2, BOT, FAILED)]).endswith("/r/2")
+
+
+def test_review_gate_ignores_other_authors_and_other_bot_reviews() -> None:
+    reviews = [
+        _review(1, BOT, CLEAN),
+        _review(2, "mallory", FAILED),
+        _review(3, BOT, f"Dependabot note quoting {REVIEW_FAILED_MARKER}"),
+        {"id": 4, "user": {"login": BOT}, "body": None, "html_url": "https://example.test/r/4"},
+    ]
+    assert _failed_review(reviews) == ""
+
+
+def test_review_workflow_posts_the_marker_triage_reads() -> None:
+    """The marker is spelled in three places; they must agree."""
+    assert REVIEW_FAILED_MARKER in TRIAGE.read_text()
+    assert REVIEW_FAILED_MARKER in (TRIAGE.parent / "review.yml").read_text()
