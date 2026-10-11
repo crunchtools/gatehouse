@@ -86,7 +86,8 @@ jobs:
 
   # ── 2) Review the PR diff (no checkout, BYO key) ────────────────────────────
   # The reviewer is maintained centrally in gatehouse's reusable workflow and the
-  # pinned container — so security fixes reach you without copying logic around.
+  # container it names, called at the major tag — so a fix reaches you with no
+  # change to this file.
   # Scope OPENROUTER_API_KEY to this reusable workflow so only it can read the key.
   review:
     name: Gatehouse review
@@ -94,7 +95,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
-    uses: crunchtools/gatehouse/.github/workflows/review.yml@v0.16.0
+    uses: crunchtools/gatehouse/.github/workflows/review.yml@v0
     # Advisory by default — findings post as comments and never fail the check.
     # Uncomment to let critical/high findings fail the check (still not required):
     #   with:
@@ -116,4 +117,4 @@ jobs:
     if: always()
     permissions:
       pull-requests: read
-    uses: crunchtools/gatehouse/.github/workflows/triage.yml@v0.16.0
+    uses: crunchtools/gatehouse/.github/workflows/triage.yml@v0

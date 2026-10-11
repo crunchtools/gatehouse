@@ -3,7 +3,7 @@ name: Container Build & Push
 on:
   push:
     branches: [master]
-    tags: ["v*"]
+    tags: ["v*.*.*"]  # a release, not the major tag this workflow moves
   pull_request:
     branches: [master]
   workflow_dispatch:
@@ -110,3 +110,46 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # Adopters call the reusable workflows at the major tag (`@v0`). Moving it is
+  # what delivers a release, so it happens here, after both images exist:
+  # review.yml at the new tag runs the new image by default. Forward only: a
+  # late patch to an older minor leaves the tag alone. To undo a release, move
+  # the tag back by hand (README, "Versions").
+  major-tag:
+    name: Move the major tag
+    needs: [build-and-push-quay, build-and-push-ghcr]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    concurrency:
+      group: major-tag
+      cancel-in-progress: false
+    steps:
+      - name: Move the tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          release='^v[0-9]+\.[0-9]+\.[0-9]+$'
+          if ! [[ "$TAG" =~ $release ]]; then
+            echo "$TAG is not a release tag; no major tag moves."
+            exit 0
+          fi
+          major="${TAG%%.*}"
+          refs="repos/$GITHUB_REPOSITORY/git"
+          # One listing answers both questions: v0 itself and every v0.x.y.
+          tags=$(gh api --paginate "$refs/matching-refs/tags/$major" -q '.[].ref' | sed 's|^refs/tags/||')
+          newest=$(grep -E "$release" <<<"$tags" | sort -V | tail -n 1)
+          if [ "$newest" != "$TAG" ]; then
+            echo "$TAG is older than $newest; $major stays where it is."
+            exit 0
+          fi
+          if grep -qx "$major" <<<"$tags"; then
+            gh api -X PATCH "$refs/refs/tags/$major" -f sha="$GITHUB_SHA" -F force=true --silent
+          else
+            gh api -X POST "$refs/refs" -f ref="refs/tags/$major" -f sha="$GITHUB_SHA" --silent
+          fi
+          echo "$major now points at $TAG (${GITHUB_SHA:0:7})."
