@@ -4,7 +4,7 @@
 > **Ratified:** 2026-04-04
 > **Amended:** 2026-10-11
 > **Status:** Active
-> **Inherits:** [crunchtools/constitution](https://github.com/crunchtools/constitution) v1.22.0
+> **Inherits:** [crunchtools/constitution](https://github.com/crunchtools/constitution) v1.24.0
 > **Profile:** CLI Tool
 
 This file holds gatehouse's own rules. The fleet rules and the CLI Tool
