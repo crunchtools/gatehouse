@@ -83,10 +83,18 @@ Add [`examples/gatehouse-retriage.yml`](examples/gatehouse-retriage.yml) as well
 The review is **advisory by default**: findings post as PR comments and never fail the check, so a non-deterministic LLM finding can never block a merge. An agent that could not finish is named in the review, with the class of failure (`HTTP 402 (payment required)`, `timeout`, ...). When fewer than half of the agents finish, or the reviewer cannot run at all, nothing was reviewed: the review says so instead of "found no issues", the check fails, and `Gatehouse triage` fails with it until the review job is re-run. Do not mark it a required status check. To let critical/high findings fail the check (still not recommended as a required gate), opt in:
 
 ```yaml
-uses: crunchtools/gatehouse/.github/workflows/review.yml@v0.16.0
+uses: crunchtools/gatehouse/.github/workflows/review.yml@v0
 with:
   blocking: true
 ```
+
+## Versions
+
+Call the reusable workflows at the major tag, `@v0`, as the examples do. Each release moves that tag once its container images are pushed, so a release reaches every repository without a pin bump there; `review.yml` at the tag names the image of the same release. Every release also keeps its own `vX.Y.Z` tag. To undo a release, move the major tag back: `git tag -f v0 vX.Y.Z && git push -f origin v0`.
+
+A change that needs an edit in the calling repository (an input renamed or removed, a check name changed, a config format Gourmand rejects) is a new major tag, while the version is 0.x as well. Repositories move to a new major by editing their caller files.
+
+To release: bump the version in `pyproject.toml`, `src/gatehouse/__init__.py`, `uv.lock` and the default image in `review.yml`, add the CHANGELOG entry, merge, push the tag `vX.Y.Z`, and publish the GitHub Release (which publishes to PyPI). The tag builds the images and then moves `v0`.
 
 ## Configuration
 

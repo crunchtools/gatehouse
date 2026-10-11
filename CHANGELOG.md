@@ -5,6 +5,18 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-10-11
+
+### Changed
+- Repositories call the reusable workflows at the major tag, `@v0`, and no
+  longer at an exact release. A release tag builds the images and then moves
+  `v0`, so every repository runs the new release with no pin bump. Before,
+  each release was re-pinned in every repository by a Dependabot pull request,
+  and repositories sat one and two releases behind. Every release keeps its
+  `vX.Y.Z` tag; a release is undone by moving `v0` back. A change that needs
+  an edit in the calling repository is a new major tag from now on.
+- The container build runs for release tags (`v*.*.*`) only, not for `v0`.
+
 ## [0.16.0] - 2026-10-10
 
 ### Changed

@@ -1,8 +1,8 @@
 # gatehouse Constitution
 
-> **Version:** 1.4.0
+> **Version:** 1.5.0
 > **Ratified:** 2026-04-04
-> **Amended:** 2026-10-10
+> **Amended:** 2026-10-11
 > **Status:** Active
 > **Inherits:** [crunchtools/constitution](https://github.com/crunchtools/constitution) v1.22.0
 > **Profile:** CLI Tool
@@ -68,3 +68,4 @@ Built on the `quay.io/hummingbird/python:latest-fips-builder` image (git is need
 | 1.2.0 | 2026-09-29 | LOW findings triaged by agent (0.14.0) |
 | 1.3.0 | 2026-10-02 | Manifest under constitution v1.18.0: License, Testing, Gourmand and Quality Gates restatements removed |
 | 1.4.0 | 2026-10-10 | A review fewer than half of whose agents finished fails, under `--advisory` too, and fails triage (0.16.0) |
+| 1.5.0 | 2026-10-11 | Reusable workflows are called at the major tag, which a release moves after its images are pushed; a change needing a caller edit is a new major (0.17.0) |
