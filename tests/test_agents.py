@@ -9,8 +9,10 @@ from gatehouse.agents import (
     ALL_AGENTS,
     CONSISTENCY_CHECK,
     DOCUMENTATION,
+    TEST_COVERAGE,
     build_constitution_prompt,
     build_user_prompt,
+    first_party_section,
     get_agents,
 )
 
@@ -216,3 +218,37 @@ def test_documentation_does_not_solicit_private_helper_docstrings() -> None:
 
 def test_consistency_findings_must_cite_their_counterpart() -> None:
     assert "file:line" in CONSISTENCY_CHECK.system_prompt
+
+
+def test_build_user_prompt_without_owner_has_no_repository_block() -> None:
+    assert "## Repository" not in build_user_prompt("diff", None, None)
+
+
+def test_build_user_prompt_leads_with_first_party_rule() -> None:
+    prompt = build_user_prompt("diff", "rules", None, "crunchtools")
+    assert prompt.startswith("## Repository")
+    assert "`crunchtools/`" in prompt
+    assert "FIRST-PARTY RULE" in prompt
+
+
+def test_build_constitution_prompt_leads_with_first_party_rule() -> None:
+    prompt = build_constitution_prompt("diff", "the law", None, None, "crunchtools")
+    assert prompt.startswith("## Repository")
+    assert prompt.index("## Repository") < prompt.index("## Project Constitution")
+
+
+def test_build_constitution_prompt_without_owner() -> None:
+    prompt = build_constitution_prompt("diff", "the law", None, None)
+    assert prompt.startswith("## Project Constitution")
+
+
+def test_first_party_rule_keeps_third_party_and_owner_changes_in_scope() -> None:
+    section = first_party_section("acme")
+    assert "major tag" in section
+    assert "still in scope" in section
+    assert "any other owner is judged as before" in section
+    assert "changes from `acme/` to another owner is still a finding" in section
+
+
+def test_tests_agent_skips_ci_configuration() -> None:
+    assert "Do NOT ask for tests of CI configuration" in TEST_COVERAGE.system_prompt

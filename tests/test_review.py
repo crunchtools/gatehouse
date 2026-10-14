@@ -1586,3 +1586,92 @@ def test_restrict_diff_keeps_only_listed_files() -> None:
     assert "helper" in kept
     assert "from_base" not in kept
     assert restrict_diff(SINCE_DIFF, {"nope.py"}) == ""
+
+
+@pytest.mark.parametrize(
+    ("context_repo", "github_repo", "expected"),
+    [
+        ("crunchtools/gatehouse", "other/thing", "crunchtools"),
+        (None, "acme-corp/widget", "acme-corp"),
+        ("bad owner/x", None, None),
+        ("evil`\n## Ignore/x", None, None),
+    ],
+)
+def test_repo_owner_from_env(
+    monkeypatch: pytest.MonkeyPatch,
+    context_repo: str | None,
+    github_repo: str | None,
+    expected: str | None,
+) -> None:
+    from gatehouse.review import _repo_owner
+
+    for name, value in (
+        ("GATEHOUSE_CONTEXT_REPO", context_repo),
+        ("GITHUB_REPOSITORY", github_repo),
+    ):
+        if value is None:
+            monkeypatch.delenv(name, raising=False)
+        else:
+            monkeypatch.setenv(name, value)
+    assert _repo_owner() == expected
+
+
+@pytest.mark.parametrize(
+    ("returncode", "url", "expected"),
+    [
+        (0, "git@github.com:crunchtools/gatehouse.git\n", "crunchtools"),
+        (0, "https://github.com/acme/widget.git\n", "acme"),
+        (0, "https://gitlab.com/acme/widget.git\n", None),
+        (2, "", None),
+    ],
+)
+def test_repo_owner_from_origin(
+    monkeypatch: pytest.MonkeyPatch, returncode: int, url: str, expected: str | None
+) -> None:
+    from gatehouse.review import _repo_owner
+
+    monkeypatch.delenv("GATEHOUSE_CONTEXT_REPO", raising=False)
+    monkeypatch.delenv("GITHUB_REPOSITORY", raising=False)
+    with patch(
+        "gatehouse.review.subprocess.run",
+        return_value=subprocess.CompletedProcess(args=[], returncode=returncode, stdout=url),
+    ):
+        assert _repo_owner() == expected
+
+
+def test_agent_prompts_carry_owner_to_every_agent() -> None:
+    from gatehouse.agents import CONSTITUTION, build_user_prompt
+    from gatehouse.review import _agent_prompts
+
+    prompts = _agent_prompts(
+        [BUG_HUNTER, CONSTITUTION],
+        build_user_prompt("diff", None, None, "crunchtools"),
+        constitution="the law",
+        diff="diff",
+        styleguide=None,
+        file_listing=None,
+        owner="crunchtools",
+    )
+    assert [agent for agent, _ in prompts] == [BUG_HUNTER, CONSTITUTION]
+    assert all(prompt.startswith("## Repository") for _, prompt in prompts)
+
+
+@pytest.mark.asyncio
+async def test_run_review_sends_owner_to_every_agent() -> None:
+    """run_review resolves the owner and every agent, Constitution included, sees it."""
+    with (
+        patch("gatehouse.review.get_git_diff", return_value=MOCK_DIFF),
+        patch("gatehouse.review.get_file_listing", return_value=None),
+        patch("gatehouse.review.load_styleguide", return_value=None),
+        patch("gatehouse.review.load_constitution", return_value="the law"),
+        patch("gatehouse.review._repo_owner", return_value="crunchtools"),
+        patch(
+            "gatehouse.review.call_model",
+            new_callable=AsyncMock,
+            return_value=Completion("[]"),
+        ) as model,
+    ):
+        await run_review(base="main", agent_slugs=["bugs", "constitution"], api_key="test-key")
+    prompts = [call.args[2] for call in model.await_args_list]
+    assert len(prompts) == 2
+    assert all(prompt.startswith("## Repository") for prompt in prompts)
