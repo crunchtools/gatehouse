@@ -153,7 +153,8 @@ TEST_COVERAGE = Agent(
         "tests that can be simplified or consolidated (shared fixtures, "
         "parameterized tests, unnecessary setup).\n\n"
         "OUT OF SCOPE: Do NOT review test performance (that is performance check). "
-        "Do NOT flag bugs in test code that mask real bugs (that is bug hunter).\n\n"
+        "Do NOT flag bugs in test code that mask real bugs (that is bug hunter). "
+        "Do NOT ask for tests of CI configuration (`.github/` workflow files).\n\n"
         "SEVERITY GUIDE:\n"
         "- high: public API or critical path changed with zero tests\n"
         "- medium: complex logic added without edge case tests, or integration points untested\n"
@@ -293,13 +294,38 @@ def _diff_section(diff: str) -> str:
     return f"## Git Diff to Review\n\n```diff\n{diff}\n```"
 
 
-def build_user_prompt(diff: str, styleguide: str | None, file_listing: str | None) -> str:
+def first_party_section(owner: str) -> str:
+    """Render the repository owner and the first-party trust rule."""
+    return (
+        f"## Repository\n\n"
+        f"This repository belongs to the GitHub account `{owner}`. A reusable "
+        f"workflow or action under `{owner}/` is first-party: its owner is the "
+        f"owner of this repository and of its secrets, and moving its tags "
+        f"takes write access to that account.\n\n"
+        f"FIRST-PARTY RULE: Do NOT flag the ref a `{owner}/...` workflow or "
+        f"action is called at (a release tag, a major tag such as `@v2`, or a "
+        f"branch), in any framing (mutable tag, supply chain, reproducibility, "
+        f"hidden dependency), and do NOT flag the passing of secrets or "
+        f"permissions to it as such; how this diff exposes or uses a secret is "
+        f"still in scope. A "
+        f"workflow or action from any other owner is judged as before, and a "
+        f"call that changes from `{owner}/` to another owner is still a finding."
+    )
+
+
+def build_user_prompt(
+    diff: str,
+    styleguide: str | None,
+    file_listing: str | None,
+    owner: str | None = None,
+) -> str:
     """Build the user prompt with diff content and optional context.
 
     The raw unified diff is converted to a structured BEFORE/AFTER view
     (see diffview) before being embedded; unparseable diffs are embedded raw.
+    With an owner, a first-party rule for that account's workflows leads.
     """
-    parts: list[str] = []
+    parts: list[str] = [first_party_section(owner)] if owner else []
     if styleguide:
         parts.append(f"## Project Styleguide\n\n{styleguide}")
     if file_listing:
@@ -313,13 +339,16 @@ def build_constitution_prompt(
     constitution: str,
     styleguide: str | None,
     file_listing: str | None,
+    owner: str | None = None,
 ) -> str:
     """Build the user prompt for the Constitution agent.
 
     The raw unified diff is converted to a structured BEFORE/AFTER view
     (see diffview) before being embedded; unparseable diffs are embedded raw.
+    With an owner, a first-party rule for that account's workflows leads.
     """
-    parts: list[str] = [f"## Project Constitution\n\n{constitution}"]
+    parts: list[str] = [first_party_section(owner)] if owner else []
+    parts.append(f"## Project Constitution\n\n{constitution}")
     if styleguide:
         parts.append(f"## Project Styleguide\n\n{styleguide}")
     if file_listing:

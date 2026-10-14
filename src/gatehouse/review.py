@@ -137,6 +137,31 @@ def get_file_listing() -> str | None:
     return ls_proc.stdout
 
 
+_OWNER_RE = re.compile(r"[A-Za-z0-9-]+")
+_REMOTE_OWNER_RE = re.compile(r"github\.com[:/]([^/]+)/")
+
+
+def _repo_owner() -> str | None:
+    """Return the GitHub account that owns the repository under review.
+
+    From GATEHOUSE_CONTEXT_REPO, else GITHUB_REPOSITORY, else the origin
+    remote (ssh or https). Only a valid account name is returned: it is
+    embedded in the prompt.
+    """
+    repo = os.environ.get("GATEHOUSE_CONTEXT_REPO") or os.environ.get("GITHUB_REPOSITORY")
+    if repo:
+        owner = repo.split("/", 1)[0]
+    else:
+        proc = subprocess.run(
+            ["git", "remote", "get-url", "origin"], capture_output=True, text=True, check=False
+        )
+        match = _REMOTE_OWNER_RE.search(proc.stdout) if proc.returncode == 0 else None
+        if match is None:
+            return None
+        owner = match.group(1)
+    return owner if _OWNER_RE.fullmatch(owner) else None
+
+
 STYLEGUIDE_PATH = ".gemini/styleguide.md"
 
 CONSTITUTION_SEARCH_PATHS: tuple[str, ...] = (
@@ -628,6 +653,7 @@ def _agent_prompts(
     diff: str,
     styleguide: str | None,
     file_listing: str | None,
+    owner: str | None = None,
 ) -> list[tuple[Agent, str]]:
     """Pair each agent with its prompt; Constitution is skipped without a constitution."""
     prompts: list[tuple[Agent, str]] = []
@@ -636,7 +662,10 @@ def _agent_prompts(
             prompts.append((agent, user_prompt))
         elif constitution:
             prompts.append(
-                (agent, build_constitution_prompt(diff, constitution, styleguide, file_listing))
+                (
+                    agent,
+                    build_constitution_prompt(diff, constitution, styleguide, file_listing, owner),
+                )
             )
         else:
             print("Skipping Constitution agent: no constitution file found.")
@@ -696,7 +725,8 @@ async def run_review(
     agents = get_agents(agent_slugs)
     styleguide = load_styleguide()
     file_listing = filter_listing(get_file_listing(), spec)
-    user_prompt = build_user_prompt(diff, styleguide, file_listing)
+    owner = _repo_owner()
+    user_prompt = build_user_prompt(diff, styleguide, file_listing, owner)
 
     constitution = load_constitution(constitution_path)
     prompts = _agent_prompts(
@@ -706,6 +736,7 @@ async def run_review(
         diff=diff,
         styleguide=styleguide,
         file_listing=file_listing,
+        owner=owner,
     )
 
     threads = asyncio.create_task(asyncio.to_thread(fetch_answered_threads)) if comment else None

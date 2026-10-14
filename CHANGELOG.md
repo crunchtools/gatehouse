@@ -5,6 +5,22 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-10-14
+
+### Added
+- A workflow or action owned by the account that owns the repository under
+  review is first-party. The agents are told the owner, from
+  `GATEHOUSE_CONTEXT_REPO`, `GITHUB_REPOSITORY` or the `origin` remote, and
+  no longer flag the ref a first-party workflow is called at (a major tag such
+  as `@v0` included) or the secrets passed to it. Workflows from any other
+  owner are judged as before, and a call that moves to another owner is still
+  a finding. Before, the major-tag pin the constitution requires drew a
+  "mutable tag, pin to a SHA" finding on every caller-file change, 378 of the
+  759 findings answered "not a bug" from October 1 to 11.
+
+### Changed
+- The Test Coverage agent no longer asks for tests of `.github/` workflow files.
+
 ## [0.17.0] - 2026-10-11
 
 ### Changed
