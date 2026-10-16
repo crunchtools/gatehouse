@@ -5,6 +5,8 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-10-16
+
 ### Changed
 - Triage counts a finding as answered only by a verifiable reply:
   `fixed in <sha>` naming a commit on the PR, `not a bug: <reason>` with a

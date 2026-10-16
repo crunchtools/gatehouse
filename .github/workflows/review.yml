@@ -80,7 +80,7 @@ on:
         description: "Gatehouse release image tag. Bump per release."
         type: string
         required: false
-        default: "quay.io/crunchtools/gatehouse:0.18.1"
+        default: "quay.io/crunchtools/gatehouse:0.19.0"
     secrets:
       OPENROUTER_API_KEY:
         required: true
