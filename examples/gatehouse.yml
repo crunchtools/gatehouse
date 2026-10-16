@@ -21,8 +21,9 @@
 #               so it must never hold merge authority. (Opt into blocking with
 #               `blocking: true` below only if you accept that tradeoff — and
 #               even then, keep it out of branch protection.)
-#   • triage  — deterministic. Fails while any finding has no reply
-#               (`fixed in <sha>` or `not a bug: <reason>`), or while the
+#   • triage  — deterministic. Fails while any finding has no answer
+#               (`fixed in <sha>`, `not a bug: <reason>` or
+#               `deferred: <open issue URL>`), or while the
 #               last review did not finish. Safe to mark
 #               REQUIRED: it never judges code, only whether a human answered.
 
