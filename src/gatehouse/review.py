@@ -41,9 +41,12 @@ from gatehouse.ignore import (
 )
 from gatehouse.llm import DEFAULT_MODEL, Completion, call_model
 from gatehouse.output import format_results, print_summary, strip_ansi
+from gatehouse.refs import cited_refs, ref_exists
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    from gatehouse.refs import Resolver
 
 CONFIDENCE_THRESHOLD = 80
 
@@ -349,6 +352,19 @@ def _drop_unverified(results: Results, haystack: str) -> tuple[Results, int]:
     )
 
 
+def _drop_disproved(results: Results, resolve: Resolver = ref_exists) -> tuple[Results, int]:
+    """Drop findings calling a ref missing when GitHub resolves every ref they cite."""
+    cache: dict[tuple[str, str, str], bool | None] = {}
+
+    def disproved(_: Agent, finding: dict[str, Any]) -> bool:
+        refs = cited_refs(finding)
+        for key in refs - cache.keys():
+            cache[key] = resolve(*key)
+        return bool(refs) and all(cache[key] is True for key in refs)
+
+    return _keep_where(results, lambda agent, f: not disproved(agent, f))
+
+
 def _drop_reraised(results: Results, threads: list[tuple[str, str, int]]) -> tuple[Results, int]:
     answered_lines: dict[tuple[str, str], set[int]] = {}
     for name, path, t_line in threads:
@@ -410,18 +426,23 @@ def _filter_findings(
     answered: list[tuple[str, str, int]],
     required_low: frozenset[str] = REQUIRED_LOW_AGENTS,
     anchors: dict[str, set[int]] | None = None,
+    *,
+    resolve: Resolver = ref_exists,
 ) -> tuple[Results, dict[str, int]]:
-    """Drop unverifiable evidence, off-diff lines, re-raises of answered threads, excess LOWs.
+    """Drop unverifiable evidence, disproved missing refs, off-diff lines, re-raises, excess LOWs.
 
     Returns the kept results and the count dropped by each filter, keyed as
     post_pr_review takes them.
     """
     results, unverified = _drop_unverified(results, haystack)
+    results, disproved = _drop_disproved(results, resolve)
     results, offdiff = _drop_offdiff(results, anchors)
     results, reraised = _drop_reraised(results, answered)
     results, capped = _cap_advisory_lows(results, required_low)
     if unverified:
         print(f"Dropped {unverified} finding(s): evidence not in the diff.", file=sys.stderr)
+    if disproved:
+        print(f"Dropped {disproved} finding(s): the ref they call missing exists.", file=sys.stderr)
     if offdiff:
         print(f"Dropped {offdiff} finding(s): line outside the PR diff.", file=sys.stderr)
     if reraised:
@@ -434,6 +455,7 @@ def _filter_findings(
         )
     return results, {
         "unverified": unverified,
+        "disproved": disproved,
         "offdiff": offdiff,
         "reraised": reraised,
         "capped": capped,
