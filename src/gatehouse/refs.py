@@ -13,6 +13,7 @@ import os
 import re
 import sys
 from typing import TYPE_CHECKING, Any
+from urllib.parse import quote
 
 import httpx
 
@@ -47,13 +48,21 @@ _SENTENCE_RE = re.compile(r"(?<=[.!?])\s+|\n+")
 _TIMEOUT = 10.0
 
 
+def _is_claim(sentence: str) -> bool:
+    return bool(_MISSING_RE.search(sentence)) and not _OTHER_SUBJECT_RE.search(sentence)
+
+
 def _claim_sentences(finding: dict[str, Any]) -> list[str]:
-    text = " ".join(str(finding.get(k, "")) for k in ("description", "suggestion"))
-    return [
-        s
-        for s in _SENTENCE_RE.split(text)
-        if _MISSING_RE.search(s) and not _OTHER_SUBJECT_RE.search(s)
-    ]
+    """The sentences claiming a ref missing, if that is what the finding leads with.
+
+    A finding whose description opens on another defect and mentions a
+    missing ref in passing is about that defect, so it is never dropped.
+    """
+    description = _SENTENCE_RE.split(str(finding.get("description", "")).strip())
+    if not _is_claim(description[0]):
+        return []
+    rest = _SENTENCE_RE.split(str(finding.get("suggestion", "")))
+    return [s for s in description + rest if _is_claim(s)]
 
 
 def cited_refs(finding: dict[str, Any]) -> set[tuple[str, str, str]]:
@@ -82,7 +91,7 @@ def ref_exists(owner: str, repo: str, ref: str) -> bool | None:
     token = os.environ.get("GITHUB_TOKEN", "")
     if token:
         headers["Authorization"] = f"Bearer {token}"
-    url = f"{GITHUB_API_URL}/repos/{owner}/{repo}/commits/{ref}"
+    url = f"{GITHUB_API_URL}/repos/{owner}/{repo}/commits/{quote(ref, safe='')}"
     try:
         status = httpx.get(url, headers=headers, timeout=_TIMEOUT).status_code
     except httpx.HTTPError as exc:

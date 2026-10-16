@@ -86,6 +86,27 @@ def test_a_claim_about_something_else_cites_nothing(description: str) -> None:
     assert cited_refs(_with(description=description, suggestion="")) == set()
 
 
+def test_a_finding_leading_with_another_defect_is_never_dropped() -> None:
+    finding = _with(
+        description="The workflow echoes GITHUB_TOKEN into the log. "
+        "Also, actions/checkout@v7 does not exist."
+    )
+    resolve, calls = _resolver({("actions", "checkout", "v7"): True})
+    kept, dropped = _drop_disproved([(AGENT, [finding])], resolve)
+    assert (kept, dropped, calls) == ([(AGENT, [finding])], 0, [])
+
+
+def test_every_cited_ref_must_resolve() -> None:
+    finding = _with(
+        description="actions/checkout@v7 and actions/setup-python@v9 do not exist.",
+        evidence="- uses: actions/checkout@v7\n- uses: actions/setup-python@v9",
+    )
+    both = {("actions", "checkout", "v7"): True, ("actions", "setup-python", "v9"): True}
+    one = {("actions", "checkout", "v7"): True}
+    assert _drop_disproved([(AGENT, [finding])], _resolver(both)[0])[1] == 1
+    assert _drop_disproved([(AGENT, [finding])], _resolver(one)[0])[1] == 0
+
+
 def test_resolving_ref_drops_the_finding() -> None:
     resolve, _ = _resolver(
         {("actions", "checkout", "v7"): True, ("actions", "checkout", "v4"): True}
@@ -145,6 +166,25 @@ def test_ref_exists_maps_status(status: int, expected: bool | None) -> None:
     with patch("gatehouse.refs.httpx.get", return_value=response) as get:
         assert ref_exists("actions", "checkout", "v7") is expected
     assert get.call_args.args[0] == "https://api.github.com/repos/actions/checkout/commits/v7"
+
+
+def test_ref_exists_sends_the_token_and_encodes_the_ref(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GITHUB_TOKEN", "t0ken")
+    response = httpx.Response(200, request=httpx.Request("GET", "https://api.github.com/x"))
+    with patch("gatehouse.refs.httpx.get", return_value=response) as get:
+        assert ref_exists("o", "r", "release/v1") is True
+    assert get.call_args.args[0].endswith("/repos/o/r/commits/release%2Fv1")
+    assert get.call_args.kwargs["headers"]["Authorization"] == "Bearer t0ken"
+
+
+def test_ref_exists_without_a_token_sends_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    response = httpx.Response(404, request=httpx.Request("GET", "https://api.github.com/x"))
+    with patch("gatehouse.refs.httpx.get", return_value=response) as get:
+        assert ref_exists("o", "r", "v1") is False
+    assert "Authorization" not in get.call_args.kwargs["headers"]
 
 
 def test_ref_exists_survives_network_errors() -> None:
