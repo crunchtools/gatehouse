@@ -5,6 +5,18 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+## [0.18.1] - 2026-10-16
+
+### Fixed
+
+- The org ruleset let org admins bypass it, and agents act as an org admin,
+  so an agent could push past every gate straight to a default branch (one
+  did, editing Gourmand exceptions). The bypass is gone. The ruleset file
+  also listed 2 of the 4 checks the live ruleset requires; it now matches.
+- pip-audit's vulnerability count parsed the report as a list, threw on
+  pip-audit's dict output, and fell back to 0, so the PR fail step never
+  fired. An unreadable report now fails the step.
+
 ## [0.18.0] - 2026-10-14
 
 ### Added
