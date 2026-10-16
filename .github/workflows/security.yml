@@ -110,12 +110,18 @@ jobs:
           load: true
 
       - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: "gatehouse:scan"
+          scanners: vuln
+          severity: "CRITICAL,HIGH"
+          ignore-unfixed: true
+          trivyignores: .trivyignore
           format: "sarif"
           output: "trivy-results.sarif"
-          severity: "CRITICAL,HIGH"
+          # Without this, trivy-action drops the severity filter for SARIF and gates on every severity
+          limit-severities-for-sarif: true
+          exit-code: ${{ github.event_name == 'pull_request' && '1' || '0' }}
 
       - name: Upload Trivy scan results
         uses: github/codeql-action/upload-sarif@v4
