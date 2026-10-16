@@ -74,6 +74,18 @@ def test_a_finding_that_claims_nothing_missing_cites_nothing() -> None:
     assert cited_refs(finding) == set()
 
 
+@pytest.mark.parametrize(
+    "description",
+    [
+        "The input `fetch-tags` does not exist on actions/checkout@v7.",
+        "actions/checkout@v7 is pinned by tag. The cache key does not exist yet.",
+        "The file ./build.sh referenced by actions/checkout@v7 does not exist.",
+    ],
+)
+def test_a_claim_about_something_else_cites_nothing(description: str) -> None:
+    assert cited_refs(_with(description=description, suggestion="")) == set()
+
+
 def test_resolving_ref_drops_the_finding() -> None:
     resolve, _ = _resolver(
         {("actions", "checkout", "v7"): True, ("actions", "checkout", "v4"): True}

@@ -36,16 +36,44 @@ _MISSING_RE = re.compile(
 _USES_RE = re.compile(
     r"(?<![\w.-])([A-Za-z0-9][A-Za-z0-9-]*)/([A-Za-z0-9_.-]+)(?:/[A-Za-z0-9_./-]+)?@([A-Za-z0-9_./-]+)"
 )
+# A sentence that is about something on the action, not the ref itself:
+# "input `foo` does not exist on actions/checkout@v7" stays a finding.
+_OTHER_SUBJECT_RE = re.compile(
+    r"\b(?:inputs?|outputs?|parameters?|arguments?|options?|keys?|fields?|"
+    r"files?|paths?|secrets?|permissions?)\b",
+    re.I,
+)
+_SENTENCE_RE = re.compile(r"(?<=[.!?])\s+|\n+")
 _TIMEOUT = 10.0
 
 
+def _claim_sentences(finding: dict[str, Any]) -> list[str]:
+    text = " ".join(str(finding.get(k, "")) for k in ("description", "suggestion"))
+    return [
+        s
+        for s in _SENTENCE_RE.split(text)
+        if _MISSING_RE.search(s) and not _OTHER_SUBJECT_RE.search(s)
+    ]
+
+
 def cited_refs(finding: dict[str, Any]) -> set[tuple[str, str, str]]:
-    """The owner/repo@ref refs a missing-ref finding rests on; empty if it claims none."""
-    claim = " ".join(str(finding.get(k, "")) for k in ("description", "suggestion"))
-    if not _MISSING_RE.search(claim):
+    """The owner/repo@ref refs a missing-ref finding rests on; empty if it claims none.
+
+    A ref counts only if a sentence claiming something missing names it, as
+    owner/repo@ref or as the bare ref, so a claim about anything else on the
+    same line never puts the finding up for dropping.
+    """
+    claims = _claim_sentences(finding)
+    if not claims:
         return set()
     text = " ".join(str(finding.get(k, "")) for k in ("evidence", "description"))
-    return {(o, r, ref.rstrip(".")) for o, r, ref in _USES_RE.findall(text)}
+    cited = set()
+    for o, r, raw in _USES_RE.findall(text):
+        ref = raw.rstrip(".")
+        bare = re.compile(rf"(?<![\w.-]){re.escape(ref)}(?![\w-])")
+        if any(bare.search(s) for s in claims):
+            cited.add((o, r, ref))
+    return cited
 
 
 def ref_exists(owner: str, repo: str, ref: str) -> bool | None:
