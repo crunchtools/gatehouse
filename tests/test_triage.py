@@ -11,6 +11,7 @@ import json
 import re
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -20,13 +21,21 @@ from gatehouse.github import REVIEW_FAILED_MARKER, REVIEW_MARKER
 TRIAGE = Path(__file__).parent.parent / ".github" / "workflows" / "triage.yml"
 EXAMPLE = Path(__file__).parent.parent / "examples" / "gatehouse.yml"
 BOT = "github-actions[bot]"
+SHA = "0123456789abcdef0123456789abcdef01234567"
+ISSUE = "https://github.com/crunchtools/gatehouse/issues/90"
 
 pytestmark = pytest.mark.skipif(shutil.which("jq") is None, reason="jq not installed")
 
 
 def _comment(
-    cid: int, user: str, reply_to: int | None = None, header: str = "**HIGH** (Bug Hunter)"
+    cid: int,
+    user: str,
+    reply_to: int | None = None,
+    header: str = "**HIGH** (Bug Hunter)",
+    body: str | None = None,
 ) -> dict:
+    if body is None:
+        body = f"{header}: finding {cid}\nmore" if reply_to is None else f"fixed in {SHA}"
     return {
         "id": cid,
         "user": {"login": user},
@@ -35,11 +44,16 @@ def _comment(
         "path": "src/app.py",
         "line": 10,
         "original_line": 10,
-        "body": f"{header}: finding {cid}\nmore",
+        "body": body,
     }
 
 
-def _unanswered(*pages: list[dict], required_low: str = "Bug Hunter,Security Scan") -> list[dict]:
+def _unanswered(
+    *pages: list[dict],
+    required_low: str = "Bug Hunter,Security Scan",
+    shas: tuple[str, ...] = (SHA,),
+    open_issues: tuple[str, ...] = (ISSUE,),
+) -> list[dict]:
     block = re.search(
         r"# --- triage filter.*?\n(.*?)# --- end triage filter ---",
         TRIAGE.read_text(),
@@ -50,14 +64,37 @@ def _unanswered(*pages: list[dict], required_low: str = "Bug Hunter,Security Sca
     assert program, "jq program not found between the markers"
     # gh api --paginate emits one JSON array per page; -s slurps them.
     stdin = "".join(json.dumps(page) for page in pages)
-    out = subprocess.run(
-        ["jq", "-s", "--arg", "bot", BOT, "--arg", "required_low", required_low, program.group(1)],
-        input=stdin,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
+    with tempfile.TemporaryDirectory() as tmp:
+        files = {"shas": list(shas), "open_issues": list(open_issues)}
+        args = []
+        for name, value in files.items():
+            path = Path(tmp) / f"{name}.json"
+            path.write_text(json.dumps(value))
+            args += ["--slurpfile", name, str(path)]
+        out = subprocess.run(
+            [
+                "jq",
+                "-s",
+                "--arg",
+                "bot",
+                BOT,
+                "--arg",
+                "required_low",
+                required_low,
+                *args,
+                program.group(1),
+            ],
+            input=stdin,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
     return json.loads(out.stdout)
+
+
+def _answered_by(body: str, **kwargs: tuple[str, ...]) -> bool:
+    """Does a maintainer reply with this body answer the finding?"""
+    return _unanswered([_comment(1, BOT), _comment(2, "maintainer", 1, body=body)], **kwargs) == []
 
 
 def test_no_comments_passes() -> None:
@@ -72,6 +109,62 @@ def test_unanswered_finding_is_reported() -> None:
 
 def test_human_reply_answers_the_finding() -> None:
     assert _unanswered([_comment(1, BOT), _comment(2, "maintainer", reply_to=1)]) == []
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        f"fixed in {SHA}",
+        f"Fixed in {SHA[:7]}",
+        f"fixed in {SHA.upper()}: moved the check before the write",
+        "not a bug: the value is validated in parse() before it gets here",
+        "Not a bug:\nthe caller holds the lock for the whole loop",
+        f"deferred: {ISSUE}",
+        f"Deferred: {ISSUE.upper().replace('HTTPS://GITHUB.COM', 'https://github.com')}",
+        f"  deferred: {ISSUE} (needs a schema change)",
+    ],
+)
+def test_contract_answers_count(body: str) -> None:
+    assert _answered_by(body)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "won't fix",
+        "ok",
+        "LGTM, this is fine",
+        "not a bug: intended",  # a reason, but no reason given
+        "not a bug:                          ",
+        "fixed in abcdef0",  # not a commit on this PR
+        "fixed in 0123",  # too short to name anything
+        f"thanks, fixed in {SHA}",  # the form must lead
+        "deferred: https://github.com/crunchtools/gatehouse/issues/91",  # closed or missing
+        "deferred: later",
+        f"deferred: {ISSUE.replace('issues', 'pull')}",
+    ],
+)
+def test_other_replies_answer_nothing(body: str) -> None:
+    """An agent can always reply, so a reply alone proves nothing."""
+    assert not _answered_by(body)
+
+
+def test_fixed_in_needs_a_commit_on_the_pr() -> None:
+    assert not _answered_by(f"fixed in {SHA}", shas=())
+    assert _answered_by(f"fixed in {SHA[:10]}", shas=("ffff", SHA))
+
+
+def test_deferred_needs_the_issue_open() -> None:
+    assert not _answered_by(f"deferred: {ISSUE}", open_issues=())
+
+
+def test_one_contract_reply_among_chatter_answers() -> None:
+    comments = [
+        _comment(1, BOT),
+        _comment(2, "maintainer", 1, body="looking"),
+        _comment(3, "maintainer", 1, body=f"fixed in {SHA}"),
+    ]
+    assert _unanswered(comments) == []
 
 
 def test_reviewer_replying_to_itself_does_not_count() -> None:

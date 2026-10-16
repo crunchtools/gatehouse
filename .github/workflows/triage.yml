@@ -6,15 +6,21 @@
 # and merged five minutes later with no reply to any of them.
 #
 # This job closes the gap without giving the LLM a vote. It does not judge the
-# findings. It checks that a HUMAN (or an agent acting for one) replied to each
-# one — `fixed in <sha>` or `not a bug: <reason>`. That is deterministic, so
-# unlike the review it is safe to mark as a required status check.
+# findings. It checks that a HUMAN (or an agent acting for one) answered each
+# one in a form it can verify. That is deterministic, so unlike the review it
+# is safe to mark as a required status check.
 #
 # What counts:
 #   • a finding  = an inline PR review comment by the reviewer account that is
 #                  not itself a reply (findings without a file/line are posted
 #                  only in the review summary and are not counted here)
-#   • an answer  = any reply in that thread by someone other than the reviewer
+#   • an answer  = a reply in that thread by someone other than the reviewer
+#                  whose first line is one of (case-insensitive):
+#                    fixed in <sha>        — 7-40 hex, a commit on this PR
+#                    not a bug: <reason>   — reason of 20+ characters
+#                    deferred: <issue URL> — a GitHub issue that is open
+#                  Any other reply ("won't fix", "ok") answers nothing: an
+#                  agent can always reply, so a reply alone proved nothing.
 #   • required   = CRITICAL, HIGH and MEDIUM from any agent, and LOW only from
 #                  the agents in `required_low_agents`. Other LOWs still post,
 #                  but as advisory: most were noise, and each one answered
@@ -59,6 +65,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       pull-requests: read
+      issues: read
     steps:
       - name: Every Gatehouse finding has a reply
         env:
@@ -104,12 +111,48 @@ jobs:
           gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/comments?per_page=100" \
             > comments.json
 
+          # What the answers point at, fetched here so the filter stays pure:
+          # the PR's commits for `fixed in`, and the state of every issue a
+          # `deferred:` reply names. The URL pattern admits only name
+          # characters, so nothing from a comment reaches the shell unvetted.
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/commits?per_page=100" \
+            --jq '.[].sha' | jq -R . | jq -s . > shas.json
+          jq -rs --arg bot "$REVIEWER" '
+            (add // [])[]
+            | select(.in_reply_to_id != null and .user.login != $bot)
+            | (.body // "") | sub("^\\s+"; "")
+            | capture("^deferred:\\s*https://github\\.com/(?<o>[A-Za-z0-9_.-]+)/(?<r>[A-Za-z0-9_.-]+)/issues/(?<n>[0-9]+)"; "i")?
+            | "\(.o)/\(.r)/issues/\(.n)"
+          ' comments.json | sort -u > deferred.txt
+          # A lookup that fails leaves the issue unproven, so the thread stays
+          # unanswered; the warning says why rather than leaving it silent.
+          : > open_issues.txt
+          while read -r ref; do
+            gh api "repos/${ref}" --jq 'select(.state == "open" and .pull_request == null) | .html_url' \
+              >> open_issues.txt 2>/dev/null \
+              || echo "::warning::could not look up ${ref}; a deferred: reply naming it does not count"
+          done < deferred.txt
+          jq -R . open_issues.txt | jq -s . > open_issues.json
+
           # --- triage filter (tests/test_triage.py runs this against fixtures) ---
-          jq -s --arg bot "$REVIEWER" --arg required_low "$REQUIRED_LOW_AGENTS" '
+          jq -s --arg bot "$REVIEWER" --arg required_low "$REQUIRED_LOW_AGENTS" \
+            --slurpfile shas shas.json --slurpfile open_issues open_issues.json '
             (add // []) as $all
             | ($required_low | split(",") | map(gsub("^\\s+|\\s+$"; ""))) as $low_agents
-            | (reduce ($all[] | select(.in_reply_to_id != null and .user.login != $bot)
-                | .in_reply_to_id) as $r ({}; .[$r | tostring] = true)) as $answered
+            | ($shas[0] | map(ascii_downcase)) as $commits
+            | ($open_issues[0] | map(ascii_downcase | rtrimstr("/"))) as $open
+            | def answers:
+                ((.body // "") | sub("^\\s+"; "")) as $b
+                | ($b | split("\n")[0] | ascii_downcase) as $l
+                | ([$l | capture("^fixed in (?<s>[0-9a-f]{7,40})\\b")? | .s] | first) as $sha
+                | ([$l | capture("^deferred:\\s*(?<u>https://github\\.com/[a-z0-9_.-]+/[a-z0-9_.-]+/issues/[0-9]+)")? | .u] | first) as $issue
+                | ($sha != null and any($commits[]; startswith($sha)))
+                  or (($b | test("^not a bug:"; "i"))
+                     and (($b | sub("^not a bug:\\s*"; ""; "i") | gsub("\\s+"; " ")
+                           | rtrimstr(" ") | length) >= 20))
+                  or ($issue != null and any($open[]; . == $issue));
+              (reduce ($all[] | select(.in_reply_to_id != null and .user.login != $bot)
+                | select(answers) | .in_reply_to_id) as $r ({}; .[$r | tostring] = true)) as $answered
             | [ $all[]
                 | select(.user.login == $bot and .in_reply_to_id == null)
                 | select($answered[.id | tostring] | not)
@@ -125,14 +168,15 @@ jobs:
 
           count=$(jq length unanswered.json)
           if [ "$count" -eq 0 ]; then
-            echo "Every Gatehouse finding on this PR has a reply."
+            echo "Every Gatehouse finding on this PR has an answer."
             exit 0
           fi
 
           {
             echo "## ${count} unanswered Gatehouse finding(s)"
             echo
-            echo 'Reply to each thread with `fixed in <sha>` or `not a bug: <reason>`.'
+            echo 'Reply to each thread with `fixed in <sha>` (a commit on this PR),'
+            echo '`not a bug: <reason of 20+ characters>` or `deferred: <open issue URL>`.'
             echo
             jq -r '.[] | "- [\(.path):\(.line)](\(.url)) \(.finding)"' unanswered.json
           } >> "$GITHUB_STEP_SUMMARY"

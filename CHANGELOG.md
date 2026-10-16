@@ -5,6 +5,13 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+### Changed
+- Triage counts a finding as answered only by a verifiable reply:
+  `fixed in <sha>` naming a commit on the PR, `not a bug: <reason>` with a
+  reason of 20+ characters, or `deferred: <issue URL>` pointing at an open
+  issue. Any other reply ("won't fix", "ok") left the thread looking answered;
+  now the check stays red. Open PRs answered the old way need a re-reply.
+
 ## [0.18.1] - 2026-10-16
 
 ### Fixed
