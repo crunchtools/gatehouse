@@ -124,10 +124,13 @@ jobs:
             | capture("^deferred:\\s*https://github\\.com/(?<o>[A-Za-z0-9_.-]+)/(?<r>[A-Za-z0-9_.-]+)/issues/(?<n>[0-9]+)"; "i")?
             | "\(.o)/\(.r)/issues/\(.n)"
           ' comments.json | sort -u > deferred.txt
+          # A lookup that fails leaves the issue unproven, so the thread stays
+          # unanswered; the warning says why rather than leaving it silent.
           : > open_issues.txt
           while read -r ref; do
             gh api "repos/${ref}" --jq 'select(.state == "open" and .pull_request == null) | .html_url' \
-              >> open_issues.txt 2>/dev/null || true
+              >> open_issues.txt 2>/dev/null \
+              || echo "::warning::could not look up ${ref}; a deferred: reply naming it does not count"
           done < deferred.txt
           jq -R . open_issues.txt | jq -s . > open_issues.json
 
