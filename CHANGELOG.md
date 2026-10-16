@@ -14,6 +14,12 @@ All notable changes to this project are documented here, following
   On a private repo a `deferred:` issue cannot be looked up with the token
   callers grant, so use `fixed in` or `not a bug:` there.
 
+### Fixed
+- A finding that calls an action or workflow ref missing (`actions/checkout@v7
+  does not exist`) is checked against GitHub, and dropped when every ref it
+  cites resolves. The review body counts them. The 0.16.0 prompt rule did not
+  stop the finding; a lookup does. A failed lookup keeps the finding.
+
 ## [0.18.1] - 2026-10-16
 
 ### Fixed

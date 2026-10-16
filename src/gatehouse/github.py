@@ -268,6 +268,7 @@ def format_review_body(
     ignored: int = 0,
     *,
     unverified: int = 0,
+    disproved: int = 0,
     reraised: int = 0,
     capped: int = 0,
     offdiff: int = 0,
@@ -277,8 +278,9 @@ def format_review_body(
 ) -> str:
     """Generate the review summary body: counts, scope, skipped files and findings, fallbacks.
 
-    ``unverified``, ``reraised``, ``capped`` and ``offdiff`` are the findings
-    dropped for fabricated evidence, repeating an answered thread, exceeding
+    ``unverified``, ``disproved``, ``reraised``, ``capped`` and ``offdiff``
+    are the findings dropped for fabricated evidence, a missing-ref claim
+    GitHub disproves, repeating an answered thread, exceeding
     the advisory LOW cap, and pointing outside the PR diff; see
     post_pr_review. ``fallbacks`` counts agents by the fallback model that
     served them, out of ``agent_count``, the agents that ran. ``failed``
@@ -295,6 +297,8 @@ def format_review_body(
         body += f"\n\n{ignored} file(s) not reviewed, per `.gatehouse-ignore` on the base branch."
     if unverified:
         body += f"\n\n{unverified} finding(s) dropped: their evidence is not in the diff."
+    if disproved:
+        body += f"\n\n{disproved} finding(s) dropped: the ref they call missing exists on GitHub."
     if reraised:
         body += f"\n\n{reraised} finding(s) not re-raised: already answered on this PR."
     if capped:
@@ -363,6 +367,7 @@ async def post_pr_review(
     ignored: int = 0,
     *,
     unverified: int = 0,
+    disproved: int = 0,
     reraised: int = 0,
     capped: int = 0,
     offdiff: int = 0,
@@ -378,7 +383,8 @@ async def post_pr_review(
     the merge. ``failed`` pairs agents that could not finish with why, and ``ignored``
     counts files skipped per .gatehouse-ignore. The keyword counts are
     findings filtered out before posting: ``unverified`` quoted evidence
-    not found in the diff or review context, ``reraised`` were MEDIUM or LOW
+    not found in the diff or review context, ``disproved`` called an action
+    ref missing that GitHub resolves, ``reraised`` were MEDIUM or LOW
     within a few lines of an answered thread from the same agent, and
     ``capped`` were advisory LOWs beyond the per-review limit, and
     ``offdiff`` pointed at lines GitHub cannot anchor a comment to. The
@@ -425,6 +431,7 @@ async def post_pr_review(
         failed,
         ignored,
         unverified=unverified,
+        disproved=disproved,
         reraised=reraised,
         capped=capped,
         offdiff=offdiff,
