@@ -63,9 +63,12 @@ jobs:
   triage:
     name: Gatehouse triage
     runs-on: ubuntu-latest
+    # No issues: read. A reusable workflow gets no more than its caller
+    # grants, and every caller grants pull-requests: read only; asking for
+    # more fails the run at startup. Public repos' issues read without it.
+    # On a private repo a deferred: lookup fails and the thread stays open.
     permissions:
       pull-requests: read
-      issues: read
     steps:
       - name: Every Gatehouse finding has a reply
         env:

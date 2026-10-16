@@ -11,6 +11,8 @@ All notable changes to this project are documented here, following
   reason of 20+ characters, or `deferred: <issue URL>` pointing at an open
   issue. Any other reply ("won't fix", "ok") left the thread looking answered;
   now the check stays red. Open PRs answered the old way need a re-reply.
+  On a private repo a `deferred:` issue cannot be looked up with the token
+  callers grant, so use `fixed in` or `not a bug:` there.
 
 ## [0.18.1] - 2026-10-16
 
