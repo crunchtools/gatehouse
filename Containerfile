@@ -15,7 +15,7 @@
 #   podman run --rm -e OPENROUTER_API_KEY -v $(pwd):/repo:ro,Z -w /repo \
 #     quay.io/fatherlinux/gatehouse --staged --agents bugs,security
 
-FROM quay.io/hummingbird/python:latest-fips-builder
+FROM quay.io/hummingbird/python:3.14-fips-builder
 USER 0
 
 RUN dnf install -y git-core && dnf clean all
