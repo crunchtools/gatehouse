@@ -5,6 +5,11 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+### Changed
+
+- Container base images pinned to `quay.io/hummingbird/python:3.14*` instead of
+  `latest`, which moved to Python 3.15.0 on 2026-10-20 (crunchtools/constitution#66).
+
 ## [0.19.0] - 2026-10-16
 
 ### Changed
