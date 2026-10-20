@@ -57,7 +57,7 @@ Findings filtered at confidence >= 80%.
 
 ## Container
 
-Built on the `quay.io/hummingbird/python:latest-fips-builder` image (git is needed at runtime) with a venv. Published to `quay.io/crunchtools/gatehouse` and `ghcr.io/crunchtools/gatehouse`.
+Built on the `quay.io/hummingbird/python:3.14-fips-builder` image (git is needed at runtime) with a venv. Published to `quay.io/crunchtools/gatehouse` and `ghcr.io/crunchtools/gatehouse`.
 
 ## History
 
