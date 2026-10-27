@@ -25,7 +25,8 @@ RUN python3 -m venv /app/venv
 ENV PATH="/app/venv/bin:$PATH"
 COPY pyproject.toml README.md ./
 COPY src/ ./src/
-RUN pip install --no-cache-dir .
+# pip 26.2 vendors certifi 2026.6.17 (GHSA-6q48-6c7w-9gw2); 26.2.2 is fixed
+RUN pip install --no-cache-dir --upgrade "pip>=26.2.2" && pip install --no-cache-dir .
 
 LABEL name="gatehouse" \
       version="0.2.0" \
