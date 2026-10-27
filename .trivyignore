@@ -14,3 +14,8 @@ CVE-2026-97687
 CVE-2026-97689
 GHSA-6v7p-g79w-8964
 CVE-2025-47273
+
+# certifi 2026.6.17 vendored in the base image's pip 26.2 (/usr/lib); the venv
+# pip is upgraded to 26.2.2, which is fixed. Same reasoning as above: this
+# service never runs pip. Accepted by Josui (CTO) 2026-10-26, review 2026-11-16.
+GHSA-6q48-6c7w-9gw2
