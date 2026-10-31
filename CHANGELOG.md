@@ -16,6 +16,12 @@ All notable changes to this project are documented here, following
   and passes, so triage passes. Those PRs only move the changelog and version
   strings, which the constitution validator now checks (v1.28.0), and one
   unanswered finding there held the mcp-metsuke 3.5.0 release for four days.
+- The Containerfile `version` label said 0.2.0; it now tracks the release.
+
+### Security
+
+- CVE-2026-114613 (msgpack 1.1.2 vendored in pip) is accepted in `.trivyignore`
+  until a pip release vendors msgpack 1.2.3; gatehouse never runs pip.
 
 ## [0.19.0] - 2026-10-16
 
