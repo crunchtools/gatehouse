@@ -29,7 +29,7 @@ COPY src/ ./src/
 RUN pip install --no-cache-dir --upgrade "pip>=26.2.2" && pip install --no-cache-dir .
 
 LABEL name="gatehouse" \
-      version="0.2.0" \
+      version="0.20.0" \
       summary="Local AI code review CLI using concurrent LLM agents" \
       description="5-agent concurrent code review with anti-noise prompting" \
       maintainer="crunchtools.com" \

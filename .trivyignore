@@ -19,3 +19,8 @@ CVE-2025-47273
 # pip is upgraded to 26.2.2, which is fixed. Same reasoning as above: this
 # service never runs pip. Accepted by Josui (CTO) 2026-10-26, review 2026-11-16.
 GHSA-6q48-6c7w-9gw2
+
+# msgpack 1.1.2 vendored in pip (base /usr/lib and the venv); fixed in 1.2.3,
+# which no pip release vendors yet (26.2.2 is latest). Same reasoning as above:
+# this service never runs pip. Accepted by Josui (CTO) 2026-10-31, review 2026-11-30.
+CVE-2026-114613
