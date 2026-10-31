@@ -5,10 +5,17 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-10-31
+
 ### Changed
 
 - Container base images pinned to `quay.io/hummingbird/python:3.14*` instead of
   `latest`, which moved to Python 3.15.0 on 2026-10-20 (crunchtools/constitution#66).
+- `review.yml` skips Ashigaru release pull requests: branch `ashigaru/release-*`
+  in the same repository, opened by `ashigaru-crunchtools[bot]`. It posts nothing
+  and passes, so triage passes. Those PRs only move the changelog and version
+  strings, which the constitution validator now checks (v1.28.0), and one
+  unanswered finding there held the mcp-metsuke 3.5.0 release for four days.
 
 ## [0.19.0] - 2026-10-16
 

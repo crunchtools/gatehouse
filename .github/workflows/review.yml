@@ -80,7 +80,7 @@ on:
         description: "Gatehouse release image tag. Bump per release."
         type: string
         required: false
-        default: "quay.io/crunchtools/gatehouse:0.19.0"
+        default: "quay.io/crunchtools/gatehouse:0.20.0"
     secrets:
       OPENROUTER_API_KEY:
         required: true
@@ -111,6 +111,9 @@ jobs:
           AGENTS: ${{ inputs.agents }}
           BLOCKING: ${{ inputs.blocking }}
           REQUIRED_LOW_AGENTS: ${{ inputs.required_low_agents }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
         run: |
           set -euo pipefail
 
@@ -121,6 +124,21 @@ jobs:
             echo "::error::No pull_request context. Call this from 'on: pull_request_target'." >&2
             exit 1
           fi
+
+          # An Ashigaru release PR only moves the changelog and the version
+          # strings, and the constitution validator checks those (v1.28.0).
+          # Nobody reads a review there, so one unanswered finding held
+          # mcp-metsuke 3.5.0 for four days. Skipped, it posts nothing and
+          # triage passes. All three must hold: the app's own branch, in this
+          # repository, opened by the app.
+          # --- release skip (tests/test_release_skip.py runs this) ---
+          if [[ "$HEAD_REF" == ashigaru/release-* ]] \
+              && [ "$HEAD_REPO" = "$GITHUB_REPOSITORY" ] \
+              && [ "$PR_AUTHOR" = "ashigaru-crunchtools[bot]" ]; then
+            echo "Ashigaru release PR; not reviewed." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          # --- end release skip ---
 
           # A review that cannot run still posts one, marked failed, so the
           # triage check holds the PR open instead of passing on "no
