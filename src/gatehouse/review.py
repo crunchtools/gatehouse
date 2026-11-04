@@ -63,8 +63,11 @@ from gatehouse.ledger import (
     judgement,
     parse_ledger,
     render_entry,
-    stale,
+    stale_in,
     suppression_finding,
+)
+from gatehouse.ledger import (
+    key as entry_key,
 )
 from gatehouse.llm import DEFAULT_MODEL, Completion, call_model
 from gatehouse.output import format_results, print_summary, strip_ansi
@@ -589,16 +592,21 @@ def _ledger_texts() -> tuple[str | None, str | None]:
 
 
 def _suppressions(head_text: str | None, base_text: str | None) -> Results:
-    """The entries this branch adds, as findings to answer on the pull request."""
-    if head_text is None or base_text is None:
+    """The entries this branch adds, as findings to answer on the pull request.
+
+    A base branch with no ledger at all is an empty one, not a reason to skip
+    the ask: the first entry a repository ever commits is exactly the one a
+    maintainer should see.
+    """
+    if head_text is None:
         return []
     head, _ = parse_ledger(head_text, _squash)
-    base, _ = parse_ledger(base_text, _squash)
-    added = entries_added(head, base)
+    base, _ = parse_ledger(base_text or "", _squash)
+    lines = {entry_key(entry): entry_line(head_text, entry) for entry in entries_added(head, base)}
     findings = [
-        suppression_finding(entry, entry_line(head_text, entry))
-        for entry in added
-        if entry_line(head_text, entry)
+        suppression_finding(entry, lines[entry_key(entry)])
+        for entry in entries_added(head, base)
+        if lines[entry_key(entry)]
     ]
     return [(LEDGER_AGENT, findings)] if findings else []
 
@@ -730,15 +738,24 @@ def _decide(
 
 
 def _report_ledger(
-    results: Results, entries: list[Entry], haystack: str, judged_count: int = 0
+    results: Results,
+    entries: list[Entry],
+    haystack: str,
+    judged_count: int = 0,
+    reviewed: set[str] | None = None,
 ) -> None:
-    """Report the ledger: what it suppressed, what has gone stale, what to paste."""
+    """Report the ledger: what it suppressed, what has gone stale, what to paste.
+
+    Only entries for files in ``reviewed`` are judged stale: a narrow diff says
+    nothing about whether code it never showed is still there.
+    """
+    reviewed = reviewed if reviewed is not None else set()
     if judged_count:
         print(
             f"Skipped {judged_count} finding(s) already judged in {LEDGER_FILE}.",
             file=sys.stderr,
         )
-    for entry in stale(entries, haystack):
+    for entry in stale_in(entries, haystack, reviewed):
         print(
             f"Stale {LEDGER_FILE} entry: the code it quotes is gone from "
             f"{entry.file} ({entry.quote.splitlines()[0][:60]}). Delete it.",
@@ -1186,7 +1203,7 @@ async def run_review(
 
     if all_results or not failed:  # with no agent finished, there are no results to call clean
         format_results(all_results)
-    _report_ledger(all_results, ledger, haystack, dropped["judged"])
+    _report_ledger(all_results, ledger, haystack, dropped["judged"], diff_paths(diff))
 
     has_blocking = _has_blocking_findings(all_results)
     request_changes = has_blocking and not advisory

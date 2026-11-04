@@ -208,25 +208,39 @@ def entries_added(head: list[Entry], base: list[Entry]) -> list[Entry]:
     appears only on the head is this pull request asking to silence a finding,
     and that is a change a maintainer should have to answer for.
     """
-    known = {_key(entry) for entry in base}
-    return [entry for entry in head if _key(entry) not in known]
+    known = {key(entry) for entry in base}
+    return [entry for entry in head if key(entry) not in known]
 
 
-def _key(entry: Entry) -> tuple[str, str, str, str]:
+def key(entry: Entry) -> tuple[str, str, str, str]:
+    """What makes two ledger entries the same entry."""
     return (entry.agent, entry.category, entry.file, entry.evidence)
 
 
 def entry_line(text: str, entry: Entry) -> int:
     """The line in the ledger file where this entry's evidence is written.
 
-    Zero when it cannot be found, which keeps the finding out of the inline
-    comments rather than anchoring it to the wrong line.
+    The quote is matched in the form TOML stores it, escapes included, so an
+    entry quoting code with a double quote or a backslash in it still finds
+    its line. Zero when it cannot be found, which keeps the finding out of the
+    inline comments rather than anchoring it to the wrong line.
     """
-    needle = entry.quote.splitlines()[0] if entry.quote.splitlines() else entry.quote
+    first = entry.quote.splitlines()[0] if entry.quote.splitlines() else entry.quote
+    needle = _toml_string(first)
     for number, line in enumerate(text.splitlines(), start=1):
         if line.strip().startswith("evidence") and needle in line:
             return number
     return 0
+
+
+def stale_in(entries: list[Entry], haystack: str, reviewed: set[str]) -> list[Entry]:
+    """The entries whose quoted code is gone from a file this review looked at.
+
+    An entry for a file the review never saw is not stale, it is unexamined:
+    nothing in a narrow diff says whether its code is still there. Only
+    entries whose file is in ``reviewed`` are judged.
+    """
+    return [entry for entry in stale(entries, haystack) if entry.file in reviewed]
 
 
 def suppression_finding(entry: Entry, line: int) -> dict[str, Any]:

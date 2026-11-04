@@ -120,6 +120,29 @@ A change that needs an edit in the calling repository (an input renamed or remov
 
 To release: bump the version in `pyproject.toml`, `src/gatehouse/__init__.py`, `uv.lock` and the default image in `review.yml`, add the CHANGELOG entry, merge, push the tag `vX.Y.Z`, and publish the GitHub Release (which publishes to PyPI). The tag builds the images and then moves `v0`.
 
+## The finding ledger
+
+A review that raises the same thing every run is a review nobody reads. `gatehouse-findings.toml`, committed at the repository root, records the findings you have already judged, and they are not raised again.
+
+```toml
+[[findings]]
+agent = "bugs"
+category = "bug"
+file = "src/app.py"
+evidence = "total = total / count"
+status = "not-a-bug"
+reason = "count is validated non-zero by the only caller, see the guard above"
+```
+
+Gatehouse never writes this file — the pre-commit hook mounts your repository read-only, and a reviewer holding a diff it did not write has no business writing to your tree. When it reports a finding it prints the entry ready to paste; you add the reason and commit it.
+
+- `status` is `not-a-bug` or `deferred`, and a deferred entry's reason must link the issue tracking it. A reason must reach 20 characters, the same bar the triage check sets for a reply.
+- There is **no `fixed`**. An entry applies while the code it quotes is still there; once that code is gone the entry is stale, and gatehouse prints it so you can delete it. A suppression cannot outlive the lines it covered and go on hiding the next defect in the same place.
+- An entry matches a finding by agent, category, file and quoted evidence, by containment — so a judgement survives the next run quoting a little more or less of the same code. A finding with nothing quotable can never be matched, so it can never be silenced this way.
+- An entry **added on a branch** is posted on its pull request as a finding a maintainer has to answer: silencing the gate is not a quiet change. Entries already on the base branch were answered when they merged.
+- In CI the ledger is read from the pull request's head, since it describes that branch's own code — except from a fork, where the head copy is written by someone who does not own the repository. A fork's judgements are read from the base and take effect once a maintainer merges them.
+- A malformed entry is named on stderr and ignored. A ledger can only ever make a review say less, so a typo in one must not stop the review that would have caught something.
+
 ## Configuration
 
 Set `OPENROUTER_API_KEY`, or `OPENROUTER_API_KEY_FILE` pointing at a file that holds the key (the file wins when both are set). Either can live in `~/.config/mcp-env/gatehouse.env`. If `.gemini/styleguide.md` exists in the reviewed project, it is injected as context.

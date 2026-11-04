@@ -5,6 +5,27 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+### Added
+
+- **The finding ledger.** `gatehouse-findings.toml`, committed at the reviewed
+  repository's root, records findings already judged (`not-a-bug` or
+  `deferred`) and they are not raised again. Gatehouse never writes it — the
+  pre-commit hook mounts the repository read-only — so it prints each entry
+  ready to paste and the author fills in the reason and commits it (#104).
+- An entry applies while the code it quotes is still present, matched by
+  containment so a judgement survives the next run quoting a little more or
+  less of it; once that code is gone the entry is stale and is printed for
+  deletion. There is no `fixed` status, and a suppression cannot outlive the
+  lines it covered.
+- An entry added on a branch is posted on its pull request as a MEDIUM finding
+  a maintainer has to answer, so silencing the gate is never a quiet change.
+  The existing re-raise window dedupes it once answered.
+- In CI the ledger is read from the pull request's head, since it describes
+  that branch's own code — except from a fork, whose head copy is read from the
+  base instead: a fork must not be able to suppress its own findings.
+  `review.yml` passes `GATEHOUSE_HEAD_REPO` to tell the two apart.
+- A malformed ledger is named on stderr and ignored, never fatal.
+
 ## [0.21.0] - 2026-11-03
 
 ### Added

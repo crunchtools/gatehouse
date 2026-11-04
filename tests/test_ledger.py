@@ -23,6 +23,7 @@ from gatehouse.ledger import (
     parse_ledger,
     render_entry,
     stale,
+    stale_in,
     suppression_finding,
 )
 from gatehouse.llm import Completion
@@ -502,3 +503,63 @@ async def test_an_answered_suppression_is_not_asked_about_again(
     posted = [f for _, findings in post.call_args.args[0] for f in findings]
     assert posted == []
     assert post.call_args.kwargs["reraised"] == 1
+
+
+def test_an_entry_for_a_file_this_review_never_saw_is_not_stale() -> None:
+    """A narrow diff says nothing about code it did not show."""
+    entries, _ = parse(LEDGERED)
+    haystack = _squash("def unrelated():\n    return 1\n")
+    assert stale(entries, haystack) == entries
+    assert stale_in(entries, haystack, {"src/other.py"}) == []
+    assert stale_in(entries, haystack, {"src/app.py"}) == entries
+
+
+def test_entry_line_finds_a_quote_containing_a_double_quote() -> None:
+    """TOML escapes the quote, so the search has to look for the escaped form."""
+    rendered = render_entry("bugs", _model_finding('print("x")'))
+    filled = rendered.replace('reason = ""', f'reason = "{REASON}"')
+    entries, problems = parse(filled)
+    assert problems == []
+    assert entry_line(filled, entries[0]) == 5
+
+
+@pytest.mark.asyncio
+async def test_the_first_ledger_a_repo_commits_is_still_posted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A base branch with no ledger is an empty one, not a reason to skip the ask."""
+    monkeypatch.chdir(tmp_path)
+    head_text = LEDGERED
+    diff = (
+        "diff --git a/gatehouse-findings.toml b/gatehouse-findings.toml\n"
+        "--- /dev/null\n"
+        "+++ b/gatehouse-findings.toml\n"
+        f"@@ -0,0 +1,{len(head_text.splitlines())} @@\n"
+        + "".join(f"+{line}\n" for line in head_text.splitlines())
+    )
+
+    def fake_fetch(_repo: str, ref: str, path: str, _token: str) -> str | None:
+        if path != LEDGER_FILE or ref == "base-sha":
+            return None  # the base branch has no ledger yet
+        return head_text
+
+    monkeypatch.setenv("GATEHOUSE_CONTEXT_REPO", "crunchtools/gatehouse")
+    monkeypatch.setenv("GATEHOUSE_CONTEXT_REF", "base-sha")
+    monkeypatch.setenv("GATEHOUSE_HEAD_SHA", "head-sha")
+    monkeypatch.setenv("GATEHOUSE_HEAD_REPO", "crunchtools/gatehouse")
+    monkeypatch.setenv("GITHUB_TOKEN", "x")
+
+    with (
+        patch("gatehouse.review.fetch_repo_file", side_effect=fake_fetch),
+        patch("gatehouse.review.get_file_listing", return_value=None),
+        patch("gatehouse.review.load_styleguide", return_value=None),
+        patch("gatehouse.review.load_constitution", return_value=None),
+        patch("gatehouse.review.fetch_answered_threads", return_value=[]),
+        patch("gatehouse.review.call_model", new_callable=AsyncMock, return_value=_reply([])),
+        patch("gatehouse.review.post_pr_review", new_callable=AsyncMock) as post,
+    ):
+        await run_review(stdin_diff=diff, agent_slugs=["bugs"], api_key="k", comment=True)
+
+    posted = [f for _, findings in post.call_args.args[0] for f in findings]
+    assert len(posted) == 1
+    assert posted[0]["file"] == LEDGER_FILE
