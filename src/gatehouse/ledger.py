@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import tomllib
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from gatehouse.consensus import quotes_overlap
 
@@ -34,6 +34,17 @@ STATUSES = (NOT_A_BUG, DEFERRED)
 # The same bar the triage check sets for a reply on a pull request: a reason
 # short enough to be a shrug does not answer a finding.
 MIN_REASON_CHARS = 20
+
+
+class FileView(NamedTuple):
+    """One file as the diff shows it: before the change, and after.
+
+    ``before`` is the removed and kept lines, ``after`` the kept and added
+    ones, whitespace stripped in both.
+    """
+
+    before: str
+    after: str
 
 
 @dataclass(frozen=True)
@@ -170,20 +181,26 @@ def judgement(
     return None
 
 
-def stale(entries: list[Entry], reviewed: dict[str, str]) -> list[Entry]:
-    """The entries whose quoted code is gone from the file they name.
+def stale(entries: list[Entry], reviewed: dict[str, FileView]) -> list[Entry]:
+    """The entries whose quoted code this change removed.
 
-    ``reviewed`` maps a path this review showed to that file's content with
-    whitespace stripped. An entry is judged only against its OWN file: the
-    same line can appear in another changed file, which would otherwise keep a
-    dead entry alive, and a narrow diff that never showed the file says
-    nothing either way. An entry whose file is absent is left alone.
+    An entry is stale when its quote was in the file before the change and is
+    not there after it. Judged against its OWN file, because the same line in
+    another changed file would otherwise keep a dead entry alive.
+
+    Absence alone is not staleness: a review sees hunks, not whole files, so a
+    quote that appears in neither side was simply never shown — that is an
+    entry nothing is known about, not one to delete. Saying nothing is the
+    only honest answer there.
     """
-    return [
-        entry
-        for entry in entries
-        if entry.file in reviewed and entry.evidence not in reviewed[entry.file]
-    ]
+    judged: list[Entry] = []
+    for entry in entries:
+        view = reviewed.get(entry.file)
+        if view is None:
+            continue
+        if entry.evidence in view.before and entry.evidence not in view.after:
+            judged.append(entry)
+    return judged
 
 
 def render_entry(agent_slug: str, finding: dict[str, Any]) -> str:

@@ -63,21 +63,25 @@ def test_a_measurement_renders_a_row() -> None:
         runs=3,
         counts=[2, 2, 3],
         stability=0.42,
+        blocking_stability=1.0,
+        blocked=[True, True, True],
+        verdict_agreed=True,
         always=["a"],
         sometimes=["b"],
     ).row()
     assert "example.diff" in row
     assert "2,2,3" in row
     assert "0.42" in row
+    assert "1.00" in row
 
 
 def test_the_report_carries_the_mean() -> None:
     results = [
-        evaluator.Measurement("one.diff", 3, [1, 1, 1], 1.0, [], []),
-        evaluator.Measurement("two.diff", 3, [1, 0, 0], 0.0, [], []),
+        evaluator.Measurement("one.diff", 3, [1, 1, 1], 1.0, 1.0, [True] * 3, True, [], []),
+        evaluator.Measurement("two.diff", 3, [1, 0, 0], 0.0, 1.0, [False] * 3, True, [], []),
     ]
     rendered = evaluator.report(results)
-    assert "mean stability across 2 diff(s): 0.50" in rendered
+    assert "mean across 2 diff(s): reported 0.50, blocking 1.00" in rendered
 
 
 def test_an_empty_report_says_nothing_rather_than_dividing_by_zero() -> None:
@@ -93,10 +97,10 @@ async def test_measure_scores_runs_without_calling_a_model(
     diff.write_text("diff --git a/a.py b/a.py\n")
     answers = [{"x"}, {"x"}, set()]
 
-    async def fake_ids(_diff: str, _key: str, _samples: int | None) -> set[str]:
-        return answers.pop(0)
+    async def fake_review(_diff: str, _key: str, _samples: int | None):
+        return evaluator.Review(reported=answers.pop(0), blocking=set())
 
-    monkeypatch.setattr(evaluator, "finding_ids", fake_ids)
+    monkeypatch.setattr(evaluator, "review_once", fake_review)
     results = await evaluator.measure([diff], 3, None, "key")
 
     assert len(results) == 1
@@ -113,12 +117,77 @@ async def test_measure_reports_a_finding_every_run_saw_as_always(
     diff = tmp_path / "one.diff"
     diff.write_text("diff --git a/a.py b/a.py\n")
 
-    async def fake_ids(_diff: str, _key: str, _samples: int | None) -> set[str]:
-        return {"x"}
+    async def fake_review(_diff: str, _key: str, _samples: int | None):
+        return evaluator.Review(reported={"x"}, blocking={"x"})
 
-    monkeypatch.setattr(evaluator, "finding_ids", fake_ids)
+    monkeypatch.setattr(evaluator, "review_once", fake_review)
     results = await evaluator.measure([diff], 3, None, "key")
 
     assert results[0].stability == 1.0
     assert results[0].always == ["x"]
     assert results[0].sometimes == []
+
+
+@pytest.mark.asyncio
+async def test_the_blocking_set_is_scored_separately(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The promise is the blocking set, so it is measured on its own."""
+    diff = tmp_path / "one.diff"
+    diff.write_text("diff --git a/a.py b/a.py\n")
+    answers = [
+        evaluator.Review(reported={"x", "y"}, blocking={"x"}),
+        evaluator.Review(reported={"x"}, blocking={"x"}),
+        evaluator.Review(reported={"x", "z"}, blocking={"x"}),
+    ]
+
+    async def fake_review(_diff: str, _key: str, _samples: int | None):
+        return answers.pop(0)
+
+    monkeypatch.setattr(evaluator, "review_once", fake_review)
+    results = await evaluator.measure([diff], 3, None, "key")
+
+    assert results[0].blocking_stability == 1.0
+    assert results[0].stability < 1.0
+    assert results[0].always == ["x"]
+
+
+@pytest.mark.asyncio
+async def test_a_verdict_that_flips_is_named(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The one thing that must not happen: the same tree passing once and failing next."""
+    diff = tmp_path / "one.diff"
+    diff.write_text("diff --git a/a.py b/a.py\n")
+    answers = [
+        evaluator.Review(reported={"x"}, blocking={"x"}),
+        evaluator.Review(reported={"x"}, blocking=set()),
+        evaluator.Review(reported={"x"}, blocking={"x"}),
+    ]
+
+    async def fake_review(_diff: str, _key: str, _samples: int | None):
+        return answers.pop(0)
+
+    monkeypatch.setattr(evaluator, "review_once", fake_review)
+    results = await evaluator.measure([diff], 3, None, "key")
+
+    assert results[0].blocked == [True, False, True]
+    assert results[0].verdict_agreed is False
+    assert "FLIPPED" in evaluator.report(results)
+
+
+@pytest.mark.asyncio
+async def test_a_verdict_every_run_agreed_on_is_reported_as_same(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    diff = tmp_path / "one.diff"
+    diff.write_text("diff --git a/a.py b/a.py\n")
+
+    async def fake_review(_diff: str, _key: str, _samples: int | None):
+        return evaluator.Review(reported={"x", "y"}, blocking={"x"})
+
+    monkeypatch.setattr(evaluator, "review_once", fake_review)
+    results = await evaluator.measure([diff], 3, None, "key")
+
+    assert results[0].verdict_agreed is True
+    assert "all agreed" in evaluator.report(results)

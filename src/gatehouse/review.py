@@ -61,6 +61,7 @@ from gatehouse.ledger import (
     LEDGER_FILE,
     MIN_REASON_CHARS,
     Entry,
+    FileView,
     entries_added,
     entry_line,
     judgement,
@@ -364,27 +365,45 @@ def _squash(text: str) -> str:
     return "".join(strip_ansi(text).split())
 
 
-def _file_haystacks(diff: str) -> dict[str, str]:
-    """Each path the diff shows, mapped to its content with whitespace stripped.
+def _file_views(diff: str) -> dict[str, FileView]:
+    """Each path the diff shows, as its content before the change and after.
 
-    Used to judge a ledger entry against its own file rather than against
-    everything the review was shown. Diff markers are dropped, as in
-    _evidence_haystack, so a quote matches whether it was added or kept.
+    Lets a ledger entry be judged against its own file, and only on what this
+    change did to it: an entry is stale when its quote was there before and is
+    not there after. A deleted file's new side is /dev/null, so its "after" is
+    empty, which is exactly right — the code it quoted really is gone.
     """
-    haystacks: dict[str, str] = {}
+    before: dict[str, str] = {}
+    after: dict[str, str] = {}
     path = ""
+    removed = ""
     for line in diff.splitlines():
-        if line.startswith("+++ "):
-            target = line[4:].strip()
-            path = target[2:] if target.startswith(("b/", "a/")) else target
-            if path == "/dev/null":
-                path = ""
-        elif line.startswith(("diff --git ", "--- ", "@@", "index ")):
+        if line.startswith("--- "):
+            removed = _diff_path(line)
             continue
-        elif path:
-            body = line[1:] if line[:1] in ("+", "-", " ") else line
-            haystacks[path] = haystacks.get(path, "") + _squash(body)
-    return haystacks
+        if line.startswith("+++ "):
+            path = _diff_path(line) or removed
+            if path:
+                before.setdefault(path, "")
+                after.setdefault(path, "")
+            continue
+        if not path or line.startswith(("diff --git ", "@@", "index ")):
+            continue
+        marker = line[:1]
+        body = _squash(line[1:] if marker in ("+", "-", " ") else line)
+        if marker != "+":
+            before[path] += body
+        if marker != "-":
+            after[path] += body
+    return {path: FileView(before[path], after[path]) for path in before}
+
+
+def _diff_path(line: str) -> str:
+    """The path a diff's ``---``/``+++`` line names, or "" for /dev/null."""
+    target = line[4:].strip()
+    if target == "/dev/null":
+        return ""
+    return target[2:] if target.startswith(("a/", "b/")) else target
 
 
 def _evidence_haystack(diff: str, *context: str | None) -> str:
@@ -767,13 +786,13 @@ def _report_ledger(
     results: Results,
     entries: list[Entry],
     judged_count: int = 0,
-    reviewed: dict[str, str] | None = None,
+    reviewed: dict[str, FileView] | None = None,
 ) -> None:
     """Report the ledger: what it suppressed, what has gone stale, what to paste.
 
-    An entry is judged stale only against its own file, and only when this
-    review showed that file: a narrow diff says nothing about code it never
-    showed.
+    An entry is judged stale only when this change removed the code it quotes
+    from the file it names: a review sees hunks, not whole files, so absence
+    alone says nothing.
     """
     reviewed = reviewed if reviewed is not None else {}
     if judged_count:
@@ -1276,7 +1295,7 @@ async def run_review(
 
     if all_results or not failed:  # with no agent finished, there are no results to call clean
         format_results(all_results)
-    _report_ledger(all_results, ledger, dropped["judged"], _file_haystacks(diff))
+    _report_ledger(all_results, ledger, dropped["judged"], _file_views(diff))
 
     has_blocking = _has_blocking_findings(all_results)
     request_changes = has_blocking and not advisory

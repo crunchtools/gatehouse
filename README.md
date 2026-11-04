@@ -93,9 +93,17 @@ uv run python scripts/stability_eval.py        # review tests/corpus 3x, compare
 uv run python scripts/stability_eval.py --samples 1   # the pre-consensus baseline
 ```
 
-The eval compares finding sets by Jaccard index, keyed on agent, category, file and quoted code, so prose and line numbers do not affect it. A weekly `Stability` workflow prints the table into its step summary. It is never a required check: a number that moves with model sampling must not gate a merge.
+It prints three numbers, in order of what they are worth:
 
-Two module-sized diffs, three runs each, at 0.22.0: **0.22** mean stability at one sample, **0.38** with consensus. Voting roughly doubles repeatability; the ledger is what makes a judged finding stay judged.
+| | what it measures | at 0.22.0 |
+|---|---|---|
+| **verdict** | did every run agree on pass-or-fail | agreed every time — **this is the promise** |
+| blocking set | which findings reached unanimity | 0.56 and 1.00 on two rounds; wobbles, floor 0.50 |
+| reported set | everything shown, majority tier included | 0.25-0.40, against 0.22 before consensus; floor 0.20 |
+
+The sets are compared by Jaccard index keyed on agent, category, file and quoted code, so prose and line numbers do not affect it. A weekly `Stability` workflow prints the table into its step summary, and it is never a required check: a number that moves with model sampling must not gate a merge.
+
+What that means in practice: a tree that fails keeps failing and a tree that passes keeps passing, which is the part that costs you a build. *Which* findings a run shows you varies, and the ledger is what makes the ones you have judged stay judged.
 
 ## Exit Codes
 

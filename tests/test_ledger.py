@@ -17,6 +17,7 @@ from gatehouse.ledger import (
     LEDGER_FILE,
     NOT_A_BUG,
     Entry,
+    FileView,
     entries_added,
     entry_line,
     judgement,
@@ -26,7 +27,7 @@ from gatehouse.ledger import (
     suppression_finding,
 )
 from gatehouse.llm import Completion
-from gatehouse.review import _squash, run_review
+from gatehouse.review import _file_views, _squash, run_review
 
 REASON = "count is validated non-zero by the only caller"
 
@@ -179,12 +180,16 @@ def test_a_ledger_with_no_findings_table_is_empty() -> None:
     assert parse('[other]\nkey = "value"\n') == ([], [])
 
 
-def test_an_entry_is_stale_once_its_quote_is_gone() -> None:
+def test_an_entry_is_stale_once_the_change_removes_its_quote() -> None:
     entries, _ = parse(ENTRY)
-    present = {"src/app.py": _squash("def divide():\n    total = total / count\n")}
-    gone = {"src/app.py": _squash("def divide():\n    return total / max(count, 1)\n")}
-    assert stale(entries, present) == []
-    assert stale(entries, gone) == entries
+    kept = {
+        "src/app.py": FileView(_squash("total = total / count"), _squash("total = total / count"))
+    }
+    removed = {
+        "src/app.py": FileView(_squash("total = total / count"), _squash("total / max(count, 1)"))
+    }
+    assert stale(entries, kept) == []
+    assert stale(entries, removed) == entries
 
 
 def test_render_entry_is_pasteable_and_round_trips() -> None:
@@ -343,18 +348,49 @@ async def test_a_stale_entry_is_reported_for_deletion(
 ) -> None:
     """A suppression must not outlive the code it covered."""
     monkeypatch.chdir(tmp_path)
-    (tmp_path / LEDGER_FILE).write_text(
-        LEDGERED.replace("total = total / count", "gone = long_gone()")
+    (tmp_path / LEDGER_FILE).write_text(LEDGERED)
+    fixed = (
+        "diff --git a/src/app.py b/src/app.py\n"
+        "--- a/src/app.py\n"
+        "+++ b/src/app.py\n"
+        "@@ -1,2 +1,2 @@\n"
+        "-total = total / count\n"
+        "+total = total / max(count, 1)\n"
+        " x = get_data()\n"
     )
     with (
         patch("gatehouse.review.get_file_listing", return_value=None),
         patch("gatehouse.review.load_styleguide", return_value=None),
         patch("gatehouse.review.call_model", new_callable=AsyncMock, return_value=_reply([])),
     ):
-        await run_review(stdin_diff=DIFF, agent_slugs=["bugs"], api_key="k")
+        await run_review(stdin_diff=fixed, agent_slugs=["bugs"], api_key="k")
     err = capsys.readouterr().err
     assert "Stale gatehouse-findings.toml entry" in err
     assert "src/app.py" in err
+
+
+@pytest.mark.asyncio
+async def test_an_entry_is_not_called_stale_by_an_unrelated_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The noise this replaces: a diff that never touched the quoted line said nothing."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / LEDGER_FILE).write_text(LEDGERED)
+    elsewhere = (
+        "diff --git a/src/other.py b/src/other.py\n"
+        "--- a/src/other.py\n"
+        "+++ b/src/other.py\n"
+        "@@ -1 +1 @@\n"
+        "-alpha = 1\n"
+        "+alpha = 2\n"
+    )
+    with (
+        patch("gatehouse.review.get_file_listing", return_value=None),
+        patch("gatehouse.review.load_styleguide", return_value=None),
+        patch("gatehouse.review.call_model", new_callable=AsyncMock, return_value=_reply([])),
+    ):
+        await run_review(stdin_diff=elsewhere, agent_slugs=["bugs"], api_key="k")
+    assert "Stale" not in capsys.readouterr().err
 
 
 @pytest.mark.asyncio
@@ -505,21 +541,21 @@ async def test_an_answered_suppression_is_not_asked_about_again(
     assert post.call_args.kwargs["reraised"] == 1
 
 
-def test_an_entry_for_a_file_this_review_never_saw_is_not_stale() -> None:
-    """A narrow diff says nothing about code it did not show."""
+def test_an_entry_the_review_says_nothing_about_is_left_alone() -> None:
+    """A review sees hunks, not whole files: absence is not evidence of removal."""
     entries, _ = parse(LEDGERED)
-    content = _squash("def unrelated():\n    return 1\n")
-    assert stale(entries, {"src/other.py": content}) == []
+    unrelated = FileView(_squash("def unrelated(): return 1"), _squash("def unrelated(): return 2"))
+    assert stale(entries, {"src/other.py": unrelated}) == []
     assert stale(entries, {}) == []
-    assert stale(entries, {"src/app.py": content}) == entries
+    assert stale(entries, {"src/app.py": unrelated}) == []
 
 
 def test_an_entry_is_judged_against_its_own_file_only() -> None:
-    """The same line in another changed file must not keep a dead entry alive."""
+    """The same line surviving in another changed file must not keep a dead entry alive."""
     entries, _ = parse(LEDGERED)
     elsewhere = {
-        "src/app.py": _squash("def divide():\n    return total / max(count, 1)\n"),
-        "src/other.py": _squash("total = total / count\n"),
+        "src/app.py": FileView(_squash("total = total / count"), _squash("total / max(count, 1)")),
+        "src/other.py": FileView("", _squash("total = total / count")),
     }
     assert stale(entries, elsewhere) == entries
 
@@ -573,3 +609,51 @@ async def test_the_first_ledger_a_repo_commits_is_still_posted(
     posted = [f for _, findings in post.call_args.args[0] for f in findings]
     assert len(posted) == 1
     assert posted[0]["file"] == LEDGER_FILE
+
+
+def test_a_deleted_file_makes_its_entries_stale() -> None:
+    """The quoted code really is gone, which is the whole point of the check."""
+    entries, _ = parse(LEDGERED)
+    deleted = (
+        "diff --git a/src/app.py b/src/app.py\n"
+        "deleted file mode 100644\n"
+        "--- a/src/app.py\n"
+        "+++ /dev/null\n"
+        "@@ -1,2 +0,0 @@\n"
+        "-total = total / count\n"
+        "-x = get_data()\n"
+    )
+    assert stale(entries, _file_views(deleted)) == entries
+
+
+def test_a_new_file_maps_to_its_own_path() -> None:
+    added = (
+        "diff --git a/src/app.py b/src/app.py\n"
+        "new file mode 100644\n"
+        "--- /dev/null\n"
+        "+++ b/src/app.py\n"
+        "@@ -0,0 +1 @@\n"
+        "+total = total / count\n"
+    )
+    views = _file_views(added)
+    assert "src/app.py" in views
+    entries, _ = parse(LEDGERED)
+    assert stale(entries, views) == []
+
+
+def test_each_file_in_a_diff_gets_its_own_haystack() -> None:
+    two = (
+        "diff --git a/src/one.py b/src/one.py\n"
+        "--- a/src/one.py\n"
+        "+++ b/src/one.py\n"
+        "@@ -1 +1 @@\n"
+        "+alpha = 1\n"
+        "diff --git a/src/two.py b/src/two.py\n"
+        "--- a/src/two.py\n"
+        "+++ b/src/two.py\n"
+        "@@ -1 +1 @@\n"
+        "+beta = 2\n"
+    )
+    views = _file_views(two)
+    assert views["src/one.py"].after == "alpha=1"
+    assert views["src/two.py"].after == "beta=2"

@@ -10,6 +10,13 @@ found exactly the same things.
     uv run python scripts/stability_eval.py --corpus other/diffs --json out.json
     uv run python scripts/stability_eval.py --samples 1   # the pre-consensus baseline
 
+Three numbers come out, in order of how much they are worth. The VERDICT is
+the promise: whether every run agreed on pass-or-fail, because the same tree
+must not pass once and fail the next time. The BLOCKING set says whether the
+same findings reached unanimity, which is informative and does wobble. The
+REPORTED set includes the majority tier, which is the agreement boundary
+itself and churns by construction.
+
 It calls a live model, so it costs money and its result is a measurement, not a
 verdict. It cannot be a required check: a number that moves with model sampling
 must not gate a merge.
@@ -26,6 +33,7 @@ import tempfile
 from dataclasses import asdict, dataclass
 from itertools import combinations
 from pathlib import Path
+from typing import NamedTuple
 
 from gatehouse.cli import ENV_FILE, load_api_key, load_env_file
 from gatehouse.review import run_review
@@ -33,6 +41,19 @@ from gatehouse.review import run_review
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CORPUS = REPO_ROOT / "tests" / "corpus"
 NAME_WIDTH = 40
+
+
+class Review(NamedTuple):
+    """What one review reported: every finding, and the ones that failed the run.
+
+    The two are measured separately because only one of them is a promise. A
+    finding has to be seen by every sample to block, so the blocking set is
+    the repeatable one; the reported set includes the majority tier, which is
+    the boundary itself and churns by construction.
+    """
+
+    reported: set[str]
+    blocking: set[str]
 
 
 @dataclass(frozen=True)
@@ -43,6 +64,9 @@ class Measurement:
     runs: int
     counts: list[int]
     stability: float
+    blocking_stability: float
+    blocked: list[bool]
+    verdict_agreed: bool
     always: list[str]
     sometimes: list[str]
 
@@ -50,11 +74,15 @@ class Measurement:
         """One line of the report table."""
         name = self.diff[:NAME_WIDTH].ljust(NAME_WIDTH)
         counts = ",".join(str(count) for count in self.counts)
-        return f"{name} {self.runs:>4}  {counts:>8}  {self.stability:.2f}"
+        verdict = "same" if self.verdict_agreed else "FLIPPED"
+        return (
+            f"{name} {self.runs:>4}  {counts:>8}  "
+            f"{self.stability:.2f}  {self.blocking_stability:.2f}  {verdict:>7}"
+        )
 
 
-async def finding_ids(diff: str, api_key: str, samples: int | None) -> set[str]:
-    """The identities of every finding one review of this diff reported."""
+async def review_once(diff: str, api_key: str, samples: int | None) -> Review:
+    """Review this diff once: what it reported, and what of that blocked."""
     with tempfile.TemporaryDirectory() as directory:
         out = Path(directory) / "consensus.json"
         await run_review(
@@ -65,8 +93,12 @@ async def finding_ids(diff: str, api_key: str, samples: int | None) -> set[str]:
             consensus_json=str(out),
         )
         if not out.exists():
-            return set()
-        return {record["id"] for record in json.loads(out.read_text())["findings"]}
+            return Review(set(), set())
+        records = json.loads(out.read_text())["findings"]
+        return Review(
+            reported={record["id"] for record in records},
+            blocking={record["id"] for record in records if record["blocks"]},
+        )
 
 
 def jaccard(one: set[str], other: set[str]) -> float:
@@ -84,11 +116,24 @@ def pairwise(runs: list[set[str]]) -> list[float]:
 
 def report(results: list[Measurement]) -> str:
     """A table of per-diff stability, with the mean across the corpus."""
-    header = "diff".ljust(NAME_WIDTH) + " runs  findings  stability"
+    header = "diff".ljust(NAME_WIDTH) + " runs  findings  reported  blocking  verdict"
     lines = [header, *(result.row() for result in results)]
     if results:
-        mean = statistics.mean(result.stability for result in results)
-        lines.append(f"\nmean stability across {len(results)} diff(s): {mean:.2f}")
+        reported = statistics.mean(result.stability for result in results)
+        blocking = statistics.mean(result.blocking_stability for result in results)
+        lines.append(
+            f"\nmean across {len(results)} diff(s): reported {reported:.2f}, "
+            f"blocking {blocking:.2f}"
+        )
+        flipped = [result.diff for result in results if not result.verdict_agreed]
+        lines.append(
+            "verdict: whether every run agreed on pass-or-fail. "
+            + ("all agreed." if not flipped else f"FLIPPED on {', '.join(flipped)}.")
+        )
+        lines.append(
+            "The verdict is the promise: the same tree must not pass one run and "
+            "fail the next. Which findings block, and the reported set, are measured."
+        )
     return "\n".join(lines)
 
 
@@ -98,20 +143,33 @@ async def measure(
     """Review every diff ``runs`` times and score how much the runs agreed."""
     results: list[Measurement] = []
     for path in diffs:
-        seen = [await finding_ids(path.read_text(), api_key, samples) for _ in range(runs)]
-        scores = pairwise(seen)
-        always = set.intersection(*seen)
+        seen = [await review_once(path.read_text(), api_key, samples) for _ in range(runs)]
+        reported = [review.reported for review in seen]
+        blocking = [review.blocking for review in seen]
+        scores = pairwise(reported)
+        blocking_scores = pairwise(blocking)
+        always = set.intersection(*reported)
+        blocked = [bool(run) for run in blocking]
         results.append(
             Measurement(
                 diff=path.name,
                 runs=runs,
-                counts=[len(run) for run in seen],
+                counts=[len(run) for run in reported],
                 stability=statistics.mean(scores) if scores else 1.0,
+                blocking_stability=statistics.mean(blocking_scores) if blocking_scores else 1.0,
+                blocked=blocked,
+                verdict_agreed=len(set(blocked)) == 1,
                 always=sorted(always),
-                sometimes=sorted(set.union(*seen) - always),
+                sometimes=sorted(set.union(*reported) - always),
             )
         )
-        print(f"{path.name}: {results[-1].stability:.2f}", file=sys.stderr)
+        last = results[-1]
+        print(
+            f"{path.name}: reported {last.stability:.2f}, "
+            f"blocking {last.blocking_stability:.2f}, "
+            f"verdict {'same' if last.verdict_agreed else 'FLIPPED'}",
+            file=sys.stderr,
+        )
     return results
 
 

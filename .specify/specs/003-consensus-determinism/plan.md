@@ -8,8 +8,9 @@
 Three releases on one branch. 0.21.0 adds configurable consensus voting: each agent runs `n`
 samples, findings cluster by evidence containment, votes tally additively, and only a unanimous
 critical/high from a blocking agent blocks. 0.22.0 adds the committed, read-only
-`gatehouse-findings.toml` ledger, whose entries expire with the code they quote. 0.23.0 adds the
-JSON dump and the stability eval. The pre-commit hook line never changes, so no calling repository
+`gatehouse-findings.toml` ledger, whose entries expire with the code they quote, together with
+the JSON dump and the stability eval that measure whether any of it worked. Scott folded the
+third release into the second on 2026-11-03: one branch, one PR, one release. The pre-commit hook line never changes, so no calling repository
 needs an edit.
 
 Design ruled by the `cto` agent (Fable) on 2026-11-03 and red-teamed against the written plan;
@@ -34,8 +35,8 @@ the approved plan lives at `~/.claude/plans/eager-crafting-raven.md`.
    votes; the unfinished-agent rule counts finished samples; `MAX_CONCURRENT_CALLS` 5 → 24
 2. **`src/gatehouse/cli.py`** — `--samples`, `GATEHOUSE_SAMPLES`, `--consensus-json`
 3. **`src/gatehouse/output.py`** — print `votes=k/n` per finding
-4. **`src/gatehouse/github.py`** — `votes=` and `fp=` in the hidden marker; post new ledger
-   entries as answerable findings
+4. **`src/gatehouse/github.py`** — `votes=` in the hidden marker; count the judged findings in
+   the review body
 5. **`.github/workflows/review.yml`** — pass head repo and sha for the ledger fetch
 6. **`.specify/memory/constitution.md`**, **`README.md`**, **`CLAUDE.md`**, **`CHANGELOG.md`**
 
@@ -63,14 +64,15 @@ the approved plan lives at `~/.claude/plans/eager-crafting-raven.md`.
 7. `L1` `ledger.py`: parse, containment match, staleness
 8. `L2` wire the ledger drop after the tally; print paste-ready and stale entries
 9. `L3` config from base, ledger from head, fork reads base only
-10. `L4` new entries post as answerable findings; `fp=` in the marker
+10. `L4` new entries post as answerable findings, deduped by the existing re-raise window
 11. `L5` dogfood both files here; the ledger's constitution text; docs, version bump
 
-**0.23.0 — measurement**
+**0.22.0, continued — measurement**
 
 12. `M1` `--consensus-json`
 13. `M2` the stability eval over archived diffs
 14. `M3` docs, version bump
+15. `M4` fix what the branch's own review found
 
 ## Testing
 

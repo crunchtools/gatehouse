@@ -37,12 +37,24 @@ All notable changes to this project are documented here, following
 
 ### Measured
 
-- Two module-sized diffs, three runs each: baseline (one sample) **0.22** mean
-  stability, consensus (three samples) **0.38**. Consensus roughly doubles
-  run-to-run repeatability but does not eliminate churn on narrow diffs; the
-  residual is borderline findings that tally 2/3 in one run and 1/3 in the
-  next. The ledger, where a judgement is pinned and no sampling is involved,
-  carries more of the determinism than the voting does.
+Three diffs, three runs each, including one carrying planted defects:
+
+- **Pass-or-fail verdict: agreed every time**, on every diff, in both rounds.
+  This is what the spec now promises, because a tree that passes once and
+  fails the next time is what costs a build.
+- **Blocking set** (which findings reached unanimity): 0.56 in one round, 1.00
+  in the next. It wobbles; floor 0.50, measured, not promised.
+- **Reported set** (everything shown, majority tier included): 0.25 to 0.40,
+  against **0.22** for the pre-consensus baseline on the same corpus. Floor
+  0.20. This tier is the agreement boundary itself, so it churns by
+  construction.
+
+Spec 003's contract was narrowed to match: the verdict and the ledger are the
+promises, the finding sets are measurements with floors. An earlier draft
+promised "same tree, same verdict" on the strength of a corpus in which
+nothing ever blocked — empty versus empty scores a perfect 1.00 and proves
+nothing. The corpus now carries a diff with real defects in it for that
+reason.
 
 ## [0.21.0] - 2026-11-03
 
