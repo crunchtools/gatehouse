@@ -5,6 +5,8 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-11-03
+
 ### Added
 
 - **The finding ledger.** `gatehouse-findings.toml`, committed at the reviewed
@@ -25,6 +27,22 @@ All notable changes to this project are documented here, following
   base instead: a fork must not be able to suppress its own findings.
   `review.yml` passes `GATEHOUSE_HEAD_REPO` to tell the two apart.
 - A malformed ledger is named on stderr and ignored, never fatal.
+- `--consensus-json PATH` writes one record per reported finding: its identity
+  (agent, category, file and squashed quote), votes, blocking votes, the
+  thresholds it was judged against and whether it blocked.
+- `scripts/stability_eval.py` reviews each diff in `tests/corpus` several times
+  and reports the finding-set Jaccard index, with `--samples 1` for the
+  pre-consensus baseline. A weekly `Stability` workflow runs it into the step
+  summary; it is never a required check.
+
+### Measured
+
+- Two module-sized diffs, three runs each: baseline (one sample) **0.22** mean
+  stability, consensus (three samples) **0.38**. Consensus roughly doubles
+  run-to-run repeatability but does not eliminate churn on narrow diffs; the
+  residual is borderline findings that tally 2/3 in one run and 1/3 in the
+  next. The ledger, where a judgement is pinned and no sampling is involved,
+  carries more of the determinism than the voting does.
 
 ## [0.21.0] - 2026-11-03
 

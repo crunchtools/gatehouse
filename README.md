@@ -31,6 +31,9 @@ gatehouse --advisory
 
 # Write per-agent model, token and cost usage as JSON
 gatehouse --usage-json usage.json
+
+# Review the diff once per agent instead of three times (pre-0.21.0 behaviour)
+gatehouse --samples 1
 ```
 
 Each agent logs one line to stderr with the model that served it, its token counts and cost, and whether a fallback model answered; a total line follows. `--usage-json` writes the same data as `{"agents": [...], "total": {...}}`: each agent record has `agent`, `model`, `prompt`, `completion`, `reasoning`, `cost` (USD) and `fallback`; the total has `calls`, the summed tokens and cost, and the `fallback` count.
@@ -79,6 +82,20 @@ lines marked `[+]`), plus instructions to judge the direction of a change.
 Protections *added* by a change are treated as fixes, not findings;
 protections *removed* by a change are flagged. Diffs that cannot be parsed
 fall back to the raw unified format.
+
+## Measuring it
+
+A reviewer that is not repeatable is not worth leaving installed, so repeatability is measured rather than asserted:
+
+```bash
+gatehouse --consensus-json votes.json          # per-finding votes and thresholds
+uv run python scripts/stability_eval.py        # review tests/corpus 3x, compare
+uv run python scripts/stability_eval.py --samples 1   # the pre-consensus baseline
+```
+
+The eval compares finding sets by Jaccard index, keyed on agent, category, file and quoted code, so prose and line numbers do not affect it. A weekly `Stability` workflow prints the table into its step summary. It is never a required check: a number that moves with model sampling must not gate a merge.
+
+Two module-sized diffs, three runs each, at 0.22.0: **0.22** mean stability at one sample, **0.38** with consensus. Voting roughly doubles repeatability; the ledger is what makes a judged finding stay judged.
 
 ## Exit Codes
 
