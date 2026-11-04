@@ -5,6 +5,14 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+### Added
+
+- A release of this image now **triggers a python-sdlc rebuild**
+  (`.github/workflows/container.yml`). python-sdlc bakes this image's venv, so
+  without the trigger a release here left every Python repo's local review on
+  the previous Gatehouse while CI ran this one. Found by
+  `crunchtools/constitution`'s `validate-cascade` check.
+
 ## [0.22.0] - 2026-11-03
 
 ### Added
