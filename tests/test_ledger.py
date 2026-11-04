@@ -23,7 +23,6 @@ from gatehouse.ledger import (
     parse_ledger,
     render_entry,
     stale,
-    stale_in,
     suppression_finding,
 )
 from gatehouse.llm import Completion
@@ -182,9 +181,10 @@ def test_a_ledger_with_no_findings_table_is_empty() -> None:
 
 def test_an_entry_is_stale_once_its_quote_is_gone() -> None:
     entries, _ = parse(ENTRY)
-    present = _squash("def divide():\n    total = total / count\n")
+    present = {"src/app.py": _squash("def divide():\n    total = total / count\n")}
+    gone = {"src/app.py": _squash("def divide():\n    return total / max(count, 1)\n")}
     assert stale(entries, present) == []
-    assert stale(entries, _squash("def divide():\n    return total / max(count, 1)\n")) == entries
+    assert stale(entries, gone) == entries
 
 
 def test_render_entry_is_pasteable_and_round_trips() -> None:
@@ -508,10 +508,20 @@ async def test_an_answered_suppression_is_not_asked_about_again(
 def test_an_entry_for_a_file_this_review_never_saw_is_not_stale() -> None:
     """A narrow diff says nothing about code it did not show."""
     entries, _ = parse(LEDGERED)
-    haystack = _squash("def unrelated():\n    return 1\n")
-    assert stale(entries, haystack) == entries
-    assert stale_in(entries, haystack, {"src/other.py"}) == []
-    assert stale_in(entries, haystack, {"src/app.py"}) == entries
+    content = _squash("def unrelated():\n    return 1\n")
+    assert stale(entries, {"src/other.py": content}) == []
+    assert stale(entries, {}) == []
+    assert stale(entries, {"src/app.py": content}) == entries
+
+
+def test_an_entry_is_judged_against_its_own_file_only() -> None:
+    """The same line in another changed file must not keep a dead entry alive."""
+    entries, _ = parse(LEDGERED)
+    elsewhere = {
+        "src/app.py": _squash("def divide():\n    return total / max(count, 1)\n"),
+        "src/other.py": _squash("total = total / count\n"),
+    }
+    assert stale(entries, elsewhere) == entries
 
 
 def test_entry_line_finds_a_quote_containing_a_double_quote() -> None:

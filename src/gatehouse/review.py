@@ -66,7 +66,7 @@ from gatehouse.ledger import (
     judgement,
     parse_ledger,
     render_entry,
-    stale_in,
+    stale,
     suppression_finding,
 )
 from gatehouse.ledger import (
@@ -362,6 +362,29 @@ def _json_values(text: str) -> list[Any]:
 
 def _squash(text: str) -> str:
     return "".join(strip_ansi(text).split())
+
+
+def _file_haystacks(diff: str) -> dict[str, str]:
+    """Each path the diff shows, mapped to its content with whitespace stripped.
+
+    Used to judge a ledger entry against its own file rather than against
+    everything the review was shown. Diff markers are dropped, as in
+    _evidence_haystack, so a quote matches whether it was added or kept.
+    """
+    haystacks: dict[str, str] = {}
+    path = ""
+    for line in diff.splitlines():
+        if line.startswith("+++ "):
+            target = line[4:].strip()
+            path = target[2:] if target.startswith(("b/", "a/")) else target
+            if path == "/dev/null":
+                path = ""
+        elif line.startswith(("diff --git ", "--- ", "@@", "index ")):
+            continue
+        elif path:
+            body = line[1:] if line[:1] in ("+", "-", " ") else line
+            haystacks[path] = haystacks.get(path, "") + _squash(body)
+    return haystacks
 
 
 def _evidence_haystack(diff: str, *context: str | None) -> str:
@@ -743,22 +766,22 @@ def _decide(
 def _report_ledger(
     results: Results,
     entries: list[Entry],
-    haystack: str,
     judged_count: int = 0,
-    reviewed: set[str] | None = None,
+    reviewed: dict[str, str] | None = None,
 ) -> None:
     """Report the ledger: what it suppressed, what has gone stale, what to paste.
 
-    Only entries for files in ``reviewed`` are judged stale: a narrow diff says
-    nothing about whether code it never showed is still there.
+    An entry is judged stale only against its own file, and only when this
+    review showed that file: a narrow diff says nothing about code it never
+    showed.
     """
-    reviewed = reviewed if reviewed is not None else set()
+    reviewed = reviewed if reviewed is not None else {}
     if judged_count:
         print(
             f"Skipped {judged_count} finding(s) already judged in {LEDGER_FILE}.",
             file=sys.stderr,
         )
-    for entry in stale_in(entries, haystack, reviewed):
+    for entry in stale(entries, reviewed):
         print(
             f"Stale {LEDGER_FILE} entry: the code it quotes is gone from "
             f"{entry.file} ({entry.quote.splitlines()[0][:60]}). Delete it.",
@@ -1253,7 +1276,7 @@ async def run_review(
 
     if all_results or not failed:  # with no agent finished, there are no results to call clean
         format_results(all_results)
-    _report_ledger(all_results, ledger, haystack, dropped["judged"], diff_paths(diff))
+    _report_ledger(all_results, ledger, dropped["judged"], _file_haystacks(diff))
 
     has_blocking = _has_blocking_findings(all_results)
     request_changes = has_blocking and not advisory

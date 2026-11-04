@@ -170,14 +170,20 @@ def judgement(
     return None
 
 
-def stale(entries: list[Entry], haystack: str) -> list[Entry]:
-    """The entries whose quoted code is no longer anywhere the agents looked.
+def stale(entries: list[Entry], reviewed: dict[str, str]) -> list[Entry]:
+    """The entries whose quoted code is gone from the file they name.
 
-    An entry is only ever checked against what this review was shown, so a
-    review of a narrow diff must not be read as the code having gone: callers
-    pass the haystack of a review that covers the entry's file.
+    ``reviewed`` maps a path this review showed to that file's content with
+    whitespace stripped. An entry is judged only against its OWN file: the
+    same line can appear in another changed file, which would otherwise keep a
+    dead entry alive, and a narrow diff that never showed the file says
+    nothing either way. An entry whose file is absent is left alone.
     """
-    return [entry for entry in entries if entry.evidence not in haystack]
+    return [
+        entry
+        for entry in entries
+        if entry.file in reviewed and entry.evidence not in reviewed[entry.file]
+    ]
 
 
 def render_entry(agent_slug: str, finding: dict[str, Any]) -> str:
@@ -231,16 +237,6 @@ def entry_line(text: str, entry: Entry) -> int:
         if line.strip().startswith("evidence") and needle in line:
             return number
     return 0
-
-
-def stale_in(entries: list[Entry], haystack: str, reviewed: set[str]) -> list[Entry]:
-    """The entries whose quoted code is gone from a file this review looked at.
-
-    An entry for a file the review never saw is not stale, it is unexamined:
-    nothing in a narrow diff says whether its code is still there. Only
-    entries whose file is in ``reviewed`` are judged.
-    """
-    return [entry for entry in stale(entries, haystack) if entry.file in reviewed]
 
 
 def suppression_finding(entry: Entry, line: int) -> dict[str, Any]:
