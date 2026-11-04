@@ -75,6 +75,7 @@ if TYPE_CHECKING:
 CONFIDENCE_THRESHOLD = 80
 
 SAMPLES_ENV = "GATEHOUSE_SAMPLES"
+HEAD_REPO_ENV = "GATEHOUSE_HEAD_REPO"
 
 
 # LOWs from these agents (by name, as printed in each finding) are required
@@ -554,15 +555,45 @@ def _filter_clusters(
     return results, {"offdiff": offdiff, "reraised": reraised, "capped": capped}
 
 
+def _ledger_source() -> tuple[str, str] | None:
+    """The (repo, ref) to read the ledger from, or None to read the working tree.
+
+    The ledger is the mirror image of the rules: a gatehouse.toml or styleguide
+    must come from the trusted BASE, because a pull request may not choose the
+    rules it is judged by, while the ledger describes the pull request's OWN
+    code and so comes from its head.
+
+    Except from a fork. There the head copy is written by someone who does not
+    own this repository, and an entry suppresses a finding, so a fork would be
+    able to silence its own review. A fork's judgements are read from the base
+    instead: they take effect once a maintainer has merged them, and until then
+    a fork contributor answers on the thread, which triage requires anyway.
+    """
+    context = _context_source()
+    if context is None:
+        return None
+    base_repo, base_ref = context
+    head_repo = os.environ.get(HEAD_REPO_ENV, "")
+    head_sha = os.environ.get("GATEHOUSE_HEAD_SHA", "")
+    if head_repo and head_sha and head_repo == base_repo:
+        return head_repo, head_sha
+    return base_repo, base_ref
+
+
 def _load_ledger() -> list[Entry]:
-    """The judged findings for this review, from the reviewed repository's root.
+    """The judged findings for this review.
 
     A problem with an entry is named on stderr and the entry ignored: a ledger
     can only ever make a review say less, so a typo in one must not stop the
     review that would have caught it.
     """
-    path = Path(LEDGER_FILE)
-    text = path.read_text() if path.exists() else None
+    source = _ledger_source()
+    if source is not None:
+        token = os.environ.get("GITHUB_TOKEN", "")
+        text = fetch_repo_file(source[0], source[1], LEDGER_FILE, token)
+    else:
+        path = Path(LEDGER_FILE)
+        text = path.read_text() if path.exists() else None
     entries, problems = parse_ledger(text, _squash)
     for problem in problems:
         print(f"Ignoring {problem}", file=sys.stderr)

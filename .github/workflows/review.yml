@@ -112,6 +112,11 @@ jobs:
           BLOCKING: ${{ inputs.blocking }}
           REQUIRED_LOW_AGENTS: ${{ inputs.required_low_agents }}
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          # Which repository the head belongs to: the same as GITHUB_REPOSITORY
+          # for a branch here, a fork's own full name otherwise. Used to skip
+          # Ashigaru's release PRs, and passed to gatehouse, which reads
+          # gatehouse-findings.toml from the head only when they match — a fork
+          # must not be able to suppress the findings on its own pull request.
           HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
         run: |
@@ -231,6 +236,7 @@ jobs:
             -e GATEHOUSE_CONTEXT_REPO="$GITHUB_REPOSITORY" \
             -e GATEHOUSE_CONTEXT_REF="$BASE_REF" \
             -e GATEHOUSE_HEAD_SHA="$HEAD_SHA" \
+            -e GATEHOUSE_HEAD_REPO="$HEAD_REPO" \
             -v "$out_dir:/out" \
             -e GITHUB_STEP_SUMMARY=/out/step-summary.md \
             "$IMAGE" \
