@@ -27,6 +27,17 @@ BLOCKS_KEY = "blocksTheRun"
 MEMBER_LINES_KEY = "memberLines"
 
 
+def quotes_overlap(one: str, other: str) -> bool:
+    """True when two squashed quotes describe the same code.
+
+    Containment, not equality: a quote of one line and a quote of the three
+    lines around it are the same place. Used both to cluster samples and to
+    match a ledger entry to a finding, so a judged finding stays judged when
+    the next run quotes a little more or less of it.
+    """
+    return one in other or other in one
+
+
 def severity_rank(severity: str) -> int:
     """Where a severity sits in the order; an unknown one ranks lowest."""
     try:
@@ -69,7 +80,7 @@ class _Cluster:
             return False
         if finding.get("category", "") != first.get("category", ""):
             return False
-        return evidence in self.evidence or self.evidence in evidence
+        return quotes_overlap(evidence, self.evidence)
 
     def add(self, finding: dict[str, Any], evidence: str, sample: int) -> None:
         """Count this finding into the cluster; one sample votes at most once."""
