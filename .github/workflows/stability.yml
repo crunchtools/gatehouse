@@ -1,0 +1,51 @@
+# Measures how repeatable the reviewer is: every diff in tests/corpus is
+# reviewed three times and the finding sets are compared.
+#
+# This calls a live model, so it costs money and its result is a measurement,
+# not a verdict. It MUST NOT be a required status check: a number that moves
+# with model sampling cannot gate a merge.
+name: Stability
+
+on:
+  schedule:
+    # Mondays, 07:00 UTC. Weekly is often enough to catch a prompt or model
+    # change making the reviewer less repeatable.
+    - cron: "0 7 * * 1"
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: Reviews per diff
+        required: false
+        default: "3"
+
+permissions:
+  contents: read
+
+jobs:
+  stability:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - name: Measure
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          RUNS: ${{ inputs.runs || '3' }}
+        run: |
+          set -euo pipefail
+          if [ -z "${OPENROUTER_API_KEY:-}" ]; then
+            echo "::warning::OPENROUTER_API_KEY is not set; nothing measured."
+            exit 0
+          fi
+          uv sync --extra dev
+          uv run python scripts/stability_eval.py --runs "$RUNS" | tee summary.txt
+          {
+            echo '## Reviewer stability'
+            echo
+            echo '```'
+            cat summary.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
