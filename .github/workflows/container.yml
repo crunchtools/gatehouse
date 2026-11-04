@@ -153,3 +153,45 @@ jobs:
             gh api -X POST "$refs/refs" -f ref="refs/tags/$major" -f sha="$GITHUB_SHA" --silent
           fi
           echo "$major now points at $TAG (${GITHUB_SHA:0:7})."
+
+  # python-sdlc BAKES this image's venv (`COPY --from=gatehouse /app/venv`), so
+  # a release here that nobody told it about leaves 35 Python repos reviewing
+  # their push tier with the previous Gatehouse while CI's reusable `review.yml`
+  # runs this one. Local and CI then disagree on the same diff -- the failure
+  # python-sdlc exists to remove, and the one that matters most for THIS image,
+  # because 0.22.0's consensus voting changes what a finding even is.
+  #
+  # Constitution XII (v1.30.0) states it as a rule, and the Container Image
+  # profile already required it of any image others build FROM. After the major
+  # tag moves, so the rebuild sees a registry and a tag that have both settled.
+  dispatch-downstream:
+    name: Tell the SDLC images to rebuild
+    needs: [build-and-push-quay, build-and-push-ghcr]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      # The crunchtools-ci App's token, not a personal one: it has its own rate
+      # limit, so a throttled account can't stop this step.
+      - name: Mint CI token
+        id: ci-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.CRUNCHTOOLS_CI_APP_ID || secrets.CRUNCHTOOLS_CI_APP_ID }}
+          private-key: ${{ secrets.CRUNCHTOOLS_CI_APP_KEY }}
+          owner: crunchtools
+
+      # `|| echo` rather than a hard failure: the image is already published and
+      # correct by here, so a rebuild nobody could be told about is a warning to
+      # act on, not a reason to fail a release that succeeded.
+      - name: Trigger downstream rebuilds
+        env:
+          GH_TOKEN: ${{ steps.ci-token.outputs.token }}
+        run: |
+          for repo in python-sdlc; do
+            gh api repos/crunchtools/$repo/dispatches \
+              -f event_type=parent-image-updated \
+              || echo "::warning::$repo was not told to rebuild; start its build by hand"
+          done
