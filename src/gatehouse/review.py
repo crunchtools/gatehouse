@@ -610,7 +610,8 @@ def _tally(outcomes: list[AgentOutcome], config: ConsensusConfig) -> Results:
         for cluster in clusters:
             cluster[BLOCKS_KEY] = blocks(outcome.agent, cluster, consensus)
         kept = keep_reported(clusters, consensus)
-        held = [c for c in clusters if c[BLOCKS_KEY] and c not in kept]
+        shown = {id(cluster) for cluster in kept}
+        held = [c for c in clusters if c[BLOCKS_KEY] and id(c) not in shown]
         results.append((outcome.agent, kept + held))
     return results
 
