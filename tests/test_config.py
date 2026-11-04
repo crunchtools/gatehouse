@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock, patch
+
 import pytest
 
 from gatehouse.config import (
@@ -216,3 +218,50 @@ def test_env_samples_parsing() -> None:
 def test_env_samples_must_be_an_integer() -> None:
     with pytest.raises(ConfigError, match="GATEHOUSE_SAMPLES"):
         samples_from_env("lots")
+
+
+def _packaged(text: str) -> ConsensusConfig:
+    """Load packaged defaults from ``text`` instead of the shipped file."""
+    resource = MagicMock()
+    resource.read_text.return_value = text
+    files = MagicMock()
+    files.joinpath.return_value = resource
+    with patch("gatehouse.config.resources.files", return_value=files):
+        return packaged_defaults()
+
+
+def test_packaged_defaults_require_every_key() -> None:
+    """defaults.toml is the only statement of what ships, so a gap is an error."""
+    with pytest.raises(ConfigError, match=r"missing consensus\.block, consensus\.report"):
+        _packaged("[consensus]\nsamples = 3\n")
+
+
+def test_packaged_defaults_parse_per_agent_counts() -> None:
+    config = _packaged(
+        '[consensus]\nsamples = 2\nblock = "all"\nreport = "majority"\n'
+        "[consensus.agents]\ntests = 1\n"
+    )
+    assert config.samples == 2
+    assert config.samples_for("tests") == 1
+    assert config.samples_for("bugs") == 2
+
+
+def test_packaged_defaults_reject_an_unknown_agent() -> None:
+    with pytest.raises(ConfigError, match="unknown agent"):
+        _packaged(
+            '[consensus]\nsamples = 3\nblock = "all"\nreport = "majority"\n'
+            "[consensus.agents]\nbuggs = 1\n"
+        )
+
+
+def test_packaged_defaults_reject_an_out_of_range_agent_count() -> None:
+    with pytest.raises(ConfigError, match="between 1 and 5"):
+        _packaged(
+            '[consensus]\nsamples = 3\nblock = "all"\nreport = "majority"\n'
+            "[consensus.agents]\ntests = 9\n"
+        )
+
+
+def test_packaged_defaults_reject_a_non_table_consensus() -> None:
+    with pytest.raises(ConfigError, match="must be a table"):
+        _packaged("consensus = 3\n")

@@ -171,29 +171,35 @@ def packaged_defaults() -> ConsensusConfig:
     if missing:
         msg = f"{DEFAULTS_RESOURCE} is missing consensus.{', consensus.'.join(missing)}"
         raise ConfigError(msg)
-    agents: dict[str, int] = {}
-    for slug, value in _table(consensus, "agents").items():
-        agents[slug] = _samples(value, f"consensus.agents.{slug}")
     return ConsensusConfig(
         samples=_samples(consensus["samples"], "consensus.samples"),
         block=consensus["block"],
         report=consensus["report"],
-        agents=agents,
+        agents=_agent_samples(consensus, {}),
     )
 
 
-def _build(document: dict[str, Any], base: ConsensusConfig) -> ConsensusConfig:
-    """Overlay a parsed document on ``base``, key by key."""
-    consensus = _table(document, "consensus")
-    agents = dict(base.agents)
+def _agent_samples(consensus: dict[str, Any], base: dict[str, int]) -> dict[str, int]:
+    """Per-agent sample counts from a [consensus] table, overlaid on ``base``.
+
+    Shared by the packaged defaults and the repository's file so both reject an
+    unknown slug: a typo there would silently leave that agent at the global
+    count, which is the kind of quiet nothing a config error exists to prevent.
+    """
+    agents = dict(base)
     for slug, value in _table(consensus, "agents").items():
         if slug not in AGENT_BY_SLUG:
             valid = ", ".join(AGENT_BY_SLUG)
             msg = f"unknown agent {slug!r} in [consensus.agents]; valid slugs: {valid}"
             raise ConfigError(msg)
         agents[slug] = _samples(value, f"consensus.agents.{slug}")
+    return agents
 
-    overlay: dict[str, Any] = {"agents": agents}
+
+def _build(document: dict[str, Any], base: ConsensusConfig) -> ConsensusConfig:
+    """Overlay a parsed document on ``base``, key by key."""
+    consensus = _table(document, "consensus")
+    overlay: dict[str, Any] = {"agents": _agent_samples(consensus, base.agents)}
     if "samples" in consensus:
         overlay["samples"] = _samples(consensus["samples"], "consensus.samples")
     for field in ("block", "report"):
