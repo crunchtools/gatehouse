@@ -1,0 +1,19 @@
+# Shipped consensus defaults. A gatehouse.toml at the reviewed repository's
+# root overlays these key by key; see README "Consensus".
+#
+# samples: how many times each agent reviews the diff. Votes are tallied
+#          additively across the samples that finished.
+# block:   votes a critical/high finding from a blocking agent needs to fail
+#          the run. "all" | "majority" | an integer.
+# report:  votes any finding needs to be shown at all.
+[consensus]
+samples = 3
+block = "all"
+report = "majority"
+
+# Advisory agents cannot block anything, so a second opinion buys nothing
+# there: one sample each keeps the default review at 18 calls.
+[consensus.agents]
+tests = 1
+consistency = 1
+general = 1
