@@ -8,6 +8,7 @@ should quote.
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 
@@ -191,3 +192,75 @@ async def test_a_verdict_every_run_agreed_on_is_reported_as_same(
 
     assert results[0].verdict_agreed is True
     assert "all agreed" in evaluator.report(results)
+
+
+@pytest.mark.asyncio
+async def test_main_refuses_an_empty_corpus(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(sys, "argv", ["stability_eval", "--corpus", str(tmp_path)])
+    assert await evaluator.main() == 2
+    assert "No .diff files" in capsys.readouterr().err
+
+
+@pytest.mark.asyncio
+async def test_main_refuses_a_single_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """One run is not a comparison, so it cannot be a stability measurement."""
+    (tmp_path / "one.diff").write_text("diff --git a/a.py b/a.py\n")
+    monkeypatch.setattr(sys, "argv", ["stability_eval", "--corpus", str(tmp_path), "--runs", "1"])
+    assert await evaluator.main() == 2
+    assert "at least 2" in capsys.readouterr().err
+
+
+@pytest.mark.asyncio
+async def test_dry_run_prints_the_plan_and_calls_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "one.diff").write_text("diff --git a/a.py b/a.py\n")
+
+    async def fail(*_args: object) -> None:
+        raise AssertionError("a dry run must not call a model")
+
+    monkeypatch.setattr(evaluator, "review_once", fail)
+    monkeypatch.setattr(sys, "argv", ["stability_eval", "--corpus", str(tmp_path), "--dry-run"])
+    assert await evaluator.main() == 0
+    assert "1 diff(s) x 3 runs = 3 reviews" in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
+async def test_main_refuses_to_run_without_a_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "one.diff").write_text("diff --git a/a.py b/a.py\n")
+    monkeypatch.setattr(evaluator, "load_env_file", lambda _path: None)
+    monkeypatch.setattr(evaluator, "load_api_key", lambda: "")
+    monkeypatch.setattr(sys, "argv", ["stability_eval", "--corpus", str(tmp_path)])
+    assert await evaluator.main() == 2
+    assert "OPENROUTER_API_KEY not set" in capsys.readouterr().err
+
+
+@pytest.mark.asyncio
+async def test_main_writes_the_json_it_was_asked_for(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "one.diff").write_text("diff --git a/a.py b/a.py\n")
+    out = tmp_path / "results.json"
+
+    async def fake_review(_diff: str, _key: str, _samples: int | None):
+        return evaluator.Review(reported={"x"}, blocking={"x"})
+
+    monkeypatch.setattr(evaluator, "review_once", fake_review)
+    monkeypatch.setattr(evaluator, "load_env_file", lambda _path: None)
+    monkeypatch.setattr(evaluator, "load_api_key", lambda: "key")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["stability_eval", "--corpus", str(tmp_path), "--json", str(out)],
+    )
+    assert await evaluator.main() == 0
+    written = json.loads(out.read_text())
+    assert written[0]["diff"] == "one.diff"
+    assert written[0]["verdict_agreed"] is True
+    assert written[0]["blocked"] == [True, True, True]

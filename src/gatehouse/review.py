@@ -373,8 +373,11 @@ def _file_views(diff: str) -> dict[str, FileView]:
     not there after. A deleted file's new side is /dev/null, so its "after" is
     empty, which is exactly right — the code it quoted really is gone.
     """
-    before: dict[str, str] = {}
-    after: dict[str, str] = {}
+    # Accumulated as lists and joined once: appending to a str per diff line
+    # copies the whole accumulation each time, which is quadratic on a large
+    # file's diff.
+    before: dict[str, list[str]] = {}
+    after: dict[str, list[str]] = {}
     path = ""
     removed = ""
     for line in diff.splitlines():
@@ -384,18 +387,18 @@ def _file_views(diff: str) -> dict[str, FileView]:
         if line.startswith("+++ "):
             path = _diff_path(line) or removed
             if path:
-                before.setdefault(path, "")
-                after.setdefault(path, "")
+                before.setdefault(path, [])
+                after.setdefault(path, [])
             continue
         if not path or line.startswith(("diff --git ", "@@", "index ")):
             continue
         marker = line[:1]
         body = _squash(line[1:] if marker in ("+", "-", " ") else line)
         if marker != "+":
-            before[path] += body
+            before[path].append(body)
         if marker != "-":
-            after[path] += body
-    return {path: FileView(before[path], after[path]) for path in before}
+            after[path].append(body)
+    return {path: FileView("".join(before[path]), "".join(after[path])) for path in before}
 
 
 def _diff_path(line: str) -> str:
