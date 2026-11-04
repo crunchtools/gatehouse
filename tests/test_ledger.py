@@ -657,3 +657,61 @@ def test_each_file_in_a_diff_gets_its_own_haystack() -> None:
     views = _file_views(two)
     assert views["src/one.py"].after == "alpha=1"
     assert views["src/two.py"].after == "beta=2"
+
+
+def test_a_removed_line_that_looks_like_a_header_is_still_content() -> None:
+    """A source line starting with "-- " reaches the diff as "--- ..." — not a header."""
+    diff = (
+        "diff --git a/src/app.py b/src/app.py\n"
+        "--- a/src/app.py\n"
+        "+++ b/src/app.py\n"
+        "@@ -1,3 +1,3 @@\n"
+        "--- SQL comment marking the old query\n"
+        "+++ SQL comment marking the new query\n"
+        " unchanged = 1\n"
+    )
+    views = _file_views(diff)
+    assert list(views) == ["src/app.py"]
+    assert "SQLcommentmarkingtheoldquery" in views["src/app.py"].before
+    assert "SQLcommentmarkingtheoldquery" not in views["src/app.py"].after
+    assert "SQLcommentmarkingthenewquery" in views["src/app.py"].after
+
+
+def test_a_ledger_entry_quoting_such_a_line_goes_stale() -> None:
+    entries, problems = parse(
+        LEDGERED.replace("total = total / count", "-- SQL comment marking the old query")
+    )
+    assert problems == []
+    diff = (
+        "diff --git a/src/app.py b/src/app.py\n"
+        "--- a/src/app.py\n"
+        "+++ b/src/app.py\n"
+        "@@ -1,2 +1,2 @@\n"
+        "--- SQL comment marking the old query\n"
+        "+++ SQL comment marking the new query\n"
+    )
+    assert stale(entries, _file_views(diff)) == entries
+
+
+def test_two_files_each_with_hunks_keep_their_own_views() -> None:
+    diff = (
+        "diff --git a/src/one.py b/src/one.py\n"
+        "index 111..222 100644\n"
+        "--- a/src/one.py\n"
+        "+++ b/src/one.py\n"
+        "@@ -1 +1 @@\n"
+        "-alpha = 1\n"
+        "+alpha = 2\n"
+        "diff --git a/src/two.py b/src/two.py\n"
+        "index 333..444 100644\n"
+        "--- a/src/two.py\n"
+        "+++ b/src/two.py\n"
+        "@@ -1 +1 @@\n"
+        "-beta = 1\n"
+        "+beta = 2\n"
+    )
+    views = _file_views(diff)
+    assert views["src/one.py"].before == "alpha=1"
+    assert views["src/one.py"].after == "alpha=2"
+    assert views["src/two.py"].before == "beta=1"
+    assert views["src/two.py"].after == "beta=2"

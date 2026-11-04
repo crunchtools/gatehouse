@@ -380,17 +380,28 @@ def _file_views(diff: str) -> dict[str, FileView]:
     after: dict[str, list[str]] = {}
     path = ""
     removed = ""
+    # A removed source line that itself starts with "-- " reaches the diff as
+    # "--- ...", which is indistinguishable from a file header by prefix
+    # alone. Headers only appear before a file's first hunk, so position is
+    # what tells them apart.
+    in_hunk = False
     for line in diff.splitlines():
-        if line.startswith("--- "):
+        if line.startswith("diff --git "):
+            in_hunk = False
+            continue
+        if line.startswith("@@"):
+            in_hunk = True
+            continue
+        if not in_hunk and line.startswith("--- "):
             removed = _diff_path(line)
             continue
-        if line.startswith("+++ "):
+        if not in_hunk and line.startswith("+++ "):
             path = _diff_path(line) or removed
             if path:
                 before.setdefault(path, [])
                 after.setdefault(path, [])
             continue
-        if not path or line.startswith(("diff --git ", "@@", "index ")):
+        if not path or not in_hunk:
             continue
         marker = line[:1]
         body = _squash(line[1:] if marker in ("+", "-", " ") else line)

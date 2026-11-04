@@ -264,3 +264,47 @@ async def test_main_writes_the_json_it_was_asked_for(
     assert written[0]["diff"] == "one.diff"
     assert written[0]["verdict_agreed"] is True
     assert written[0]["blocked"] == [True, True, True]
+
+
+@pytest.mark.asyncio
+async def test_review_once_splits_blocking_from_reported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The JSON's blocks flag is what the verdict rests on, so the mapping is pinned."""
+
+    async def fake_run_review(**kwargs: object) -> int:
+        path = kwargs["consensus_json"]
+        assert isinstance(path, str)
+        Path(path).write_text(
+            json.dumps(
+                {
+                    "findings": [
+                        {"id": "bugs:bug:a.py:quote", "blocks": True},
+                        {"id": "tests:testing:a.py:other", "blocks": False},
+                    ],
+                    "dropped": {},
+                }
+            )
+        )
+        return 0
+
+    monkeypatch.setattr(evaluator, "run_review", fake_run_review)
+    review = await evaluator.review_once("diff", "key", None)
+
+    assert review.reported == {"bugs:bug:a.py:quote", "tests:testing:a.py:other"}
+    assert review.blocking == {"bugs:bug:a.py:quote"}
+
+
+@pytest.mark.asyncio
+async def test_review_once_handles_a_review_that_wrote_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No changes to review means no file, which is no findings rather than a crash."""
+
+    async def fake_run_review(**_kwargs: object) -> int:
+        return 0
+
+    monkeypatch.setattr(evaluator, "run_review", fake_run_review)
+    review = await evaluator.review_once("diff", "key", None)
+
+    assert review == evaluator.Review(set(), set())
