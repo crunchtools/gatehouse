@@ -65,7 +65,7 @@ Per-sample filters (unverifiable evidence, disproved refs) run before the tally;
 
 A packaged `defaults.toml` holds the shipped sample counts and thresholds; an optional `gatehouse.toml` at the reviewed repository's root overlays it key by key, under `[consensus]` (`samples`, `block`, `report`) and `[consensus.agents]` (per-agent sample counts). `block` and `report` take `"all"`, `"majority"` or an integer, resolved against that agent's own `n`.
 
-Precedence: `--samples` > `GATEHOUSE_SAMPLES` > `gatehouse.toml` > packaged defaults. Per-agent counts live in the file alone. Per-agent `n` MUST be in [1, 5] and one review MUST NOT exceed 40 calls; an out-of-range count, or an integer threshold above that agent's `n`, is a usage error (exit 2), never a silent clamp. `--samples 1` reproduces single-sample behaviour exactly.
+Precedence: `--samples` > `GATEHOUSE_SAMPLES` > `gatehouse.toml` > packaged defaults. Per-agent counts live in the file alone. Per-agent `n` MUST be in [1, 5] and one review MUST NOT exceed 40 calls; an out-of-range count, or an integer threshold above that agent's `n`, is a usage error (exit 2), never a silent clamp. `--samples 1` restores single-sample thresholds; a critical/high finding with no usable evidence still MUST NOT fail the run.
 
 Under the fork-safe workflow `gatehouse.toml` MUST be loaded from the trusted base, like `.gatehouse-ignore` and the styleguide: a pull request MUST NOT be able to weaken the gate that reviews it.
 

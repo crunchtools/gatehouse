@@ -30,6 +30,7 @@ from gatehouse.config import (
 )
 from gatehouse.consensus import (
     BLOCKING_SEVERITIES,
+    BLOCKS_KEY,
     blocks,
     cluster_samples,
     keep_reported,
@@ -111,7 +112,6 @@ class AgentOutcome(NamedTuple):
     samples: list[list[dict[str, Any]]]
     replies: list[Completion]
     reason: str | None
-    attempted: int
 
     @property
     def finished(self) -> int:
@@ -119,7 +119,7 @@ class AgentOutcome(NamedTuple):
         return len(self.samples)
 
 
-MAX_CONCURRENT_AGENTS = 24
+MAX_CONCURRENT_CALLS = 24
 
 # What a provider status means to whoever has to fix it.
 _STATUS_LABELS: dict[int, str] = {
@@ -287,22 +287,22 @@ def load_constitution(override_path: str | None = None) -> str | None:
 
 def _has_blocking_findings(
     results: list[tuple[Agent, list[dict[str, Any]]]],
-    config: ConsensusConfig | None = None,
 ) -> bool:
-    """True when a blocking agent has a critical/high finding with the votes to block.
+    """True when any finding carries the verdict that it fails the run.
 
-    Without a config every critical/high from a blocking agent blocks, which is
-    what a single-sample review means.
+    The verdict is made once, in _tally, where the agent's thresholds and its
+    finished sample count are both in hand; a second decision made here from
+    severity alone is how a finding came to block without being shown. A
+    finding that never went through the tally is judged the old way: any
+    critical/high from a blocking agent blocks.
     """
     for agent, findings in results:
-        if not agent.blocking:
-            continue
-        consensus = config.for_agent(agent.slug) if config is not None else None
         for finding in findings:
-            if consensus is None:
-                if finding.get("severity", "low") in BLOCKING_SEVERITIES:
+            verdict = finding.get(BLOCKS_KEY)
+            if verdict is not None:
+                if verdict:
                     return True
-            elif blocks(agent, finding, consensus):
+            elif agent.blocking and finding.get("severity", "low") in BLOCKING_SEVERITIES:
                 return True
     return False
 
@@ -591,16 +591,27 @@ def _tally(outcomes: list[AgentOutcome], config: ConsensusConfig) -> Results:
     An agent whose samples all failed contributes nothing. Every finding that
     survives carries its vote count, so the terminal output and the posted
     review can say 2/3 rather than asking the reader to trust one roll.
+
+    Thresholds resolve against the samples that finished, so a lost sample
+    does not raise the bar for the ones that came back. A cluster that has the
+    votes to block is kept even when it is short of the report threshold: a
+    run must never fail on a finding it did not show. With the shipped
+    defaults that cannot happen, but block and report are configurable
+    independently.
     """
     results: Results = []
     for outcome in outcomes:
         if not outcome.samples:
             continue
-        consensus = config.for_agent(outcome.agent.slug)
+        consensus = config.for_agent(outcome.agent.slug, finished=outcome.finished)
         clusters = cluster_samples(
             outcome.samples, squash=_squash, min_evidence=_EVIDENCE_MIN_CHARS
         )
-        results.append((outcome.agent, keep_reported(clusters, consensus)))
+        for cluster in clusters:
+            cluster[BLOCKS_KEY] = blocks(outcome.agent, cluster, consensus)
+        kept = keep_reported(clusters, consensus)
+        held = [c for c in clusters if c[BLOCKS_KEY] and c not in kept]
+        results.append((outcome.agent, kept + held))
     return results
 
 
@@ -795,13 +806,13 @@ async def _run_agents(
     verbose: bool,
     config: ConsensusConfig,
 ) -> list[AgentRun]:
-    """Run every agent's samples concurrently, at most MAX_CONCURRENT_AGENTS at once.
+    """Run every agent's samples concurrently, at most MAX_CONCURRENT_CALLS at once.
 
     One agent with n samples is n independent calls on the same prompt: the
     model's own variation between them is what the tally measures.
     """
     async with httpx.AsyncClient() as client:
-        semaphore = asyncio.Semaphore(MAX_CONCURRENT_AGENTS)
+        semaphore = asyncio.Semaphore(MAX_CONCURRENT_CALLS)
         return await asyncio.gather(
             *(
                 run_agent(
@@ -863,7 +874,6 @@ def _collect(runs: list[AgentRun]) -> list[AgentOutcome]:
                 samples=samples[slug] if reason is None else [],
                 replies=replies[slug],
                 reason=reason,
-                attempted=attempted,
             )
         )
     return outcomes
@@ -931,9 +941,9 @@ async def run_review(
     as JSON, written after the review is posted.
 
     samples overrides the configured sample count for every agent, as
-    --samples and GATEHOUSE_SAMPLES do; a bad config exits 2 before any
-    model is called. Until clustering lands, the findings reported are the
-    first finished sample's.
+    --samples and GATEHOUSE_SAMPLES do; a bad config exits 2 before any model
+    is called. Each agent's samples are clustered and tallied, and every
+    reported finding carries how many of them agreed.
     """
     diff = stdin_diff if stdin_diff is not None else get_git_diff(base, staged)
     spec = parse_ignore(_load_context_file(IGNORE_FILE)) if diff.strip() else None
@@ -1000,7 +1010,7 @@ async def run_review(
     if all_results or not failed:  # with no agent finished, there are no results to call clean
         format_results(all_results)
 
-    has_blocking = _has_blocking_findings(all_results, config)
+    has_blocking = _has_blocking_findings(all_results)
     request_changes = has_blocking and not advisory
     exit_code = 1 if request_changes else 0
     if failed:

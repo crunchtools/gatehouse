@@ -23,6 +23,7 @@ BLOCKING_SEVERITIES = frozenset({"critical", "high"})
 VOTES_KEY = "votes"
 SAMPLES_KEY = "samples"
 BLOCKING_VOTES_KEY = "blockingVotes"
+BLOCKS_KEY = "blocksTheRun"
 
 
 def severity_rank(severity: str) -> int:
@@ -106,8 +107,10 @@ def cluster_samples(
 
     ``squash`` strips whitespace from a quote and ``min_evidence`` is the
     shortest quote worth matching on. A finding whose evidence is too short to
-    match stands alone with a single vote: three unrelated findings in one file
-    with nothing quotable must not add up to a unanimous one.
+    match stands alone with a single vote and no blocking vote: three unrelated
+    findings in one file with nothing quotable must not add up to a unanimous
+    one, and a claim with nothing quotable must not fail a run even where one
+    vote is configured to block.
     """
     clusters: list[_Cluster] = []
     singletons: list[_Cluster] = []
@@ -132,7 +135,7 @@ def cluster_samples(
     for cluster in singletons:
         finding = cluster.representative(total)
         finding[VOTES_KEY] = 1
-        finding[BLOCKING_VOTES_KEY] = min(finding[BLOCKING_VOTES_KEY], 1)
+        finding[BLOCKING_VOTES_KEY] = 0
         reported.append(finding)
     return reported
 

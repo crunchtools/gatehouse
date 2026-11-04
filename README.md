@@ -64,7 +64,7 @@ Votes are tallied additively — nothing penalizes anything else. With the shipp
 
 So a HIGH only one sample saw is not a blocked commit, a 2/3 HIGH is reported for a human to judge without stopping work, and a 3/3 HIGH fails the run. Blocking votes count only the samples that called a finding critical or high: two MEDIUMs and one HIGH is three votes to report and one to block.
 
-Findings from different samples are the same finding when the agent, category and file match and one's quoted evidence contains the other's — whitespace and line numbers take no part, so a reformatted or re-anchored quote still counts. Two findings from the *same* sample never merge: a sample that reported two findings found two things. A finding with nothing quotable stands alone with one vote, so unevidenced findings cannot add up to a unanimous one.
+Findings from different samples are the same finding when the agent, category and file match and one's quoted evidence contains the other's — whitespace and line numbers take no part, so a reformatted or re-anchored quote still counts. Two findings from the *same* sample never merge: a sample that reported two findings found two things. A finding with nothing quotable stands alone with one vote and no blocking vote at all: unevidenced findings cannot add up to a unanimous one, and a claim with nothing to quote cannot fail a run even in a repository that configured one vote to block.
 
 The agreement is printed with each finding (", agreed by 2 of 3 samples") and recorded in the hidden PR comment marker as `votes=2/3`.
 
@@ -142,7 +142,7 @@ general = 1
 
 `block` and `report` take `"all"`, `"majority"` (strictly more than half) or an integer, and resolve against each agent's own sample count: at 3 samples `"majority"` is 2, at 5 it is 3. An integer an agent could never reach would silence it, so that is a usage error (exit 2), not a clamp — the message names the agent. An advisory agent resolves no blocking threshold, since it cannot block what it finds.
 
-`--samples N` overrides the count for every agent, then `GATEHOUSE_SAMPLES`, then the file. `--samples 1` is the pre-0.21.0 single-sample gate. A count must be 1-5 and a review may make at most 40 model calls; both are checked before any model is called.
+`--samples N` overrides the count for every agent, then `GATEHOUSE_SAMPLES`, then the file. `--samples 1` restores the single-sample gate, with one deliberate difference from 0.20.0: a critical or high finding that quotes nothing still does not fail the run. A count must be 1-5 and a review may make at most 40 model calls; both are checked before any model is called.
 
 In CI the file is read from the **base** branch, like `.gatehouse-ignore` and the styleguide: a pull request cannot widen the gate that reviews it.
 

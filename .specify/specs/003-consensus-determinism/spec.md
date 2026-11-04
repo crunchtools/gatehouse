@@ -106,8 +106,9 @@ general = 1
 against that agent's own `n`. An integer above that `n` is unreachable and is a usage error.
 Precedence: `--samples` > `GATEHOUSE_SAMPLES` > `gatehouse.toml` > packaged defaults; per-agent
 counts live in the file only. Bounds: per-agent `n` in [1, 5] and at most 40 calls in one review;
-out of range is a usage error, never a silent clamp. `--samples 1` reproduces pre-0.21.0
-behaviour exactly.
+out of range is a usage error, never a silent clamp. `--samples 1` restores single-sample
+thresholds, with one deliberate difference from 0.20.0: a critical or high finding that quotes
+nothing still does not fail the run.
 
 Under the fork-safe workflow `gatehouse.toml` MUST be loaded from the trusted base, like
 `.gatehouse-ignore` and the styleguide: a pull request cannot weaken the gate reviewing it.
@@ -150,7 +151,7 @@ It is never a required status check: a live-model eval cannot gate a merge.
 
 1. Two runs on an unchanged tree report the same clusters.
 2. Only a unanimous critical/high from a blocking agent exits 1.
-3. `--samples 1` reproduces pre-0.21.0 behaviour.
+3. `--samples 1` restores single-sample thresholds.
 4. An unreachable threshold or an out-of-range sample count exits 2.
 5. A ledger entry suppresses its finding while its quote is present, and is reported stale once
    the quoted code is gone.

@@ -26,6 +26,7 @@ from gatehouse.agents import (
 from gatehouse.config import CONFIG_FILE
 from gatehouse.consensus import (
     BLOCKING_VOTES_KEY,
+    BLOCKS_KEY,
     SAMPLES_KEY,
     VOTES_KEY,
 )
@@ -45,7 +46,7 @@ from gatehouse.review import (
     run_review,
 )
 
-VOTE_KEYS = frozenset({VOTES_KEY, SAMPLES_KEY, BLOCKING_VOTES_KEY})
+VOTE_KEYS = frozenset({VOTES_KEY, SAMPLES_KEY, BLOCKING_VOTES_KEY, BLOCKS_KEY})
 
 # Quotes every fixture's evidence: findings whose evidence is not in the
 # diff are dropped before they are reported.

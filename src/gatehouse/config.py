@@ -64,13 +64,18 @@ class ConsensusConfig:
         """The sample count for one agent slug."""
         return self.agents.get(slug, self.samples)
 
-    def for_agent(self, slug: str) -> AgentConsensus:
-        """Resolve this agent's thresholds against its own sample count.
+    def for_agent(self, slug: str, finished: int | None = None) -> AgentConsensus:
+        """Resolve this agent's thresholds against its sample count.
+
+        ``finished`` is how many of its samples came back, and thresholds
+        resolve against that: when two of three samples return and both see a
+        critical finding, "all" means two, because two is every sample there
+        was. A lost sample is not a vote against a finding.
 
         An agent not in AGENT_BY_SLUG is treated as blocking, so a caller that
         invents a slug still gets its threshold validated.
         """
-        n = self.samples_for(slug)
+        n = self.samples_for(slug) if finished is None else max(finished, 1)
         agent = AGENT_BY_SLUG.get(slug)
         blocking = agent is None or agent.blocking
         return AgentConsensus(

@@ -31,7 +31,7 @@ the approved plan lives at `~/.claude/plans/eager-crafting-raven.md`.
 
 1. **`src/gatehouse/review.py`** — `_run_agents` fans out `n` samples per agent; new `_cluster`
    and `_tally`; `_filter_findings` split around the tally; `_has_blocking_findings` consults
-   votes; the unfinished-agent rule counts finished samples; `MAX_CONCURRENT_AGENTS` 5 → 24
+   votes; the unfinished-agent rule counts finished samples; `MAX_CONCURRENT_CALLS` 5 → 24
 2. **`src/gatehouse/cli.py`** — `--samples`, `GATEHOUSE_SAMPLES`, `--consensus-json`
 3. **`src/gatehouse/output.py`** — print `votes=k/n` per finding
 4. **`src/gatehouse/github.py`** — `votes=` and `fp=` in the hidden marker; post new ledger

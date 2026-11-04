@@ -24,7 +24,9 @@ All notable changes to this project are documented here, following
   branch, like `.gatehouse-ignore`, so a pull request cannot weaken the gate
   reviewing it.
 - `--samples N` and `GATEHOUSE_SAMPLES` override the count globally;
-  `--samples 1` reproduces pre-0.21.0 behaviour exactly. Per-agent `N` is capped
+  `--samples 1` restores single-sample thresholds. One deliberate difference
+  from 0.20.0: a critical or high finding that quotes nothing no longer fails
+  the run, because nothing about it can be checked. Per-agent `N` is capped
   at 5 and a review at 40 model calls; an out-of-range count, or a threshold an
   agent could never reach, exits 2 before any model is called.
 - Terminal output says ", agreed by 2 of 3 samples" and the hidden PR comment
@@ -32,10 +34,17 @@ All notable changes to this project are documented here, following
 
 ### Changed
 
-- `MAX_CONCURRENT_AGENTS` 5 -> 24, so the default 18 calls run in one wave.
+- `MAX_CONCURRENT_CALLS` 5 -> 24, so the default 18 calls run in one wave.
 - An agent is unfinished only when fewer than a majority of its samples came
   back: a timeout is not a vote against a finding, and the samples that did
   return still decide. A minority of lost samples is reported on stderr.
+- Thresholds resolve against the samples that *finished*, so a lost sample does
+  not raise the bar for the ones that came back: two of three samples agreeing
+  on a critical finding still fails the run.
+- Whether a finding fails the run is decided once, during the tally, where the
+  agent's thresholds and its finished sample count are both in hand. A finding
+  with the votes to block is always shown, even if it is short of the report
+  threshold: a run must never fail on a finding it did not print.
 - The per-sample filters (invented evidence, disproved refs) run before the
   tally and the cluster filters (off-diff lines, re-raises, the advisory LOW
   cap) after it, so a hallucinated quote never becomes a vote and a cap applies

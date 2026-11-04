@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -39,3 +40,27 @@ def test_incremental_and_usage_json_are_passed(monkeypatch: pytest.MonkeyPatch) 
         main()
     assert review.call_args.kwargs["incremental"] is True
     assert review.call_args.kwargs["usage_json"] == "usage.json"
+
+
+def test_samples_flag_reaches_run_review(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The documented --samples option must actually be forwarded."""
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+    monkeypatch.setattr(sys, "argv", ["gatehouse", "--samples", "2"])
+    with (
+        patch("gatehouse.cli.run_review", new_callable=AsyncMock, return_value=0) as review,
+        pytest.raises(SystemExit) as exit_info,
+    ):
+        main()
+    assert exit_info.value.code == 0
+    assert review.call_args.kwargs["samples"] == 2
+
+
+def test_no_samples_flag_leaves_the_count_to_the_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+    monkeypatch.setattr(sys, "argv", ["gatehouse"])
+    with (
+        patch("gatehouse.cli.run_review", new_callable=AsyncMock, return_value=0) as review,
+        pytest.raises(SystemExit),
+    ):
+        main()
+    assert review.call_args.kwargs["samples"] is None

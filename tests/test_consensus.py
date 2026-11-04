@@ -6,10 +6,11 @@ import json
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 
 from gatehouse.agents import BUG_HUNTER, GENERAL
-from gatehouse.config import AgentConsensus, load_config
+from gatehouse.config import CONFIG_FILE, AgentConsensus, load_config
 from gatehouse.consensus import (
     BLOCKING_VOTES_KEY,
     SAMPLES_KEY,
@@ -126,7 +127,7 @@ def test_findings_without_usable_evidence_never_add_up() -> None:
     clusters = cluster(samples)
     assert len(clusters) == 3
     assert all(c[VOTES_KEY] == 1 for c in clusters)
-    assert all(c[BLOCKING_VOTES_KEY] == 1 for c in clusters)
+    assert all(c[BLOCKING_VOTES_KEY] == 0 for c in clusters)
 
 
 def test_cluster_severity_is_the_most_severe_member() -> None:
@@ -274,3 +275,68 @@ def test_config_and_tally_agree_on_what_blocks() -> None:
     for slug in ("bugs", "security", "performance", "docs", "constitution"):
         consensus = config.for_agent(slug)
         assert (consensus.samples, consensus.block, consensus.report) == (3, 3, 2)
+
+
+def test_an_unevidenced_finding_cannot_block_even_where_one_vote_blocks() -> None:
+    """A claim with nothing quotable must not fail a run, however low the threshold."""
+    consensus = AgentConsensus(samples=1, block=1, report=1)
+    unevidenced = cluster([[finding("", severity="critical")]])[0]
+    assert unevidenced[VOTES_KEY] == 1
+    assert blocks(BUG_HUNTER, unevidenced, consensus) is False
+
+
+def test_thresholds_resolve_against_the_samples_that_finished() -> None:
+    """Two of three samples returning means "all" is two, not three."""
+    config = load_config(None)
+    assert config.for_agent("bugs", finished=2) == AgentConsensus(samples=2, block=2, report=2)
+    assert config.for_agent("bugs", finished=3) == AgentConsensus(samples=3, block=3, report=2)
+
+
+@pytest.mark.asyncio
+async def test_two_finished_samples_agreeing_on_a_high_still_block() -> None:
+    """A lost sample does not raise the bar for the samples that came back."""
+    calls = {"n": 0}
+
+    async def fake(*_a: Any, **_k: Any) -> Completion:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise httpx.TimeoutException("too slow")
+        return _reply([finding("total = total / count")])
+
+    with (
+        patch("gatehouse.review.get_file_listing", return_value=None),
+        patch("gatehouse.review.load_styleguide", return_value=None),
+        patch("gatehouse.review.call_model", side_effect=fake),
+        patch("gatehouse.review.format_results") as formatted,
+    ):
+        exit_code = await run_review(stdin_diff=DIFF, agent_slugs=["bugs"], api_key="k")
+    assert exit_code == 1
+    reported = formatted.call_args.args[0][0][1]
+    assert reported[0][VOTES_KEY] == 2
+    assert reported[0][SAMPLES_KEY] == 2
+
+
+@pytest.mark.asyncio
+async def test_a_blocking_cluster_short_of_the_report_threshold_is_still_shown() -> None:
+    """A run must never fail on a finding it did not show."""
+
+    def context(relpath: str) -> str | None:
+        if relpath != CONFIG_FILE:
+            return None
+        return (
+            "[consensus]\nsamples = 3\nblock = 1\nreport = 3\n"
+            "[consensus.agents]\ntests = 3\nconsistency = 3\ngeneral = 3\n"
+        )
+
+    replies = [_reply([finding("total = total / count")]), _reply([]), _reply([])]
+    with (
+        patch("gatehouse.review.get_file_listing", return_value=None),
+        patch("gatehouse.review.load_styleguide", return_value=None),
+        patch("gatehouse.review._load_context_file", side_effect=context),
+        patch("gatehouse.review.call_model", new_callable=AsyncMock, side_effect=replies),
+        patch("gatehouse.review.format_results") as formatted,
+    ):
+        exit_code = await run_review(stdin_diff=DIFF, agent_slugs=["bugs"], api_key="k")
+    assert exit_code == 1
+    reported = formatted.call_args.args[0][0][1]
+    assert [f[VOTES_KEY] for f in reported] == [1]
