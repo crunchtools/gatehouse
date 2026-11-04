@@ -24,6 +24,11 @@ from gatehouse.agents import (
     TEST_COVERAGE,
 )
 from gatehouse.config import CONFIG_FILE
+from gatehouse.consensus import (
+    BLOCKING_VOTES_KEY,
+    SAMPLES_KEY,
+    VOTES_KEY,
+)
 from gatehouse.llm import Completion
 from gatehouse.review import (
     BLOCKING_SEVERITIES,
@@ -39,6 +44,8 @@ from gatehouse.review import (
     load_constitution,
     run_review,
 )
+
+VOTE_KEYS = frozenset({VOTES_KEY, SAMPLES_KEY, BLOCKING_VOTES_KEY})
 
 # Quotes every fixture's evidence: findings whose evidence is not in the
 # diff are dropped before they are reported.
@@ -1251,7 +1258,7 @@ async def test_run_review_drops_fabricated_high_finding() -> None:
         )
     assert exit_code == 0
     assert mock_post.call_args.args[0] == [(BUG_HUNTER, [])]
-    assert mock_post.call_args.kwargs["unverified"] == 1
+    assert mock_post.call_args.kwargs["unverified"] == 3  # once per sample
 
 
 def _finding(line: int, severity: str = "low", path: str = "src/app.py", confidence: int = 90):
@@ -1310,9 +1317,11 @@ async def test_run_review_suppresses_reraise_only_when_commenting(
         patch("gatehouse.review.format_results") as mock_format,
     ):
         await run_review(**common, comment=False)
-        assert mock_format.call_args.args[0] == [
-            (CONSISTENCY_CHECK, json.loads(MOCK_ADVISORY_FINDINGS))
-        ]
+        agent, findings = mock_format.call_args.args[0][0]
+        assert agent == CONSISTENCY_CHECK
+        expected = json.loads(MOCK_ADVISORY_FINDINGS)
+        assert [{k: v for k, v in f.items() if k not in VOTE_KEYS} for f in findings] == expected
+        assert all(f["votes"] == 1 and f["samples"] == 1 for f in findings)
         await run_review(**common, comment=True)
     assert mock_post.call_args.args[0] == [(CONSISTENCY_CHECK, [])]
     assert mock_post.call_args.kwargs["reraised"] == 1

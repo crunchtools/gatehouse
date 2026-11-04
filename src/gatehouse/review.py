@@ -28,6 +28,12 @@ from gatehouse.config import (
     load_config,
     samples_from_env,
 )
+from gatehouse.consensus import (
+    BLOCKING_SEVERITIES,
+    blocks,
+    cluster_samples,
+    keep_reported,
+)
 from gatehouse.diffview import right_side_lines
 from gatehouse.github import (
     detect_pr_context,
@@ -59,7 +65,6 @@ CONFIDENCE_THRESHOLD = 80
 
 SAMPLES_ENV = "GATEHOUSE_SAMPLES"
 
-BLOCKING_SEVERITIES = frozenset({"critical", "high"})
 
 # LOWs from these agents (by name, as printed in each finding) are required
 # answers, matching triage.yml's `required_low_agents` default; every other
@@ -282,13 +287,23 @@ def load_constitution(override_path: str | None = None) -> str | None:
 
 def _has_blocking_findings(
     results: list[tuple[Agent, list[dict[str, Any]]]],
+    config: ConsensusConfig | None = None,
 ) -> bool:
-    """Check if any blocking agent has critical/high findings."""
+    """True when a blocking agent has a critical/high finding with the votes to block.
+
+    Without a config every critical/high from a blocking agent blocks, which is
+    what a single-sample review means.
+    """
     for agent, findings in results:
-        if agent.blocking:
-            for finding in findings:
+        if not agent.blocking:
+            continue
+        consensus = config.for_agent(agent.slug) if config is not None else None
+        for finding in findings:
+            if consensus is None:
                 if finding.get("severity", "low") in BLOCKING_SEVERITIES:
                     return True
+            elif blocks(agent, finding, consensus):
+                return True
     return False
 
 
@@ -468,16 +483,53 @@ def _filter_findings(
 
     Returns the kept results and the count dropped by each filter, keyed as
     post_pr_review takes them.
+
+    Kept for a single set of findings (one sample, or a caller that does its
+    own tallying). The consensus pipeline calls the two halves either side of
+    the tally instead: _filter_samples then _filter_clusters.
+    """
+    results, counts = _filter_samples(results, haystack, resolve=resolve)
+    results, cluster_counts = _filter_clusters(results, answered, required_low, anchors)
+    return results, {**counts, **cluster_counts}
+
+
+def _filter_samples(
+    results: Results,
+    haystack: str,
+    *,
+    resolve: Resolver = ref_exists,
+) -> tuple[Results, dict[str, int]]:
+    """Drop what no sample should get a vote for: unquotable evidence, disproved refs.
+
+    These run before the tally. A sample that invented its quote, or called a
+    ref missing that resolves, is not a dissenting opinion to be counted — it
+    is a sample that did not find anything there.
     """
     results, unverified = _drop_unverified(results, haystack)
     results, disproved = _drop_disproved(results, resolve)
-    results, offdiff = _drop_offdiff(results, anchors)
-    results, reraised = _drop_reraised(results, answered)
-    results, capped = _cap_advisory_lows(results, required_low)
     if unverified:
         print(f"Dropped {unverified} finding(s): evidence not in the diff.", file=sys.stderr)
     if disproved:
         print(f"Dropped {disproved} finding(s): the ref they call missing exists.", file=sys.stderr)
+    return results, {"unverified": unverified, "disproved": disproved}
+
+
+def _filter_clusters(
+    results: Results,
+    answered: list[tuple[str, str, int]],
+    required_low: frozenset[str] = REQUIRED_LOW_AGENTS,
+    anchors: dict[str, set[int]] | None = None,
+) -> tuple[Results, dict[str, int]]:
+    """Drop what a tallied finding should not be reported for.
+
+    Off-diff lines, re-raises of answered threads, and advisory LOWs over the cap.
+
+    These run after the tally, on clusters, so a cap or a window applies to one
+    finding rather than to each sample's copy of it.
+    """
+    results, offdiff = _drop_offdiff(results, anchors)
+    results, reraised = _drop_reraised(results, answered)
+    results, capped = _cap_advisory_lows(results, required_low)
     if offdiff:
         print(f"Dropped {offdiff} finding(s): line outside the PR diff.", file=sys.stderr)
     if reraised:
@@ -488,13 +540,68 @@ def _filter_findings(
             f"(at most {MAX_ADVISORY_LOWS} are shown).",
             file=sys.stderr,
         )
-    return results, {
-        "unverified": unverified,
-        "disproved": disproved,
-        "offdiff": offdiff,
-        "reraised": reraised,
-        "capped": capped,
-    }
+    return results, {"offdiff": offdiff, "reraised": reraised, "capped": capped}
+
+
+def _consensus_config(agents: list[Agent], samples: int | None) -> ConsensusConfig | None:
+    """The sample counts and thresholds for this review, or None when the config is bad.
+
+    The reviewed repository's gatehouse.toml comes through _load_context_file,
+    so under the fork-safe workflow it is the base branch's copy: a pull
+    request cannot weaken the gate that reviews it. A bad config is reported
+    and the review does not start, so no tokens are spent on it.
+    """
+    try:
+        config = load_config(
+            _load_context_file(CONFIG_FILE),
+            samples if samples is not None else samples_from_env(os.environ.get(SAMPLES_ENV)),
+        )
+        config.check_budget([agent.slug for agent in agents])
+    except ConfigError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return None
+    return config
+
+
+def _filter_outcomes(
+    outcomes: list[AgentOutcome],
+    haystack: str,
+    *,
+    resolve: Resolver = ref_exists,
+) -> tuple[list[AgentOutcome], dict[str, int]]:
+    """Run the per-sample filters over every sample of every agent.
+
+    The counts are of sample findings dropped, not of clusters: the same
+    invented quote in two samples is two drops, which is what was paid for.
+    """
+    filtered: list[AgentOutcome] = []
+    counts = {"unverified": 0, "disproved": 0}
+    for outcome in outcomes:
+        as_results: Results = [(outcome.agent, sample) for sample in outcome.samples]
+        kept, dropped = _filter_samples(as_results, haystack, resolve=resolve)
+        for key in counts:
+            counts[key] += dropped[key]
+        filtered.append(outcome._replace(samples=[sample for _, sample in kept]))
+    return filtered, counts
+
+
+def _tally(outcomes: list[AgentOutcome], config: ConsensusConfig) -> Results:
+    """Cluster each agent's samples and keep the clusters with enough votes.
+
+    An agent whose samples all failed contributes nothing. Every finding that
+    survives carries its vote count, so the terminal output and the posted
+    review can say 2/3 rather than asking the reader to trust one roll.
+    """
+    results: Results = []
+    for outcome in outcomes:
+        if not outcome.samples:
+            continue
+        consensus = config.for_agent(outcome.agent.slug)
+        clusters = cluster_samples(
+            outcome.samples, squash=_squash, min_evidence=_EVIDENCE_MIN_CHARS
+        )
+        results.append((outcome.agent, keep_reported(clusters, consensus)))
+    return results
 
 
 def _failure_class(exc: Exception) -> str:
@@ -846,14 +953,8 @@ async def run_review(
         return 0
 
     agents = get_agents(agent_slugs)
-    try:
-        config = load_config(
-            _load_context_file(CONFIG_FILE),
-            samples if samples is not None else samples_from_env(os.environ.get(SAMPLES_ENV)),
-        )
-        config.check_budget([agent.slug for agent in agents])
-    except ConfigError as exc:
-        print(f"Error: {exc}", file=sys.stderr)
+    config = _consensus_config(agents, samples)
+    if config is None:
         return 2
     styleguide = load_styleguide()
     file_listing = filter_listing(get_file_listing(), spec)
@@ -880,9 +981,6 @@ async def run_review(
         for outcome in outcomes
         if outcome.reason is not None
     )
-    all_results: Results = [
-        (outcome.agent, outcome.samples[0]) for outcome in outcomes if outcome.samples
-    ]
     usage = [
         _usage_record(outcome.agent.slug, reply)
         for outcome in outcomes
@@ -892,14 +990,17 @@ async def run_review(
 
     haystack = _evidence_haystack(diff, styleguide, constitution)
     answered = await threads if threads else []
-    all_results, dropped = _filter_findings(
-        all_results, haystack, answered, required_low_agents, anchors
+    outcomes, dropped = _filter_outcomes(outcomes, haystack)
+    all_results = _tally(outcomes, config)
+    all_results, cluster_dropped = _filter_clusters(
+        all_results, answered, required_low_agents, anchors
     )
+    dropped.update(cluster_dropped)
 
     if all_results or not failed:  # with no agent finished, there are no results to call clean
         format_results(all_results)
 
-    has_blocking = _has_blocking_findings(all_results)
+    has_blocking = _has_blocking_findings(all_results, config)
     request_changes = has_blocking and not advisory
     exit_code = 1 if request_changes else 0
     if failed:
