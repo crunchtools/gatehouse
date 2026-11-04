@@ -21,6 +21,13 @@ from gatehouse.agents import (
     build_user_prompt,
     get_agents,
 )
+from gatehouse.config import (
+    CONFIG_FILE,
+    ConfigError,
+    ConsensusConfig,
+    load_config,
+    samples_from_env,
+)
 from gatehouse.diffview import right_side_lines
 from gatehouse.github import (
     detect_pr_context,
@@ -50,6 +57,8 @@ if TYPE_CHECKING:
 
 CONFIDENCE_THRESHOLD = 80
 
+SAMPLES_ENV = "GATEHOUSE_SAMPLES"
+
 BLOCKING_SEVERITIES = frozenset({"critical", "high"})
 
 # LOWs from these agents (by name, as printed in each finding) are required
@@ -71,7 +80,10 @@ Results = list[tuple[Agent, list[dict[str, Any]]]]
 
 
 class AgentRun(NamedTuple):
-    """One agent's run: findings are None, and reason a failure class, only if it failed."""
+    """One sample from one agent.
+
+    findings are None, and reason a failure class, only when the sample failed.
+    """
 
     agent: Agent
     findings: list[dict[str, Any]] | None
@@ -79,7 +91,30 @@ class AgentRun(NamedTuple):
     reason: str | None
 
 
-MAX_CONCURRENT_AGENTS = 5
+class AgentOutcome(NamedTuple):
+    """Every sample one agent produced, and whether enough of them finished.
+
+    ``samples`` holds the findings of each sample that finished, so a tally can
+    count how many of them saw the same thing. ``reason`` is set only when the
+    agent is unfinished: fewer than a majority of its samples came back, which
+    is an outage rather than a review. A sample that times out is not a vote
+    against a finding, so a minority of failures is reported in stderr and the
+    surviving samples still decide.
+    """
+
+    agent: Agent
+    samples: list[list[dict[str, Any]]]
+    replies: list[Completion]
+    reason: str | None
+    attempted: int
+
+    @property
+    def finished(self) -> int:
+        """How many samples came back with parseable findings."""
+        return len(self.samples)
+
+
+MAX_CONCURRENT_AGENTS = 24
 
 # What a provider status means to whoever has to fix it.
 _STATUS_LABELS: dict[int, str] = {
@@ -646,9 +681,18 @@ async def _review_scope(pr_diff: str, spec: Any, *, incremental: bool) -> tuple[
 
 
 async def _run_agents(
-    prompts: list[tuple[Agent, str]], *, model: str, api_key: str, verbose: bool
+    prompts: list[tuple[Agent, str]],
+    *,
+    model: str,
+    api_key: str,
+    verbose: bool,
+    config: ConsensusConfig,
 ) -> list[AgentRun]:
-    """Run each agent on its prompt concurrently, at most MAX_CONCURRENT_AGENTS at once."""
+    """Run every agent's samples concurrently, at most MAX_CONCURRENT_AGENTS at once.
+
+    One agent with n samples is n independent calls on the same prompt: the
+    model's own variation between them is what the tally measures.
+    """
     async with httpx.AsyncClient() as client:
         semaphore = asyncio.Semaphore(MAX_CONCURRENT_AGENTS)
         return await asyncio.gather(
@@ -663,8 +707,59 @@ async def _run_agents(
                     semaphore=semaphore,
                 )
                 for agent, prompt in prompts
+                for _ in range(config.samples_for(agent.slug))
             )
         )
+
+
+def _collect(runs: list[AgentRun]) -> list[AgentOutcome]:
+    """Group sample runs by agent and decide which agents finished.
+
+    An agent is unfinished only when fewer than a majority of its samples came
+    back, since a timeout is not a dissenting vote. Its reason is the failure
+    class of its first failed sample, which is what the review reports.
+    """
+    order: list[Agent] = []
+    samples: dict[str, list[list[dict[str, Any]]]] = {}
+    replies: dict[str, list[Completion]] = {}
+    reasons: dict[str, list[str]] = {}
+    attempts: dict[str, int] = {}
+    for run in runs:
+        slug = run.agent.slug
+        if slug not in samples:
+            order.append(run.agent)
+            samples[slug], replies[slug], reasons[slug], attempts[slug] = [], [], [], 0
+        attempts[slug] += 1
+        if run.findings is not None:
+            samples[slug].append(run.findings)
+        elif run.reason is not None:
+            reasons[slug].append(run.reason)
+        if run.reply is not None:
+            replies[slug].append(run.reply)
+
+    outcomes: list[AgentOutcome] = []
+    for agent in order:
+        slug = agent.slug
+        attempted = attempts[slug]
+        needed = attempted // 2 + 1
+        finished = len(samples[slug])
+        reason = reasons[slug][0] if reasons[slug] and finished < needed else None
+        if reasons[slug] and reason is None:
+            print(
+                f"Note: {agent.name} lost {attempted - finished} of {attempted} sample(s) "
+                f"({reasons[slug][0]}); {finished} still voted.",
+                file=sys.stderr,
+            )
+        outcomes.append(
+            AgentOutcome(
+                agent=agent,
+                samples=samples[slug] if reason is None else [],
+                replies=replies[slug],
+                reason=reason,
+                attempted=attempted,
+            )
+        )
+    return outcomes
 
 
 def _agent_prompts(
@@ -709,6 +804,7 @@ async def run_review(
     required_low_agents: frozenset[str] = REQUIRED_LOW_AGENTS,
     incremental: bool = False,
     usage_json: str | None = None,
+    samples: int | None = None,
 ) -> int:
     """Run the full review pipeline.
 
@@ -726,6 +822,11 @@ async def run_review(
 
     usage_json, when set, receives each agent's usage record and the total
     as JSON, written after the review is posted.
+
+    samples overrides the configured sample count for every agent, as
+    --samples and GATEHOUSE_SAMPLES do; a bad config exits 2 before any
+    model is called. Until clustering lands, the findings reported are the
+    first finished sample's.
     """
     diff = stdin_diff if stdin_diff is not None else get_git_diff(base, staged)
     spec = parse_ignore(_load_context_file(IGNORE_FILE)) if diff.strip() else None
@@ -745,6 +846,15 @@ async def run_review(
         return 0
 
     agents = get_agents(agent_slugs)
+    try:
+        config = load_config(
+            _load_context_file(CONFIG_FILE),
+            samples if samples is not None else samples_from_env(os.environ.get(SAMPLES_ENV)),
+        )
+        config.check_budget([agent.slug for agent in agents])
+    except ConfigError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
     styleguide = load_styleguide()
     file_listing = filter_listing(get_file_listing(), spec)
     owner = _repo_owner()
@@ -762,11 +872,22 @@ async def run_review(
     )
 
     threads = asyncio.create_task(asyncio.to_thread(fetch_answered_threads)) if comment else None
-    raw = await _run_agents(prompts, model=model, api_key=api_key, verbose=verbose)
+    raw = await _run_agents(prompts, model=model, api_key=api_key, verbose=verbose, config=config)
+    outcomes = _collect(raw)
 
-    failed = tuple((run.agent.name, run.reason or "unknown") for run in raw if run.findings is None)
-    all_results: Results = [(run.agent, run.findings) for run in raw if run.findings is not None]
-    usage = [_usage_record(run.agent.slug, run.reply) for run in raw if run.reply is not None]
+    failed = tuple(
+        (outcome.agent.name, outcome.reason or "unknown")
+        for outcome in outcomes
+        if outcome.reason is not None
+    )
+    all_results: Results = [
+        (outcome.agent, outcome.samples[0]) for outcome in outcomes if outcome.samples
+    ]
+    usage = [
+        _usage_record(outcome.agent.slug, reply)
+        for outcome in outcomes
+        for reply in outcome.replies
+    ]
     fallbacks = _report_usage(usage)
 
     haystack = _evidence_haystack(diff, styleguide, constitution)
@@ -784,7 +905,7 @@ async def run_review(
     if failed:
         names = ", ".join(f"{name} ({reason})" for name, reason in failed)
         print(f"Review incomplete: {names} could not finish.", file=sys.stderr)
-        if not advisory or review_failed(len(failed), len(raw)):
+        if not advisory or review_failed(len(failed), len(outcomes)):
             exit_code = 2
     print_summary(all_results, exit_code)
 
@@ -797,7 +918,7 @@ async def run_review(
             **dropped,
             scope=scope,
             fallbacks=fallbacks,
-            agent_count=len(raw),
+            agent_count=len(outcomes),
             commit_id=os.environ.get("GATEHOUSE_HEAD_SHA", ""),
         )
     _save_usage(usage, usage_json)

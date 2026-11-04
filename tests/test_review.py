@@ -19,9 +19,11 @@ from gatehouse.agents import (
     BUG_HUNTER,
     CONSISTENCY_CHECK,
     DOCUMENTATION,
+    GENERAL,
     SECURITY_SCAN,
     TEST_COVERAGE,
 )
+from gatehouse.config import CONFIG_FILE
 from gatehouse.llm import Completion
 from gatehouse.review import (
     BLOCKING_SEVERITIES,
@@ -1440,11 +1442,11 @@ async def test_run_review_logs_usage_and_reports_fallback(
     ) in err
     assert "agent=security model=google/gemini-3.1-flash-lite" in err
     assert "fallback=yes" in err
-    assert "usage: calls=2 prompt=200 completion=20 reasoning=0 cost=$0.0020 fallback=1/2" in err
+    assert "usage: calls=6 prompt=600 completion=60 reasoning=0 cost=$0.0060 fallback=3/6" in err
     assert "| **total** |" in summary.read_text()
-    assert json.loads(usage_json.read_text())["total"]["fallback"] == 1
+    assert json.loads(usage_json.read_text())["total"]["fallback"] == 3
     kwargs = post.call_args.kwargs
-    assert kwargs["fallbacks"] == {"google/gemini-3.1-flash-lite": 1}
+    assert kwargs["fallbacks"] == {"google/gemini-3.1-flash-lite": 3}
     assert kwargs["agent_count"] == 2
     assert kwargs["scope"] == "Full review."
 
@@ -1673,5 +1675,152 @@ async def test_run_review_sends_owner_to_every_agent() -> None:
     ):
         await run_review(base="main", agent_slugs=["bugs", "constitution"], api_key="test-key")
     prompts = [call.args[2] for call in model.await_args_list]
-    assert len(prompts) == 2
+    assert len(prompts) == 6  # two blocking agents, three samples each
     assert all(prompt.startswith("## Repository") for prompt in prompts)
+
+
+@pytest.mark.asyncio
+async def test_fan_out_follows_the_configured_sample_counts() -> None:
+    """A blocking agent runs three samples, an advisory agent one."""
+    with (
+        patch("gatehouse.review.get_git_diff", return_value=MOCK_DIFF),
+        patch("gatehouse.review.get_file_listing", return_value=None),
+        patch("gatehouse.review.load_styleguide", return_value=None),
+        patch(
+            "gatehouse.review.call_model",
+            new_callable=AsyncMock,
+            return_value=Completion("[]"),
+        ) as model,
+    ):
+        exit_code = await run_review(
+            base="main", agent_slugs=["bugs", "general"], api_key="test-key"
+        )
+    assert exit_code == 0
+    prompts = [call.args[1] for call in model.await_args_list]
+    assert prompts.count(BUG_HUNTER.system_prompt) == 3
+    assert prompts.count(GENERAL.system_prompt) == 1
+
+
+@pytest.mark.asyncio
+async def test_samples_one_is_a_single_call_per_agent() -> None:
+    """--samples 1 reproduces pre-consensus behaviour."""
+    with (
+        patch("gatehouse.review.get_git_diff", return_value=MOCK_DIFF),
+        patch("gatehouse.review.get_file_listing", return_value=None),
+        patch("gatehouse.review.load_styleguide", return_value=None),
+        patch(
+            "gatehouse.review.call_model",
+            new_callable=AsyncMock,
+            return_value=Completion("[]"),
+        ) as model,
+    ):
+        await run_review(
+            base="main", agent_slugs=["bugs", "general"], api_key="test-key", samples=1
+        )
+    assert model.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_env_samples_sets_the_count(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GATEHOUSE_SAMPLES", "2")
+    with (
+        patch("gatehouse.review.get_git_diff", return_value=MOCK_DIFF),
+        patch("gatehouse.review.get_file_listing", return_value=None),
+        patch("gatehouse.review.load_styleguide", return_value=None),
+        patch(
+            "gatehouse.review.call_model",
+            new_callable=AsyncMock,
+            return_value=Completion("[]"),
+        ) as model,
+    ):
+        await run_review(base="main", agent_slugs=["bugs", "general"], api_key="test-key")
+    assert model.await_count == 4
+
+
+@pytest.mark.asyncio
+async def test_samples_argument_beats_the_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GATEHOUSE_SAMPLES", "5")
+    with (
+        patch("gatehouse.review.get_git_diff", return_value=MOCK_DIFF),
+        patch("gatehouse.review.get_file_listing", return_value=None),
+        patch("gatehouse.review.load_styleguide", return_value=None),
+        patch(
+            "gatehouse.review.call_model",
+            new_callable=AsyncMock,
+            return_value=Completion("[]"),
+        ) as model,
+    ):
+        await run_review(base="main", agent_slugs=["bugs"], api_key="test-key", samples=2)
+    assert model.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_a_minority_of_lost_samples_still_reviews(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """One sample of three timing out is not a dissent: the other two decide."""
+    calls = {"n": 0}
+
+    async def fake(*_a: Any, **_k: Any) -> Completion:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise httpx.TimeoutException("too slow")
+        return Completion("[]")
+
+    with (
+        patch("gatehouse.review.get_git_diff", return_value=MOCK_DIFF),
+        patch("gatehouse.review.get_file_listing", return_value=None),
+        patch("gatehouse.review.load_styleguide", return_value=None),
+        patch("gatehouse.review.call_model", side_effect=fake),
+    ):
+        exit_code = await run_review(base="main", agent_slugs=["bugs"], api_key="test-key")
+    assert exit_code == 0
+    err = capsys.readouterr().err
+    assert "lost 1 of 3 sample(s)" in err
+    assert "2 still voted" in err
+
+
+@pytest.mark.asyncio
+async def test_a_majority_of_lost_samples_is_an_unfinished_agent(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Two of three samples lost is an outage, not a review."""
+    calls = {"n": 0}
+
+    async def fake(*_a: Any, **_k: Any) -> Completion:
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            raise httpx.TimeoutException("too slow")
+        return Completion("[]")
+
+    with (
+        patch("gatehouse.review.get_git_diff", return_value=MOCK_DIFF),
+        patch("gatehouse.review.get_file_listing", return_value=None),
+        patch("gatehouse.review.load_styleguide", return_value=None),
+        patch("gatehouse.review.call_model", side_effect=fake),
+    ):
+        exit_code = await run_review(base="main", agent_slugs=["bugs"], api_key="test-key")
+    assert exit_code == 2
+    assert "Bug Hunter (timeout) could not finish" in capsys.readouterr().err
+
+
+@pytest.mark.asyncio
+async def test_a_bad_repo_config_exits_two_before_any_model_call(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An unreachable threshold is a usage error, and no tokens are spent on it."""
+
+    def context(relpath: str) -> str | None:
+        return "[consensus]\nsamples = 2\nblock = 3\n" if relpath == CONFIG_FILE else None
+
+    with (
+        patch("gatehouse.review.get_git_diff", return_value=MOCK_DIFF),
+        patch("gatehouse.review.get_file_listing", return_value=None),
+        patch("gatehouse.review.load_styleguide", return_value=None),
+        patch("gatehouse.review._load_context_file", side_effect=context),
+        patch("gatehouse.review.call_model", new_callable=AsyncMock) as model,
+    ):
+        exit_code = await run_review(base="main", agent_slugs=["bugs"], api_key="test-key")
+    assert exit_code == 2
+    assert model.await_count == 0
+    assert "never be reached" in capsys.readouterr().err
