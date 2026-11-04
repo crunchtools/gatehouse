@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -23,7 +23,17 @@ from gatehouse.consensus import (
     severity_rank,
 )
 from gatehouse.llm import Completion
-from gatehouse.review import AgentOutcome, _squash, _tally, run_review
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+from gatehouse.review import (
+    AgentOutcome,
+    _consensus_records,
+    _squash,
+    _tally,
+    run_review,
+)
 
 DIFF = """\
 diff --git a/src/app.py b/src/app.py
@@ -388,3 +398,74 @@ async def test_a_cluster_is_reanchored_to_a_member_line_inside_the_diff() -> Non
     assert len(posted) == 1
     assert posted[0]["lineStart"] == 5
     assert post.call_args.kwargs["offdiff"] == 0
+
+
+@pytest.mark.asyncio
+async def test_consensus_json_records_every_reported_finding(tmp_path: Path) -> None:
+    """The record is what makes two runs comparable: identity, votes, thresholds."""
+    out = tmp_path / "consensus.json"
+    replies = [
+        _reply([finding("total = total / count")]),
+        _reply([finding("total = total / count")]),
+        _reply([]),
+    ]
+    with (
+        patch("gatehouse.review.get_file_listing", return_value=None),
+        patch("gatehouse.review.load_styleguide", return_value=None),
+        patch("gatehouse.review.call_model", new_callable=AsyncMock, side_effect=replies),
+    ):
+        await run_review(
+            stdin_diff=DIFF,
+            agent_slugs=["bugs"],
+            api_key="k",
+            consensus_json=str(out),
+        )
+    written = json.loads(out.read_text())
+    assert len(written["findings"]) == 1
+    record = written["findings"][0]
+    assert record["id"] == "bugs:bug:src/app.py:total=total/count"
+    assert (record["votes"], record["samples"]) == (2, 3)
+    assert (record["report"], record["block"]) == (2, 3)
+    assert record["blocks"] is False
+    assert record["blockingVotes"] == 2
+    assert "judged" in written["dropped"]
+
+
+@pytest.mark.asyncio
+async def test_consensus_json_is_not_written_without_the_flag(tmp_path: Path) -> None:
+    with (
+        patch("gatehouse.review.get_file_listing", return_value=None),
+        patch("gatehouse.review.load_styleguide", return_value=None),
+        patch("gatehouse.review.call_model", new_callable=AsyncMock, return_value=_reply([])),
+    ):
+        await run_review(stdin_diff=DIFF, agent_slugs=["bugs"], api_key="k")
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_two_runs_of_the_same_findings_produce_the_same_ids() -> None:
+    """A run-to-run comparison must not depend on prose or line numbers."""
+    first = _tally(
+        [
+            AgentOutcome(
+                agent=BUG_HUNTER,
+                samples=[[finding("total = total / count", line=4, description="one")]],
+                replies=[],
+                reason=None,
+            )
+        ],
+        load_config(None, samples_override=1),
+    )
+    second = _tally(
+        [
+            AgentOutcome(
+                agent=BUG_HUNTER,
+                samples=[[finding("total  =  total / count", line=9, description="two")]],
+                replies=[],
+                reason=None,
+            )
+        ],
+        load_config(None, samples_override=1),
+    )
+    config = load_config(None, samples_override=1)
+    ids = {r["id"] for r in _consensus_records(first, config)}
+    assert ids == {r["id"] for r in _consensus_records(second, config)}

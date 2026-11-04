@@ -21,7 +21,7 @@ already judged — `_drop_reraised` needs an answered GitHub thread, so it does 
 
 This spec fixes the first with agreement voting and the second with a committed ledger of judged
 findings, and makes the vote counts configurable. It ships in three releases: 0.21.0 consensus
-and config, 0.22.0 the ledger, 0.23.0 measurement.
+and config, 0.22.0 the ledger and the measurement.
 
 ## Non-goals
 
@@ -49,13 +49,23 @@ and config, 0.22.0 the ledger, 0.23.0 measurement.
 ## The contract
 
 "Run once, find everything, fix them all, pass next run" is not achievable for an LLM gate: a fix
-legitimately creates new surface. What Gatehouse promises instead:
+legitimately creates new surface. Nor is "the same findings every run": the measurement below
+shows the reported set churning, and a promise our own eval contradicts is worse than a narrow
+one. What Gatehouse promises is only what it can defend:
 
-- **Same tree, same verdict** — agreement across samples, not a single roll.
-- **A judged finding never comes back** while the code it quotes is still present.
-- **Only unanimous critical/high blocks locally.** One dissenting sample never holds a commit.
+- **Same tree, same pass-or-fail verdict.** A tree that fails must not pass on the next run, and
+  a tree that passes must not fail. This is the promise, because it is the one that costs a build
+  when it breaks.
+- **A judged finding never comes back** while the code it quotes is still present. Deterministic:
+  no sampling is involved.
+- **Only a unanimous critical/high can fail a run**, from a blocking agent. One dissenting sample
+  never holds a commit.
 - **An honest new defect created by a fix is still raised**, in CI, where `Gatehouse triage` owns
   it and no commit is held hostage.
+
+What is **measured and not promised**: which findings reach unanimity, and the reported set as a
+whole. Both are tracked with floors (see Measurement) and watched weekly. A number that moves
+with model sampling is a thermometer, not a contract.
 
 ## Behavior
 
@@ -129,27 +139,42 @@ dies with the lines it quotes and nothing else.
 
 The ledger is read from the pull request **head**, since its entries describe that PR's own code —
 except for a fork pull request, where the head copy is attacker-controlled and the base copy is
-used instead. Every entry added in a PR is posted as a finding requiring a triage reply, unless a
-thread for the same fingerprint already exists.
+used instead. Every entry added in a PR is posted as a MEDIUM finding requiring a triage reply, carried by a
+`Ledger` pseudo-agent that reviews nothing and cannot block. The existing re-raise window
+(same agent, same file, within five lines of an answered thread) dedupes it once answered, so no
+separate fingerprint is kept.
 
-### Measurement (0.23.0)
+### Measurement (0.22.0)
 
-`--consensus-json` writes per-cluster votes, agents and severities. A scheduled eval runs three
-reviews over a corpus of archived diffs and reports cluster-set Jaccard as the stability metric.
-It is never a required status check: a live-model eval cannot gate a merge.
+`--consensus-json` writes per-finding votes, thresholds and verdict. `scripts/stability_eval.py`
+reviews each diff in a corpus several times and reports three numbers, in order of what they are
+worth:
+
+1. **verdict** — did every run agree on pass-or-fail. This is the promise, and it MUST hold for
+   every diff in the corpus.
+2. **blocking set** — Jaccard over the findings that failed the run. Floor 0.50. Measured 0.56
+   and 1.00 on two rounds over the same corpus, so it wobbles and is not promised.
+3. **reported set** — Jaccard over everything shown, including the majority tier. Floor 0.20.
+   Measured 0.25 to 0.40. This tier is the agreement boundary itself, so it churns by
+   construction.
+
+A weekly workflow runs it and prints the table. It is never a required status check: a
+live-model eval cannot gate a merge, and a floor is a warning to investigate, not a verdict.
 
 ## Scope
 
 - New `src/gatehouse/config.py`, `src/gatehouse/defaults.toml`, `src/gatehouse/ledger.py`
 - `review.py`: n-sample fan-out, clustering, tally, filter reorder, unfinished-agent rule
 - `cli.py`: `--samples`, `--consensus-json`
-- `output.py`, `github.py`: vote counts, `votes=` and `fp=` in the hidden comment marker
+- `output.py`, `github.py`: vote counts, and `votes=` in the hidden comment marker
 - `.github/workflows/review.yml`: pass the head repo and sha for the ledger fetch
 - No change to the pre-commit hook line, so no calling repository needs an edit
 
 ## Acceptance
 
-1. Two runs on an unchanged tree report the same clusters.
+1. Three runs on an unchanged tree agree on pass-or-fail for every diff in the corpus, and the
+   blocking and reported sets stay above their floors (0.50 and 0.20). Consensus beats
+   `--samples 1` on the same corpus.
 2. Only a unanimous critical/high from a blocking agent exits 1.
 3. `--samples 1` restores single-sample thresholds.
 4. An unreachable threshold or an out-of-range sample count exits 2.

@@ -5,6 +5,57 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-11-03
+
+### Added
+
+- **The finding ledger.** `gatehouse-findings.toml`, committed at the reviewed
+  repository's root, records findings already judged (`not-a-bug` or
+  `deferred`) and they are not raised again. Gatehouse never writes it — the
+  pre-commit hook mounts the repository read-only — so it prints each entry
+  ready to paste and the author fills in the reason and commits it (#104).
+- An entry applies while the code it quotes is still present, matched by
+  containment so a judgement survives the next run quoting a little more or
+  less of it; once that code is gone the entry is stale and is printed for
+  deletion. There is no `fixed` status, and a suppression cannot outlive the
+  lines it covered.
+- An entry added on a branch is posted on its pull request as a MEDIUM finding
+  a maintainer has to answer, so silencing the gate is never a quiet change.
+  The existing re-raise window dedupes it once answered.
+- In CI the ledger is read from the pull request's head, since it describes
+  that branch's own code — except from a fork, whose head copy is read from the
+  base instead: a fork must not be able to suppress its own findings.
+  `review.yml` passes `GATEHOUSE_HEAD_REPO` to tell the two apart.
+- A malformed ledger is named on stderr and ignored, never fatal.
+- `--consensus-json PATH` writes one record per reported finding: its identity
+  (agent, category, file and squashed quote), votes, blocking votes, the
+  thresholds it was judged against and whether it blocked.
+- `scripts/stability_eval.py` reviews each diff in `tests/corpus` several times
+  and reports the finding-set Jaccard index, with `--samples 1` for the
+  pre-consensus baseline. A weekly `Stability` workflow runs it into the step
+  summary; it is never a required check.
+
+### Measured
+
+Three diffs, three runs each, including one carrying planted defects:
+
+- **Pass-or-fail verdict: agreed every time**, on every diff, in both rounds.
+  This is what the spec now promises, because a tree that passes once and
+  fails the next time is what costs a build.
+- **Blocking set** (which findings reached unanimity): 0.56 in one round, 1.00
+  in the next. It wobbles; floor 0.50, measured, not promised.
+- **Reported set** (everything shown, majority tier included): 0.25 to 0.40,
+  against **0.22** for the pre-consensus baseline on the same corpus. Floor
+  0.20. This tier is the agreement boundary itself, so it churns by
+  construction.
+
+Spec 003's contract was narrowed to match: the verdict and the ledger are the
+promises, the finding sets are measurements with floors. An earlier draft
+promised "same tree, same verdict" on the strength of a corpus in which
+nothing ever blocked — empty versus empty scores a perfect 1.00 and proves
+nothing. The corpus now carries a diff with real defects in it for that
+reason.
+
 ## [0.21.0] - 2026-11-03
 
 ### Added

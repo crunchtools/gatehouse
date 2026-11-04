@@ -1,6 +1,6 @@
 # gatehouse Constitution
 
-> **Version:** 1.6.0
+> **Version:** 1.7.0
 > **Ratified:** 2026-04-04
 > **Amended:** 2026-11-03
 > **Status:** Active
@@ -73,6 +73,16 @@ Under the fork-safe workflow `gatehouse.toml` MUST be loaded from the trusted ba
 
 `.gatehouse-ignore` (gitignore syntax, repo root) removes matching files from the diff and file listing before review. Under the fork-safe workflow it MUST be loaded from the trusted base, never the PR head. A change to `.gatehouse-ignore` itself is always reviewed, and the posted review states how many files were skipped.
 
+## Finding Ledger
+
+`gatehouse-findings.toml` (repo root, committed) records findings already judged. Status MUST be `not-a-bug` or `deferred`; a deferred entry's reason MUST link the issue tracking it, and any reason MUST reach the 20 characters the triage check requires of a reply. There is no `fixed` status: an entry applies while the evidence it quotes is still present and is reported stale once it is gone, so a suppression cannot outlive the code it covered.
+
+Gatehouse MUST NOT write this file. The pre-commit hook mounts the reviewed repository read-only; gatehouse prints entries ready to paste and the author commits them. A malformed entry MUST be named and ignored, never fatal: a ledger can only make a review say less.
+
+Entries match findings by agent, category, file and evidence containment. A finding with no usable evidence MUST NOT be matched, so it can never be suppressed.
+
+Under the fork-safe workflow the ledger is loaded from the pull request's head, because it describes that branch's own code — except when the head is a fork, where it MUST be loaded from the base instead: a fork MUST NOT be able to suppress the findings on its own pull request. An entry present on the head and not on the base MUST be posted as a finding requiring a triage answer.
+
 ## Container
 
 Built on the `quay.io/hummingbird/python:3.14-fips-builder` image (git is needed at runtime) with a venv. Published to `quay.io/crunchtools/gatehouse` and `ghcr.io/crunchtools/gatehouse`.
@@ -88,3 +98,4 @@ Built on the `quay.io/hummingbird/python:3.14-fips-builder` image (git is needed
 | 1.4.0 | 2026-10-10 | A review fewer than half of whose agents finished fails, under `--advisory` too, and fails triage (0.16.0) |
 | 1.5.0 | 2026-10-11 | Reusable workflows are called at the major tag, which a release moves after its images are pushed; a change needing a caller edit is a new major (0.17.0) |
 | 1.6.0 | 2026-11-03 | Consensus voting over `n` samples per agent, clustering by evidence containment, and `gatehouse.toml` configuration loaded from the trusted base (0.21.0, spec 003) |
+| 1.7.0 | 2026-11-03 | The finding ledger: `gatehouse-findings.toml`, read-only, matched by containment, stale once its quoted code is gone, head-side except on a fork (0.22.0, spec 003) |

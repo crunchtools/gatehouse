@@ -29,8 +29,11 @@ from gatehouse.config import (
     samples_from_env,
 )
 from gatehouse.consensus import (
+    BLOCKING_VOTES_KEY,
     BLOCKS_KEY,
     MEMBER_LINES_KEY,
+    SAMPLES_KEY,
+    VOTES_KEY,
     blocks,
     blocks_the_run,
     cluster_samples,
@@ -54,6 +57,22 @@ from gatehouse.ignore import (
     parse_ignore,
     restrict_diff,
 )
+from gatehouse.ledger import (
+    LEDGER_FILE,
+    MIN_REASON_CHARS,
+    Entry,
+    FileView,
+    entries_added,
+    entry_line,
+    judgement,
+    parse_ledger,
+    render_entry,
+    stale,
+    suppression_finding,
+)
+from gatehouse.ledger import (
+    key as entry_key,
+)
 from gatehouse.llm import DEFAULT_MODEL, Completion, call_model
 from gatehouse.output import format_results, print_summary, strip_ansi
 from gatehouse.refs import cited_refs, ref_exists
@@ -66,6 +85,7 @@ if TYPE_CHECKING:
 CONFIDENCE_THRESHOLD = 80
 
 SAMPLES_ENV = "GATEHOUSE_SAMPLES"
+HEAD_REPO_ENV = "GATEHOUSE_HEAD_REPO"
 
 
 # LOWs from these agents (by name, as printed in each finding) are required
@@ -345,6 +365,61 @@ def _squash(text: str) -> str:
     return "".join(strip_ansi(text).split())
 
 
+def _file_views(diff: str) -> dict[str, FileView]:
+    """Each path the diff shows, as its content before the change and after.
+
+    Lets a ledger entry be judged against its own file, and only on what this
+    change did to it: an entry is stale when its quote was there before and is
+    not there after. A deleted file's new side is /dev/null, so its "after" is
+    empty, which is exactly right — the code it quoted really is gone.
+    """
+    # Accumulated as lists and joined once: appending to a str per diff line
+    # copies the whole accumulation each time, which is quadratic on a large
+    # file's diff.
+    before: dict[str, list[str]] = {}
+    after: dict[str, list[str]] = {}
+    path = ""
+    removed = ""
+    # A removed source line that itself starts with "-- " reaches the diff as
+    # "--- ...", which is indistinguishable from a file header by prefix
+    # alone. Headers only appear before a file's first hunk, so position is
+    # what tells them apart.
+    in_hunk = False
+    for line in diff.splitlines():
+        if line.startswith("diff --git "):
+            in_hunk = False
+            continue
+        if line.startswith("@@"):
+            in_hunk = True
+            continue
+        if not in_hunk and line.startswith("--- "):
+            removed = _diff_path(line)
+            continue
+        if not in_hunk and line.startswith("+++ "):
+            path = _diff_path(line) or removed
+            if path:
+                before.setdefault(path, [])
+                after.setdefault(path, [])
+            continue
+        if not path or not in_hunk:
+            continue
+        marker = line[:1]
+        body = _squash(line[1:] if marker in ("+", "-", " ") else line)
+        if marker != "+":
+            before[path].append(body)
+        if marker != "-":
+            after[path].append(body)
+    return {path: FileView("".join(before[path]), "".join(after[path])) for path in before}
+
+
+def _diff_path(line: str) -> str:
+    """The path a diff's ``---``/``+++`` line names, or "" for /dev/null."""
+    target = line[4:].strip()
+    if target == "/dev/null":
+        return ""
+    return target[2:] if target.startswith(("a/", "b/")) else target
+
+
 def _evidence_haystack(diff: str, *context: str | None) -> str:
     """Everything an agent was shown, whitespace removed, diff markers dropped.
 
@@ -545,6 +620,94 @@ def _filter_clusters(
     return results, {"offdiff": offdiff, "reraised": reraised, "capped": capped}
 
 
+LEDGER_AGENT = Agent(
+    name="Ledger",
+    slug="ledger",
+    blocking=False,
+    system_prompt="",
+)
+
+
+def _ledger_texts() -> tuple[str | None, str | None]:
+    """The ledger as this branch has it, and as the base branch has it.
+
+    The base copy is None outside a pull request, where there is nothing to
+    compare against: a local run is not the place to ask for approval of an
+    entry the developer is in the middle of writing.
+    """
+    source = _ledger_source()
+    if source is None:
+        path = Path(LEDGER_FILE)
+        return (path.read_text() if path.exists() else None), None
+    token = os.environ.get("GITHUB_TOKEN", "")
+    head = fetch_repo_file(source[0], source[1], LEDGER_FILE, token)
+    context = _context_source()
+    base = None
+    if context is not None and context != source:
+        base = fetch_repo_file(context[0], context[1], LEDGER_FILE, token)
+    elif context is not None:
+        base = head  # a fork's ledger already came from the base
+    return head, base
+
+
+def _suppressions(head_text: str | None, base_text: str | None) -> Results:
+    """The entries this branch adds, as findings to answer on the pull request.
+
+    A base branch with no ledger at all is an empty one, not a reason to skip
+    the ask: the first entry a repository ever commits is exactly the one a
+    maintainer should see.
+    """
+    if head_text is None:
+        return []
+    head, _ = parse_ledger(head_text, _squash)
+    base, _ = parse_ledger(base_text or "", _squash)
+    lines = {entry_key(entry): entry_line(head_text, entry) for entry in entries_added(head, base)}
+    findings = [
+        suppression_finding(entry, lines[entry_key(entry)])
+        for entry in entries_added(head, base)
+        if lines[entry_key(entry)]
+    ]
+    return [(LEDGER_AGENT, findings)] if findings else []
+
+
+def _ledger_source() -> tuple[str, str] | None:
+    """The (repo, ref) to read the ledger from, or None to read the working tree.
+
+    The ledger is the mirror image of the rules: a gatehouse.toml or styleguide
+    must come from the trusted BASE, because a pull request may not choose the
+    rules it is judged by, while the ledger describes the pull request's OWN
+    code and so comes from its head.
+
+    Except from a fork. There the head copy is written by someone who does not
+    own this repository, and an entry suppresses a finding, so a fork would be
+    able to silence its own review. A fork's judgements are read from the base
+    instead: they take effect once a maintainer has merged them, and until then
+    a fork contributor answers on the thread, which triage requires anyway.
+    """
+    context = _context_source()
+    if context is None:
+        return None
+    base_repo, base_ref = context
+    head_repo = os.environ.get(HEAD_REPO_ENV, "")
+    head_sha = os.environ.get("GATEHOUSE_HEAD_SHA", "")
+    if head_repo and head_sha and head_repo == base_repo:
+        return head_repo, head_sha
+    return base_repo, base_ref
+
+
+def _ledger_entries(text: str | None) -> list[Entry]:
+    """The judged findings for this review, from the ledger text.
+
+    A problem with an entry is named on stderr and the entry ignored: a ledger
+    can only ever make a review say less, so a typo in one must not stop the
+    review that would have caught it.
+    """
+    entries, problems = parse_ledger(text, _squash)
+    for problem in problems:
+        print(f"Ignoring {problem}", file=sys.stderr)
+    return entries
+
+
 def _consensus_config(agents: list[Agent], samples: int | None) -> ConsensusConfig | None:
     """The sample counts and thresholds for this review, or None when the config is bad.
 
@@ -585,6 +748,87 @@ def _filter_outcomes(
             counts[key] += dropped[key]
         filtered.append(outcome._replace(samples=[sample for _, sample in kept]))
     return filtered, counts
+
+
+def _drop_judged(results: Results, entries: list[Entry]) -> tuple[Results, int]:
+    """Drop the findings the ledger has already judged.
+
+    A judged finding is not re-raised while the code it quotes is still there,
+    which is what lets a developer run the gate again after answering it. A
+    finding that blocks is dropped too: the judgement is the answer to it, and
+    an entry has to be committed and reviewable to exist at all.
+    """
+    if not entries:
+        return results, 0
+
+    def judged(agent: Agent, finding: dict[str, Any]) -> bool:
+        evidence = _squash(str(finding.get("evidence", "")))
+        return judgement(entries, agent.slug, finding, evidence) is not None
+
+    return _keep_where(results, lambda agent, f: not judged(agent, f))
+
+
+def _decide(
+    outcomes: list[AgentOutcome],
+    config: ConsensusConfig,
+    ledger: list[Entry],
+    haystack: str,
+    *,
+    answered: list[tuple[str, str, int]],
+    required_low: frozenset[str],
+    anchors: dict[str, set[int]] | None,
+    suppressions: Results,
+) -> tuple[Results, dict[str, int]]:
+    """Turn every agent's samples into the findings this review reports.
+
+    The whole verdict in one place, in order: per-sample filters, the tally
+    that makes votes out of samples, the ledger's judgements, then the filters
+    that apply to a tallied finding. Returns the findings and how many each
+    step dropped, keyed as post_pr_review takes them.
+    """
+    outcomes, dropped = _filter_outcomes(outcomes, haystack)
+    results = _tally(outcomes, config)
+    results, judged_count = _drop_judged(results, ledger)
+    results += suppressions
+    results, cluster_dropped = _filter_clusters(results, answered, required_low, anchors)
+    dropped.update(cluster_dropped)
+    dropped["judged"] = judged_count
+    return results, dropped
+
+
+def _report_ledger(
+    results: Results,
+    entries: list[Entry],
+    judged_count: int = 0,
+    reviewed: dict[str, FileView] | None = None,
+) -> None:
+    """Report the ledger: what it suppressed, what has gone stale, what to paste.
+
+    An entry is judged stale only when this change removed the code it quotes
+    from the file it names: a review sees hunks, not whole files, so absence
+    alone says nothing.
+    """
+    reviewed = reviewed if reviewed is not None else {}
+    if judged_count:
+        print(
+            f"Skipped {judged_count} finding(s) already judged in {LEDGER_FILE}.",
+            file=sys.stderr,
+        )
+    for entry in stale(entries, reviewed):
+        print(
+            f"Stale {LEDGER_FILE} entry: the code it quotes is gone from "
+            f"{entry.file} ({entry.quote.splitlines()[0][:60]}). Delete it.",
+            file=sys.stderr,
+        )
+    pasteable = [
+        render_entry(agent.slug, finding) for agent, findings in results for finding in findings
+    ]
+    if pasteable:
+        print(
+            f"\nTo judge a finding, add it to {LEDGER_FILE} with a reason "
+            f"of at least {MIN_REASON_CHARS} characters:\n"
+        )
+        print("\n\n".join(pasteable))
 
 
 def _tally(outcomes: list[AgentOutcome], config: ConsensusConfig) -> Results:
@@ -756,6 +1000,48 @@ def _save_usage(records: list[dict[str, Any]], usage_json: str | None) -> None:
         Path(usage_json).write_text(json.dumps({"agents": records, "total": total}, indent=2))
 
 
+def _consensus_records(results: Results, config: ConsensusConfig) -> list[dict[str, Any]]:
+    """One record per reported finding: who found it, how many samples agreed, what it cost it.
+
+    ``id`` is what makes two runs' findings the same finding — agent, category,
+    file and the squashed quote — so two runs over one diff can be compared
+    without matching prose or line numbers.
+    """
+    records: list[dict[str, Any]] = []
+    for agent, findings in results:
+        consensus = config.for_agent(agent.slug)
+        for finding in findings:
+            quote = _squash(str(finding.get("evidence", "")))
+            records.append(
+                {
+                    "id": f"{agent.slug}:{finding.get('category', '')}:"
+                    f"{finding.get('file', '')}:{quote}",
+                    "agent": agent.slug,
+                    "category": finding.get("category", ""),
+                    "file": finding.get("file", ""),
+                    "severity": finding.get("severity", "low"),
+                    "confidence": finding.get("confidence", 0),
+                    "votes": finding.get(VOTES_KEY, 1),
+                    "blockingVotes": finding.get(BLOCKING_VOTES_KEY, 0),
+                    "samples": finding.get(SAMPLES_KEY, 1),
+                    "report": consensus.report,
+                    "block": consensus.block,
+                    "blocks": blocks_the_run(finding),
+                }
+            )
+    return records
+
+
+def _save_consensus(
+    results: Results, config: ConsensusConfig, dropped: dict[str, int], path: str | None
+) -> None:
+    """Write the per-finding vote record to ``path``, with the drop counts beside it."""
+    if not path:
+        return
+    records = _consensus_records(results, config)
+    Path(path).write_text(json.dumps({"findings": records, "dropped": dropped}, indent=2) + "\n")
+
+
 def _incremental_diff(pr_diff: str) -> tuple[str, str] | None:
     """Return (diff, scope line) covering only commits since the last complete review.
 
@@ -925,6 +1211,7 @@ async def run_review(
     incremental: bool = False,
     usage_json: str | None = None,
     samples: int | None = None,
+    consensus_json: str | None = None,
 ) -> int:
     """Run the full review pipeline.
 
@@ -942,6 +1229,10 @@ async def run_review(
 
     usage_json, when set, receives each agent's usage record and the total
     as JSON, written after the review is posted.
+
+    consensus_json, when set, receives one record per reported finding: its
+    identity, votes, thresholds and whether it blocked, for measuring how
+    stable the reviewer is across runs.
 
     samples overrides the configured sample count for every agent, as
     --samples and GATEHOUSE_SAMPLES do; a bad config exits 2 before any model
@@ -965,6 +1256,8 @@ async def run_review(
         print("No changes to review since the last review.")
         return 0
 
+    ledger_texts = _ledger_texts()
+    ledger = _ledger_entries(ledger_texts[0])
     agents = get_agents(agent_slugs)
     config = _consensus_config(agents, samples)
     if config is None:
@@ -1003,15 +1296,20 @@ async def run_review(
 
     haystack = _evidence_haystack(diff, styleguide, constitution)
     answered = await threads if threads else []
-    outcomes, dropped = _filter_outcomes(outcomes, haystack)
-    all_results = _tally(outcomes, config)
-    all_results, cluster_dropped = _filter_clusters(
-        all_results, answered, required_low_agents, anchors
+    all_results, dropped = _decide(
+        outcomes,
+        config,
+        ledger,
+        haystack,
+        answered=answered,
+        required_low=required_low_agents,
+        anchors=anchors,
+        suppressions=_suppressions(*ledger_texts) if comment else [],
     )
-    dropped.update(cluster_dropped)
 
     if all_results or not failed:  # with no agent finished, there are no results to call clean
         format_results(all_results)
+    _report_ledger(all_results, ledger, dropped["judged"], _file_views(diff))
 
     has_blocking = _has_blocking_findings(all_results)
     request_changes = has_blocking and not advisory
@@ -1036,5 +1334,6 @@ async def run_review(
             commit_id=os.environ.get("GATEHOUSE_HEAD_SHA", ""),
         )
     _save_usage(usage, usage_json)
+    _save_consensus(all_results, config, dropped, consensus_json)
 
     return exit_code

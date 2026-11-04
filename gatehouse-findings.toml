@@ -1,0 +1,18 @@
+# Findings already judged, so a review stops raising them. Gatehouse only ever
+# reads this file: it prints an entry to paste when it reports a finding, and
+# whoever judged the finding fills in the reason and commits it.
+#
+# status is "not-a-bug" or "deferred". A deferred entry's reason must link the
+# issue tracking it. There is no "fixed": an entry stops applying by itself
+# once the code it quotes is gone, and gatehouse then prints it as stale.
+#
+# An entry added on a branch is posted on its pull request as a finding a
+# maintainer has to answer, because silencing the gate is not a quiet change.
+#
+# [[findings]]
+# agent = "bugs"
+# category = "bug"
+# file = "src/example.py"
+# evidence = "total = total / count"
+# status = "not-a-bug"
+# reason = "count is validated non-zero by the only caller, see guard above"

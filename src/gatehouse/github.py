@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 import httpx
 
 from gatehouse.consensus import SAMPLES_KEY, VOTES_KEY
+from gatehouse.ledger import LEDGER_FILE
 from gatehouse.output import strip_ansi
 
 if TYPE_CHECKING:
@@ -277,6 +278,7 @@ def format_review_body(
     reraised: int = 0,
     capped: int = 0,
     offdiff: int = 0,
+    judged: int = 0,
     scope: str = "",
     fallbacks: dict[str, int] | None = None,
     agent_count: int = 0,
@@ -310,6 +312,10 @@ def format_review_body(
         body += f"\n\n{capped} more low finding(s) from advisory agents not posted."
     if offdiff:
         body += f"\n\n{offdiff} finding(s) not posted: their line is outside the PR diff."
+    if judged:
+        body += (
+            f"\n\n{judged} finding(s) not raised: already judged in `{LEDGER_FILE}` on this branch."
+        )
     for served, count in sorted((fallbacks or {}).items()):
         body += f"\n\n{count} of {agent_count} agents served by {served} (primary unavailable)."
     return body + _completion(failed, agent_count)
@@ -376,6 +382,7 @@ async def post_pr_review(
     reraised: int = 0,
     capped: int = 0,
     offdiff: int = 0,
+    judged: int = 0,
     scope: str = "",
     fallbacks: dict[str, int] | None = None,
     agent_count: int = 0,
@@ -440,6 +447,7 @@ async def post_pr_review(
         reraised=reraised,
         capped=capped,
         offdiff=offdiff,
+        judged=judged,
         scope=scope,
         fallbacks=fallbacks,
         agent_count=agent_count,

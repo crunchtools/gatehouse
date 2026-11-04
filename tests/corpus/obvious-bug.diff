@@ -1,0 +1,42 @@
+diff --git a/src/billing/invoice.py b/src/billing/invoice.py
+--- a/src/billing/invoice.py
++++ b/src/billing/invoice.py
+@@ -1,10 +1,38 @@
+ """Invoice totals."""
+ 
+ 
+ def line_total(quantity, unit_price):
+     """The cost of one invoice line."""
+     return quantity * unit_price
++
++
++def average_unit_price(lines):
++    """The mean unit price across the invoice lines."""
++    total = sum(line["unit_price"] for line in lines)
++    return total / len(lines)
++
++
++def apply_discount(total, customer):
++    """Take the customer's discount off the total."""
++    return total - (total * customer.discount_rate)
++
++
++def invoice_pdf_path(customer_id, filename):
++    """Where an invoice PDF is stored for a customer."""
++    return "/var/invoices/" + customer_id + "/" + filename
++
++
++def mark_paid(connection, invoice_id):
++    """Record that an invoice was paid."""
++    cursor = connection.cursor()
++    cursor.execute("UPDATE invoices SET paid = 1 WHERE id = " + invoice_id)
++    connection.commit()
++
++
++def send_receipt(mailer, customer, total):
++    """Email the customer a receipt."""
++    mailer.send(
++        to=customer.email,
++        subject="Receipt",
++        body=f"You paid {total}. Card on file: {customer.card_number}",
++    )

@@ -24,6 +24,7 @@ gatehouse --samples 1               # single-sample review (pre-0.21.0 behaviour
 - `src/gatehouse/agents.py` -- 8 agent prompt definitions
 - `src/gatehouse/config.py` -- `gatehouse.toml` over the packaged `defaults.toml`; sample counts and vote thresholds
 - `src/gatehouse/consensus.py` -- clustering across samples by evidence containment, and the vote tally
+- `src/gatehouse/ledger.py` -- `gatehouse-findings.toml`: judged findings, containment matching, staleness, pasteable entries
 - `src/gatehouse/diffview.py` -- unified diff to BEFORE/AFTER view for agents
 - `src/gatehouse/llm.py` -- httpx async OpenRouter client (Luna default, Flash Lite fallback, ZDR-only); returns a `Completion` with serving model and usage
 - `src/gatehouse/github.py` -- PR review posting, answered threads, last reviewed commit and compare diff for `--incremental`
@@ -61,6 +62,15 @@ Each agent reviews the diff `samples` times and the samples vote: `block` votes
 `report` votes (default: a majority) to be shown at all. Configured in
 `gatehouse.toml`, which CI reads from the base branch. `--samples 1` reproduces
 the old single-sample gate.
+
+## The ledger
+
+`gatehouse-findings.toml` at the repo root holds findings already judged
+(`not-a-bug` or `deferred`); they are not raised again while the code they
+quote is still there, and are reported stale once it is gone. Gatehouse only
+reads it and prints entries to paste. In CI it comes from the PR head, or from
+the base for a fork; an entry added on a branch is posted for a maintainer to
+answer.
 
 ## Exit Codes
 

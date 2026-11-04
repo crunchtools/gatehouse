@@ -31,6 +31,9 @@ gatehouse --advisory
 
 # Write per-agent model, token and cost usage as JSON
 gatehouse --usage-json usage.json
+
+# Review the diff once per agent instead of three times (pre-0.21.0 behaviour)
+gatehouse --samples 1
 ```
 
 Each agent logs one line to stderr with the model that served it, its token counts and cost, and whether a fallback model answered; a total line follows. `--usage-json` writes the same data as `{"agents": [...], "total": {...}}`: each agent record has `agent`, `model`, `prompt`, `completion`, `reasoning`, `cost` (USD) and `fallback`; the total has `calls`, the summed tokens and cost, and the `fallback` count.
@@ -80,6 +83,28 @@ Protections *added* by a change are treated as fixes, not findings;
 protections *removed* by a change are flagged. Diffs that cannot be parsed
 fall back to the raw unified format.
 
+## Measuring it
+
+A reviewer that is not repeatable is not worth leaving installed, so repeatability is measured rather than asserted:
+
+```bash
+gatehouse --consensus-json votes.json          # per-finding votes and thresholds
+uv run python scripts/stability_eval.py        # review tests/corpus 3x, compare
+uv run python scripts/stability_eval.py --samples 1   # the pre-consensus baseline
+```
+
+It prints three numbers, in order of what they are worth:
+
+| | what it measures | at 0.22.0 |
+|---|---|---|
+| **verdict** | did every run agree on pass-or-fail | agreed every time — **this is the promise** |
+| blocking set | which findings reached unanimity | 0.56 and 1.00 on two rounds; wobbles, floor 0.50 |
+| reported set | everything shown, majority tier included | 0.25-0.40, against 0.22 before consensus; floor 0.20 |
+
+The sets are compared by Jaccard index keyed on agent, category, file and quoted code, so prose and line numbers do not affect it. A weekly `Stability` workflow prints the table into its step summary, and it is never a required check: a number that moves with model sampling must not gate a merge.
+
+What that means in practice: a tree that fails keeps failing and a tree that passes keeps passing, which is the part that costs you a build. *Which* findings a run shows you varies, and the ledger is what makes the ones you have judged stay judged.
+
 ## Exit Codes
 
 | Code | Meaning |
@@ -119,6 +144,29 @@ Call the reusable workflows at the major tag, `@v0`, as the examples do. Each re
 A change that needs an edit in the calling repository (an input renamed or removed, a check name changed, a config format Gourmand rejects) is a new major tag, while the version is 0.x as well. Repositories move to a new major by editing their caller files.
 
 To release: bump the version in `pyproject.toml`, `src/gatehouse/__init__.py`, `uv.lock` and the default image in `review.yml`, add the CHANGELOG entry, merge, push the tag `vX.Y.Z`, and publish the GitHub Release (which publishes to PyPI). The tag builds the images and then moves `v0`.
+
+## The finding ledger
+
+A review that raises the same thing every run is a review nobody reads. `gatehouse-findings.toml`, committed at the repository root, records the findings you have already judged, and they are not raised again.
+
+```toml
+[[findings]]
+agent = "bugs"
+category = "bug"
+file = "src/app.py"
+evidence = "total = total / count"
+status = "not-a-bug"
+reason = "count is validated non-zero by the only caller, see the guard above"
+```
+
+Gatehouse never writes this file — the pre-commit hook mounts your repository read-only, and a reviewer holding a diff it did not write has no business writing to your tree. When it reports a finding it prints the entry ready to paste; you add the reason and commit it.
+
+- `status` is `not-a-bug` or `deferred`, and a deferred entry's reason must link the issue tracking it. A reason must reach 20 characters, the same bar the triage check sets for a reply.
+- There is **no `fixed`**. An entry applies while the code it quotes is still there; once that code is gone the entry is stale, and gatehouse prints it so you can delete it. A suppression cannot outlive the lines it covered and go on hiding the next defect in the same place.
+- An entry matches a finding by agent, category, file and quoted evidence, by containment — so a judgement survives the next run quoting a little more or less of the same code. A finding with nothing quotable can never be matched, so it can never be silenced this way.
+- An entry **added on a branch** is posted on its pull request as a finding a maintainer has to answer: silencing the gate is not a quiet change. Entries already on the base branch were answered when they merged.
+- In CI the ledger is read from the pull request's head, since it describes that branch's own code — except from a fork, where the head copy is written by someone who does not own the repository. A fork's judgements are read from the base and take effect once a maintainer merges them.
+- A malformed entry is named on stderr and ignored. A ledger can only ever make a review say less, so a typo in one must not stop the review that would have caught something.
 
 ## Configuration
 

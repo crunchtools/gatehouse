@@ -134,6 +134,13 @@ def main() -> None:
         help="Write per-agent model and token usage to PATH as JSON",
     )
     parser.add_argument(
+        "--consensus-json",
+        metavar="PATH",
+        default=None,
+        help="Write one record per reported finding to PATH as JSON: its identity, "
+        "votes, thresholds and whether it blocked",
+    )
+    parser.add_argument(
         "-v",
         "--verbose",
         action="store_true",
@@ -179,6 +186,7 @@ def main() -> None:
             incremental=args.incremental,
             usage_json=args.usage_json,
             samples=args.samples,
+            consensus_json=args.consensus_json,
             required_low_agents=frozenset(
                 name.strip() for name in args.required_low_agents.split(",") if name.strip()
             ),

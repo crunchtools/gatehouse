@@ -1,0 +1,14 @@
+# Consensus settings for reviews of this repository. Every key is optional and
+# overlays src/gatehouse/defaults.toml; see README "Consensus votes".
+#
+# These are the shipped defaults, written out so a change here shows up in a
+# diff rather than only in the package.
+[consensus]
+samples = 3
+block = "all"
+report = "majority"
+
+[consensus.agents]
+tests = 1
+consistency = 1
+general = 1
