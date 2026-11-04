@@ -1,8 +1,8 @@
 # gatehouse Constitution
 
-> **Version:** 1.7.0
+> **Version:** 1.8.0
 > **Ratified:** 2026-04-04
-> **Amended:** 2026-11-03
+> **Amended:** 2026-11-04
 > **Status:** Active
 > **Inherits:** [crunchtools/constitution](https://github.com/crunchtools/constitution) v1.29.0
 > **Profile:** CLI Tool
@@ -99,3 +99,4 @@ Built on the `quay.io/hummingbird/python:3.14-fips-builder` image (git is needed
 | 1.5.0 | 2026-10-11 | Reusable workflows are called at the major tag, which a release moves after its images are pushed; a change needing a caller edit is a new major (0.17.0) |
 | 1.6.0 | 2026-11-03 | Consensus voting over `n` samples per agent, clustering by evidence containment, and `gatehouse.toml` configuration loaded from the trusted base (0.21.0, spec 003) |
 | 1.7.0 | 2026-11-03 | The finding ledger: `gatehouse-findings.toml`, read-only, matched by containment, stale once its quoted code is gone, head-side except on a fork (0.22.0, spec 003) |
+| 1.8.0 | 2026-11-04 | The report threshold has a precedence of its own (`--report-votes`, `GATEHOUSE_REPORT_VOTES`, 1 under `--verbose`, the file), `--verbose` reports every finding one sample saw, and the override clamps to an agent's own sample count — the one permitted clamp, never from the file and never for `block` (0.23.0, spec 003) |
