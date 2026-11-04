@@ -118,6 +118,16 @@ def main() -> None:
         "Gatehouse review (needs GATEHOUSE_HEAD_SHA); falls back to the whole PR",
     )
     parser.add_argument(
+        "--samples",
+        type=int,
+        default=None,
+        metavar="N",
+        help="How many times each agent reviews the diff; votes are tallied across "
+        "them (default: from gatehouse.toml, else 3 for blocking agents and 1 for "
+        "advisory ones). 1 is the pre-0.21.0 single-sample gate. Overrides "
+        "GATEHOUSE_SAMPLES and the config file",
+    )
+    parser.add_argument(
         "--usage-json",
         metavar="PATH",
         default=None,
@@ -168,6 +178,7 @@ def main() -> None:
             comment=args.comment,
             incremental=args.incremental,
             usage_json=args.usage_json,
+            samples=args.samples,
             required_low_agents=frozenset(
                 name.strip() for name in args.required_low_agents.split(",") if name.strip()
             ),

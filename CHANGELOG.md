@@ -5,6 +5,42 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-11-03
+
+### Added
+
+- **Consensus voting.** Each agent now reviews the diff several times and the
+  samples are tallied: a finding's votes are how many samples saw it. With the
+  shipped defaults a critical/high from a blocking agent must be unanimous (3/3)
+  to fail the run, and any finding needs a majority (2/3) to be reported at all.
+  A HIGH only one sample saw is no longer a blocked commit. Findings cluster on
+  agent, category, file and evidence containment, so a sample quoting one line
+  and a sample quoting the three around it count as one finding; a hash of the
+  quote would split them and unanimity would never be reached (spec 003, #104).
+- `gatehouse.toml` at the reviewed repository's root configures it: `[consensus]`
+  `samples`, `block` and `report`, plus `[consensus.agents]` per-agent sample
+  counts. `block` and `report` take `"all"`, `"majority"` or an integer and
+  resolve against each agent's own count. In CI the file is read from the base
+  branch, like `.gatehouse-ignore`, so a pull request cannot weaken the gate
+  reviewing it.
+- `--samples N` and `GATEHOUSE_SAMPLES` override the count globally;
+  `--samples 1` reproduces pre-0.21.0 behaviour exactly. Per-agent `N` is capped
+  at 5 and a review at 40 model calls; an out-of-range count, or a threshold an
+  agent could never reach, exits 2 before any model is called.
+- Terminal output says ", agreed by 2 of 3 samples" and the hidden PR comment
+  marker carries `votes=2/3`.
+
+### Changed
+
+- `MAX_CONCURRENT_AGENTS` 5 -> 24, so the default 18 calls run in one wave.
+- An agent is unfinished only when fewer than a majority of its samples came
+  back: a timeout is not a vote against a finding, and the samples that did
+  return still decide. A minority of lost samples is reported on stderr.
+- The per-sample filters (invented evidence, disproved refs) run before the
+  tally and the cluster filters (off-diff lines, re-raises, the advisory LOW
+  cap) after it, so a hallucinated quote never becomes a vote and a cap applies
+  to a finding rather than to each sample's copy of it.
+
 ## [0.20.0] - 2026-10-31
 
 ### Changed
