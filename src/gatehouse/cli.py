@@ -132,11 +132,13 @@ def main() -> None:
         type=int,
         default=None,
         metavar="N",
-        help="How many votes a finding needs to be shown (default: from "
-        "gatehouse.toml, else a majority of the agent's samples). 1 reports "
-        "every finding a single sample saw, with its vote count. It never "
-        "changes the verdict: a finding with the votes to block is shown "
-        "either way. Overrides GATEHOUSE_REPORT_VOTES and the config file",
+        help="How many votes a finding needs to be shown. 1 reports every "
+        "finding a single sample saw, with its vote count. Highest precedence "
+        "first: this flag, GATEHOUSE_REPORT_VOTES, 1 under --verbose, "
+        "gatehouse.toml, then a majority of the agent's samples. Where an "
+        "agent runs fewer samples than this, it clamps to that agent's count. "
+        "It never changes the verdict: a finding with the votes to block is "
+        "shown either way",
     )
     parser.add_argument(
         "--usage-json",
