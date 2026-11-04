@@ -29,8 +29,11 @@ from gatehouse.config import (
     samples_from_env,
 )
 from gatehouse.consensus import (
+    BLOCKING_VOTES_KEY,
     BLOCKS_KEY,
     MEMBER_LINES_KEY,
+    SAMPLES_KEY,
+    VOTES_KEY,
     blocks,
     blocks_the_run,
     cluster_samples,
@@ -941,6 +944,48 @@ def _save_usage(records: list[dict[str, Any]], usage_json: str | None) -> None:
         Path(usage_json).write_text(json.dumps({"agents": records, "total": total}, indent=2))
 
 
+def _consensus_records(results: Results, config: ConsensusConfig) -> list[dict[str, Any]]:
+    """One record per reported finding: who found it, how many samples agreed, what it cost it.
+
+    ``id`` is what makes two runs' findings the same finding — agent, category,
+    file and the squashed quote — so two runs over one diff can be compared
+    without matching prose or line numbers.
+    """
+    records: list[dict[str, Any]] = []
+    for agent, findings in results:
+        consensus = config.for_agent(agent.slug)
+        for finding in findings:
+            quote = _squash(str(finding.get("evidence", "")))
+            records.append(
+                {
+                    "id": f"{agent.slug}:{finding.get('category', '')}:"
+                    f"{finding.get('file', '')}:{quote}",
+                    "agent": agent.slug,
+                    "category": finding.get("category", ""),
+                    "file": finding.get("file", ""),
+                    "severity": finding.get("severity", "low"),
+                    "confidence": finding.get("confidence", 0),
+                    "votes": finding.get(VOTES_KEY, 1),
+                    "blockingVotes": finding.get(BLOCKING_VOTES_KEY, 0),
+                    "samples": finding.get(SAMPLES_KEY, 1),
+                    "report": consensus.report,
+                    "block": consensus.block,
+                    "blocks": blocks_the_run(finding),
+                }
+            )
+    return records
+
+
+def _save_consensus(
+    results: Results, config: ConsensusConfig, dropped: dict[str, int], path: str | None
+) -> None:
+    """Write the per-finding vote record to ``path``, with the drop counts beside it."""
+    if not path:
+        return
+    records = _consensus_records(results, config)
+    Path(path).write_text(json.dumps({"findings": records, "dropped": dropped}, indent=2) + "\n")
+
+
 def _incremental_diff(pr_diff: str) -> tuple[str, str] | None:
     """Return (diff, scope line) covering only commits since the last complete review.
 
@@ -1110,6 +1155,7 @@ async def run_review(
     incremental: bool = False,
     usage_json: str | None = None,
     samples: int | None = None,
+    consensus_json: str | None = None,
 ) -> int:
     """Run the full review pipeline.
 
@@ -1127,6 +1173,10 @@ async def run_review(
 
     usage_json, when set, receives each agent's usage record and the total
     as JSON, written after the review is posted.
+
+    consensus_json, when set, receives one record per reported finding: its
+    identity, votes, thresholds and whether it blocked, for measuring how
+    stable the reviewer is across runs.
 
     samples overrides the configured sample count for every agent, as
     --samples and GATEHOUSE_SAMPLES do; a bad config exits 2 before any model
@@ -1228,5 +1278,6 @@ async def run_review(
             commit_id=os.environ.get("GATEHOUSE_HEAD_SHA", ""),
         )
     _save_usage(usage, usage_json)
+    _save_consensus(all_results, config, dropped, consensus_json)
 
     return exit_code
