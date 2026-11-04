@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
+from gatehouse.consensus import SAMPLES_KEY, VOTES_KEY
 from gatehouse.output import strip_ansi
 
 if TYPE_CHECKING:
@@ -104,7 +105,11 @@ def _format_comment_body(agent: Agent, finding: dict[str, Any]) -> str:
     if evidence:
         parts.append(f"\n**Evidence:**\n```\n{evidence}\n```")
     confidence = int(finding.get("confidence", 0))
-    parts.append(f"\n<!-- gatehouse agent={agent.slug} confidence={confidence} -->")
+    votes = int(finding.get(VOTES_KEY, 1))
+    samples = int(finding.get(SAMPLES_KEY, 1))
+    parts.append(
+        f"\n<!-- gatehouse agent={agent.slug} confidence={confidence} votes={votes}/{samples} -->"
+    )
     return "\n".join(parts)
 
 

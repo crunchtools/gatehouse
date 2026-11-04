@@ -83,3 +83,9 @@ check = "redundant_error_handling"
 path = "src/gatehouse/review.py"
 justification = "_write_step_summary runs after the review is posted and the step summary is cosmetic. Warning and continuing is the recovery (#61): an unwritable summary must not fail a finished review or skip --usage-json."
 classification = "by_design"
+
+[[exceptions]]
+check = "single_use_helpers"
+path = "src/gatehouse/review.py"
+justification = "_tally and its neighbours are the named stages of the review pipeline (per-sample filters, tally, cluster filters). Each is called once by run_review on purpose and tested directly; inlining them hides where a sample becomes a vote and re-violates ruff PLR0915 on run_review."
+classification = "by_design"

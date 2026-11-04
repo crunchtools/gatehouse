@@ -21,6 +21,21 @@ from gatehouse.agents import (
     build_user_prompt,
     get_agents,
 )
+from gatehouse.config import (
+    CONFIG_FILE,
+    ConfigError,
+    ConsensusConfig,
+    load_config,
+    samples_from_env,
+)
+from gatehouse.consensus import (
+    BLOCKS_KEY,
+    MEMBER_LINES_KEY,
+    blocks,
+    blocks_the_run,
+    cluster_samples,
+    keep_reported,
+)
 from gatehouse.diffview import right_side_lines
 from gatehouse.github import (
     detect_pr_context,
@@ -50,7 +65,8 @@ if TYPE_CHECKING:
 
 CONFIDENCE_THRESHOLD = 80
 
-BLOCKING_SEVERITIES = frozenset({"critical", "high"})
+SAMPLES_ENV = "GATEHOUSE_SAMPLES"
+
 
 # LOWs from these agents (by name, as printed in each finding) are required
 # answers, matching triage.yml's `required_low_agents` default; every other
@@ -71,7 +87,10 @@ Results = list[tuple[Agent, list[dict[str, Any]]]]
 
 
 class AgentRun(NamedTuple):
-    """One agent's run: findings are None, and reason a failure class, only if it failed."""
+    """One sample from one agent.
+
+    findings are None, and reason a failure class, only when the sample failed.
+    """
 
     agent: Agent
     findings: list[dict[str, Any]] | None
@@ -79,7 +98,29 @@ class AgentRun(NamedTuple):
     reason: str | None
 
 
-MAX_CONCURRENT_AGENTS = 5
+class AgentOutcome(NamedTuple):
+    """Every sample one agent produced, and whether enough of them finished.
+
+    ``samples`` holds the findings of each sample that finished, so a tally can
+    count how many of them saw the same thing. ``reason`` is set only when the
+    agent is unfinished: fewer than a majority of its samples came back, which
+    is an outage rather than a review. A sample that times out is not a vote
+    against a finding, so a minority of failures is reported in stderr and the
+    surviving samples still decide.
+    """
+
+    agent: Agent
+    samples: list[list[dict[str, Any]]]
+    replies: list[Completion]
+    reason: str | None
+
+    @property
+    def finished(self) -> int:
+        """How many samples came back with parseable findings."""
+        return len(self.samples)
+
+
+MAX_CONCURRENT_CALLS = 24
 
 # What a provider status means to whoever has to fix it.
 _STATUS_LABELS: dict[int, str] = {
@@ -248,13 +289,14 @@ def load_constitution(override_path: str | None = None) -> str | None:
 def _has_blocking_findings(
     results: list[tuple[Agent, list[dict[str, Any]]]],
 ) -> bool:
-    """Check if any blocking agent has critical/high findings."""
-    for agent, findings in results:
-        if agent.blocking:
-            for finding in findings:
-                if finding.get("severity", "low") in BLOCKING_SEVERITIES:
-                    return True
-    return False
+    """True when any finding carries the verdict that it fails the run.
+
+    One rule, no fallback: the verdict is made during the tally, which is the
+    only producer of reported findings, and every finding it returns carries
+    it. Judging severity again here is how a finding came to block a run it
+    was never shown in.
+    """
+    return any(blocks_the_run(finding) for _, findings in results for finding in findings)
 
 
 def _parse_findings(response_text: str) -> list[dict[str, Any]]:
@@ -415,7 +457,17 @@ def _drop_offdiff(results: Results, anchors: dict[str, set[int]] | None) -> tupl
         path, line = finding.get("file", ""), finding.get("lineStart", 0)
         if not path or not isinstance(line, int) or line <= 0:
             return True
-        return line in anchors.get(path, ())
+        shown = anchors.get(path, ())
+        if line in shown:
+            return True
+        # The representative member's line may be outside the diff while
+        # another sample quoted the same code at a line inside it. Re-anchor
+        # rather than drop a finding the agents agreed on.
+        for start, end in finding.get(MEMBER_LINES_KEY, ()):
+            if start in shown:
+                finding["lineStart"], finding["lineEnd"] = start, end
+                return True
+        return False
 
     return _keep_where(results, anchored)
 
@@ -433,16 +485,53 @@ def _filter_findings(
 
     Returns the kept results and the count dropped by each filter, keyed as
     post_pr_review takes them.
+
+    Kept for a single set of findings (one sample, or a caller that does its
+    own tallying). The consensus pipeline calls the two halves either side of
+    the tally instead: _filter_samples then _filter_clusters.
+    """
+    results, counts = _filter_samples(results, haystack, resolve=resolve)
+    results, cluster_counts = _filter_clusters(results, answered, required_low, anchors)
+    return results, {**counts, **cluster_counts}
+
+
+def _filter_samples(
+    results: Results,
+    haystack: str,
+    *,
+    resolve: Resolver = ref_exists,
+) -> tuple[Results, dict[str, int]]:
+    """Drop what no sample should get a vote for: unquotable evidence, disproved refs.
+
+    These run before the tally. A sample that invented its quote, or called a
+    ref missing that resolves, is not a dissenting opinion to be counted — it
+    is a sample that did not find anything there.
     """
     results, unverified = _drop_unverified(results, haystack)
     results, disproved = _drop_disproved(results, resolve)
-    results, offdiff = _drop_offdiff(results, anchors)
-    results, reraised = _drop_reraised(results, answered)
-    results, capped = _cap_advisory_lows(results, required_low)
     if unverified:
         print(f"Dropped {unverified} finding(s): evidence not in the diff.", file=sys.stderr)
     if disproved:
         print(f"Dropped {disproved} finding(s): the ref they call missing exists.", file=sys.stderr)
+    return results, {"unverified": unverified, "disproved": disproved}
+
+
+def _filter_clusters(
+    results: Results,
+    answered: list[tuple[str, str, int]],
+    required_low: frozenset[str] = REQUIRED_LOW_AGENTS,
+    anchors: dict[str, set[int]] | None = None,
+) -> tuple[Results, dict[str, int]]:
+    """Drop what a tallied finding should not be reported for.
+
+    Off-diff lines, re-raises of answered threads, and advisory LOWs over the cap.
+
+    These run after the tally, on clusters, so a cap or a window applies to one
+    finding rather than to each sample's copy of it.
+    """
+    results, offdiff = _drop_offdiff(results, anchors)
+    results, reraised = _drop_reraised(results, answered)
+    results, capped = _cap_advisory_lows(results, required_low)
     if offdiff:
         print(f"Dropped {offdiff} finding(s): line outside the PR diff.", file=sys.stderr)
     if reraised:
@@ -453,13 +542,80 @@ def _filter_findings(
             f"(at most {MAX_ADVISORY_LOWS} are shown).",
             file=sys.stderr,
         )
-    return results, {
-        "unverified": unverified,
-        "disproved": disproved,
-        "offdiff": offdiff,
-        "reraised": reraised,
-        "capped": capped,
-    }
+    return results, {"offdiff": offdiff, "reraised": reraised, "capped": capped}
+
+
+def _consensus_config(agents: list[Agent], samples: int | None) -> ConsensusConfig | None:
+    """The sample counts and thresholds for this review, or None when the config is bad.
+
+    The reviewed repository's gatehouse.toml comes through _load_context_file,
+    so under the fork-safe workflow it is the base branch's copy: a pull
+    request cannot weaken the gate that reviews it. A bad config is reported
+    and the review does not start, so no tokens are spent on it.
+    """
+    try:
+        config = load_config(
+            _load_context_file(CONFIG_FILE),
+            samples if samples is not None else samples_from_env(os.environ.get(SAMPLES_ENV)),
+        )
+        config.check_budget([agent.slug for agent in agents])
+    except ConfigError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return None
+    return config
+
+
+def _filter_outcomes(
+    outcomes: list[AgentOutcome],
+    haystack: str,
+    *,
+    resolve: Resolver = ref_exists,
+) -> tuple[list[AgentOutcome], dict[str, int]]:
+    """Run the per-sample filters over every sample of every agent.
+
+    The counts are of sample findings dropped, not of clusters: the same
+    invented quote in two samples is two drops, which is what was paid for.
+    """
+    filtered: list[AgentOutcome] = []
+    counts = {"unverified": 0, "disproved": 0}
+    for outcome in outcomes:
+        as_results: Results = [(outcome.agent, sample) for sample in outcome.samples]
+        kept, dropped = _filter_samples(as_results, haystack, resolve=resolve)
+        for key in counts:
+            counts[key] += dropped[key]
+        filtered.append(outcome._replace(samples=[sample for _, sample in kept]))
+    return filtered, counts
+
+
+def _tally(outcomes: list[AgentOutcome], config: ConsensusConfig) -> Results:
+    """Cluster each agent's samples and keep the clusters with enough votes.
+
+    An agent whose samples all failed contributes nothing. Every finding that
+    survives carries its vote count, so the terminal output and the posted
+    review can say 2/3 rather than asking the reader to trust one roll.
+
+    Thresholds resolve against the samples that finished, so a lost sample
+    does not raise the bar for the ones that came back. A cluster that has the
+    votes to block is kept even when it is short of the report threshold: a
+    run must never fail on a finding it did not show. With the shipped
+    defaults that cannot happen, but block and report are configurable
+    independently.
+    """
+    results: Results = []
+    for outcome in outcomes:
+        if not outcome.samples:
+            continue
+        consensus = config.for_agent(outcome.agent.slug, finished=outcome.finished)
+        clusters = cluster_samples(
+            outcome.samples, squash=_squash, min_evidence=_EVIDENCE_MIN_CHARS
+        )
+        for cluster in clusters:
+            cluster[BLOCKS_KEY] = blocks(outcome.agent, cluster, consensus)
+        kept = keep_reported(clusters, consensus)
+        shown = {id(cluster) for cluster in kept}
+        held = [c for c in clusters if c[BLOCKS_KEY] and id(c) not in shown]
+        results.append((outcome.agent, kept + held))
+    return results
 
 
 def _failure_class(exc: Exception) -> str:
@@ -646,11 +802,20 @@ async def _review_scope(pr_diff: str, spec: Any, *, incremental: bool) -> tuple[
 
 
 async def _run_agents(
-    prompts: list[tuple[Agent, str]], *, model: str, api_key: str, verbose: bool
+    prompts: list[tuple[Agent, str]],
+    *,
+    model: str,
+    api_key: str,
+    verbose: bool,
+    config: ConsensusConfig,
 ) -> list[AgentRun]:
-    """Run each agent on its prompt concurrently, at most MAX_CONCURRENT_AGENTS at once."""
+    """Run every agent's samples concurrently, at most MAX_CONCURRENT_CALLS at once.
+
+    One agent with n samples is n independent calls on the same prompt: the
+    model's own variation between them is what the tally measures.
+    """
     async with httpx.AsyncClient() as client:
-        semaphore = asyncio.Semaphore(MAX_CONCURRENT_AGENTS)
+        semaphore = asyncio.Semaphore(MAX_CONCURRENT_CALLS)
         return await asyncio.gather(
             *(
                 run_agent(
@@ -663,8 +828,58 @@ async def _run_agents(
                     semaphore=semaphore,
                 )
                 for agent, prompt in prompts
+                for _ in range(config.samples_for(agent.slug))
             )
         )
+
+
+def _collect(runs: list[AgentRun]) -> list[AgentOutcome]:
+    """Group sample runs by agent and decide which agents finished.
+
+    An agent is unfinished only when fewer than a majority of its samples came
+    back, since a timeout is not a dissenting vote. Its reason is the failure
+    class of its first failed sample, which is what the review reports.
+    """
+    order: list[Agent] = []
+    samples: dict[str, list[list[dict[str, Any]]]] = {}
+    replies: dict[str, list[Completion]] = {}
+    reasons: dict[str, list[str]] = {}
+    attempts: dict[str, int] = {}
+    for run in runs:
+        slug = run.agent.slug
+        if slug not in samples:
+            order.append(run.agent)
+            samples[slug], replies[slug], reasons[slug], attempts[slug] = [], [], [], 0
+        attempts[slug] += 1
+        if run.findings is not None:
+            samples[slug].append(run.findings)
+        elif run.reason is not None:
+            reasons[slug].append(run.reason)
+        if run.reply is not None:
+            replies[slug].append(run.reply)
+
+    outcomes: list[AgentOutcome] = []
+    for agent in order:
+        slug = agent.slug
+        attempted = attempts[slug]
+        needed = attempted // 2 + 1
+        finished = len(samples[slug])
+        reason = reasons[slug][0] if reasons[slug] and finished < needed else None
+        if reasons[slug] and reason is None:
+            print(
+                f"Note: {agent.name} lost {attempted - finished} of {attempted} sample(s) "
+                f"({reasons[slug][0]}); {finished} still voted.",
+                file=sys.stderr,
+            )
+        outcomes.append(
+            AgentOutcome(
+                agent=agent,
+                samples=samples[slug] if reason is None else [],
+                replies=replies[slug],
+                reason=reason,
+            )
+        )
+    return outcomes
 
 
 def _agent_prompts(
@@ -709,6 +924,7 @@ async def run_review(
     required_low_agents: frozenset[str] = REQUIRED_LOW_AGENTS,
     incremental: bool = False,
     usage_json: str | None = None,
+    samples: int | None = None,
 ) -> int:
     """Run the full review pipeline.
 
@@ -726,6 +942,11 @@ async def run_review(
 
     usage_json, when set, receives each agent's usage record and the total
     as JSON, written after the review is posted.
+
+    samples overrides the configured sample count for every agent, as
+    --samples and GATEHOUSE_SAMPLES do; a bad config exits 2 before any model
+    is called. Each agent's samples are clustered and tallied, and every
+    reported finding carries how many of them agreed.
     """
     diff = stdin_diff if stdin_diff is not None else get_git_diff(base, staged)
     spec = parse_ignore(_load_context_file(IGNORE_FILE)) if diff.strip() else None
@@ -745,6 +966,9 @@ async def run_review(
         return 0
 
     agents = get_agents(agent_slugs)
+    config = _consensus_config(agents, samples)
+    if config is None:
+        return 2
     styleguide = load_styleguide()
     file_listing = filter_listing(get_file_listing(), spec)
     owner = _repo_owner()
@@ -762,18 +986,29 @@ async def run_review(
     )
 
     threads = asyncio.create_task(asyncio.to_thread(fetch_answered_threads)) if comment else None
-    raw = await _run_agents(prompts, model=model, api_key=api_key, verbose=verbose)
+    raw = await _run_agents(prompts, model=model, api_key=api_key, verbose=verbose, config=config)
+    outcomes = _collect(raw)
 
-    failed = tuple((run.agent.name, run.reason or "unknown") for run in raw if run.findings is None)
-    all_results: Results = [(run.agent, run.findings) for run in raw if run.findings is not None]
-    usage = [_usage_record(run.agent.slug, run.reply) for run in raw if run.reply is not None]
+    failed = tuple(
+        (outcome.agent.name, outcome.reason or "unknown")
+        for outcome in outcomes
+        if outcome.reason is not None
+    )
+    usage = [
+        _usage_record(outcome.agent.slug, reply)
+        for outcome in outcomes
+        for reply in outcome.replies
+    ]
     fallbacks = _report_usage(usage)
 
     haystack = _evidence_haystack(diff, styleguide, constitution)
     answered = await threads if threads else []
-    all_results, dropped = _filter_findings(
-        all_results, haystack, answered, required_low_agents, anchors
+    outcomes, dropped = _filter_outcomes(outcomes, haystack)
+    all_results = _tally(outcomes, config)
+    all_results, cluster_dropped = _filter_clusters(
+        all_results, answered, required_low_agents, anchors
     )
+    dropped.update(cluster_dropped)
 
     if all_results or not failed:  # with no agent finished, there are no results to call clean
         format_results(all_results)
@@ -784,7 +1019,7 @@ async def run_review(
     if failed:
         names = ", ".join(f"{name} ({reason})" for name, reason in failed)
         print(f"Review incomplete: {names} could not finish.", file=sys.stderr)
-        if not advisory or review_failed(len(failed), len(raw)):
+        if not advisory or review_failed(len(failed), len(outcomes)):
             exit_code = 2
     print_summary(all_results, exit_code)
 
@@ -797,7 +1032,7 @@ async def run_review(
             **dropped,
             scope=scope,
             fallbacks=fallbacks,
-            agent_count=len(raw),
+            agent_count=len(outcomes),
             commit_id=os.environ.get("GATEHOUSE_HEAD_SHA", ""),
         )
     _save_usage(usage, usage_json)

@@ -7,6 +7,7 @@ from typing import Any
 from unittest.mock import patch
 
 from gatehouse.agents import BUG_HUNTER, GENERAL
+from gatehouse.consensus import SAMPLES_KEY, VOTES_KEY
 from gatehouse.output import (
     format_finding,
     format_results,
@@ -14,6 +15,7 @@ from gatehouse.output import (
     severity_rank,
     strip_ansi,
     use_color,
+    vote_label,
 )
 
 
@@ -172,3 +174,38 @@ def test_format_finding_strips_ansi_from_description() -> None:
     output = format_finding(finding)
     assert "\x1b" not in output
     assert "injected" in output
+
+
+def test_vote_label_names_the_agreement() -> None:
+    finding = {
+        "severity": "high",
+        "file": "src/app.py",
+        "lineStart": 3,
+        "lineEnd": 3,
+        "description": "divides by a count that can be zero",
+        "confidence": 90,
+        VOTES_KEY: 2,
+        SAMPLES_KEY: 3,
+    }
+    rendered = format_finding(finding)
+    assert "Confidence: 90%, agreed by 2 of 3 samples" in rendered
+
+
+def test_a_single_sample_prints_no_agreement() -> None:
+    """One of one is not agreement worth printing."""
+    finding = {
+        "severity": "low",
+        "file": "src/app.py",
+        "lineStart": 1,
+        "lineEnd": 1,
+        "description": "naming",
+        "confidence": 85,
+        VOTES_KEY: 1,
+        SAMPLES_KEY: 1,
+    }
+    assert "agreed by" not in format_finding(finding)
+
+
+def test_a_finding_without_vote_keys_prints_no_agreement() -> None:
+    assert vote_label({"confidence": 90}) == ""
+    assert vote_label({VOTES_KEY: "two", SAMPLES_KEY: 3}) == ""

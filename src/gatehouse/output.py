@@ -7,6 +7,8 @@ import re
 import sys
 from typing import TYPE_CHECKING, Any
 
+from gatehouse.consensus import SAMPLES_KEY, VOTES_KEY
+
 if TYPE_CHECKING:
     from gatehouse.agents import Agent
 
@@ -64,6 +66,7 @@ def format_finding(finding: dict[str, Any]) -> str:
     suggestion = strip_ansi(finding.get("suggestion", ""))
     evidence = strip_ansi(finding.get("evidence", ""))
     confidence = finding.get("confidence", 0)
+    agreement = vote_label(finding)
 
     sev_color = color(severity)
     rst = color("reset")
@@ -81,8 +84,21 @@ def format_finding(finding: dict[str, Any]) -> str:
         lines.append(f"    {dim}Suggestion: {suggestion}{rst}")
     if evidence:
         lines.append(f"    {dim}Evidence: {evidence}{rst}")
-    lines.append(f"    {dim}Confidence: {confidence}%{rst}")
+    lines.append(f"    {dim}Confidence: {confidence}%{agreement}{rst}")
     return "\n".join(lines)
+
+
+def vote_label(finding: dict[str, Any]) -> str:
+    """How many samples saw this finding, as ", agreed by 2 of 3 samples".
+
+    Empty when the agent ran a single sample: one of one is not agreement
+    worth printing.
+    """
+    votes = finding.get(VOTES_KEY)
+    samples = finding.get(SAMPLES_KEY)
+    if not isinstance(votes, int) or not isinstance(samples, int) or samples < 2:
+        return ""
+    return f", agreed by {votes} of {samples} samples"
 
 
 def format_results(

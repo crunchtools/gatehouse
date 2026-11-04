@@ -5,6 +5,53 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-11-03
+
+### Added
+
+- **Consensus voting.** Each agent now reviews the diff `samples` times and the
+  samples are tallied: a finding's votes are how many samples saw it. The
+  shipped defaults sample the five blocking agents three times and the three
+  advisory agents once, so a critical/high from a blocking agent must be
+  unanimous (3/3) to fail the run and needs a majority (2/3) to be reported at
+  all, while an advisory agent keeps its single-sample behaviour (1/1 to report,
+  never blocking). A HIGH only one sample saw is no longer a blocked commit. Findings cluster on
+  agent, category, file and evidence containment, so a sample quoting one line
+  and a sample quoting the three around it count as one finding; a hash of the
+  quote would split them and unanimity would never be reached (spec 003, #104).
+- `gatehouse.toml` at the reviewed repository's root configures it: `[consensus]`
+  `samples`, `block` and `report`, plus `[consensus.agents]` per-agent sample
+  counts. `block` and `report` take `"all"`, `"majority"` or an integer and
+  resolve against each agent's own count. In CI the file is read from the base
+  branch, like `.gatehouse-ignore`, so a pull request cannot weaken the gate
+  reviewing it.
+- `--samples N` and `GATEHOUSE_SAMPLES` override the count globally;
+  `--samples 1` restores single-sample thresholds. One deliberate difference
+  from 0.20.0: a critical or high finding that quotes nothing no longer fails
+  the run, because nothing about it can be checked. Per-agent `N` is capped
+  at 5 and a review at 40 model calls; an out-of-range count, or a threshold an
+  agent could never reach, exits 2 before any model is called.
+- Terminal output says ", agreed by 2 of 3 samples" and the hidden PR comment
+  marker carries `votes=2/3`.
+
+### Changed
+
+- `MAX_CONCURRENT_CALLS` 5 -> 24, so the default 18 calls run in one wave.
+- An agent is unfinished only when fewer than a majority of its samples came
+  back: a timeout is not a vote against a finding, and the samples that did
+  return still decide. A minority of lost samples is reported on stderr.
+- Thresholds resolve against the samples that *finished*, so a lost sample does
+  not raise the bar for the ones that came back: two of three samples agreeing
+  on a critical finding still fails the run.
+- Whether a finding fails the run is decided once, during the tally, where the
+  agent's thresholds and its finished sample count are both in hand. A finding
+  with the votes to block is always shown, even if it is short of the report
+  threshold: a run must never fail on a finding it did not print.
+- The per-sample filters (invented evidence, disproved refs) run before the
+  tally and the cluster filters (off-diff lines, re-raises, the advisory LOW
+  cap) after it, so a hallucinated quote never becomes a vote and a cap applies
+  to a finding rather than to each sample's copy of it.
+
 ## [0.20.0] - 2026-10-31
 
 ### Changed
