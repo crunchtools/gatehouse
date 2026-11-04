@@ -54,6 +54,15 @@ from gatehouse.ignore import (
     parse_ignore,
     restrict_diff,
 )
+from gatehouse.ledger import (
+    LEDGER_FILE,
+    MIN_REASON_CHARS,
+    Entry,
+    judgement,
+    parse_ledger,
+    render_entry,
+    stale,
+)
 from gatehouse.llm import DEFAULT_MODEL, Completion, call_model
 from gatehouse.output import format_results, print_summary, strip_ansi
 from gatehouse.refs import cited_refs, ref_exists
@@ -545,6 +554,21 @@ def _filter_clusters(
     return results, {"offdiff": offdiff, "reraised": reraised, "capped": capped}
 
 
+def _load_ledger() -> list[Entry]:
+    """The judged findings for this review, from the reviewed repository's root.
+
+    A problem with an entry is named on stderr and the entry ignored: a ledger
+    can only ever make a review say less, so a typo in one must not stop the
+    review that would have caught it.
+    """
+    path = Path(LEDGER_FILE)
+    text = path.read_text() if path.exists() else None
+    entries, problems = parse_ledger(text, _squash)
+    for problem in problems:
+        print(f"Ignoring {problem}", file=sys.stderr)
+    return entries
+
+
 def _consensus_config(agents: list[Agent], samples: int | None) -> ConsensusConfig | None:
     """The sample counts and thresholds for this review, or None when the config is bad.
 
@@ -585,6 +609,76 @@ def _filter_outcomes(
             counts[key] += dropped[key]
         filtered.append(outcome._replace(samples=[sample for _, sample in kept]))
     return filtered, counts
+
+
+def _drop_judged(results: Results, entries: list[Entry]) -> tuple[Results, int]:
+    """Drop the findings the ledger has already judged.
+
+    A judged finding is not re-raised while the code it quotes is still there,
+    which is what lets a developer run the gate again after answering it. A
+    finding that blocks is dropped too: the judgement is the answer to it, and
+    an entry has to be committed and reviewable to exist at all.
+    """
+    if not entries:
+        return results, 0
+
+    def judged(agent: Agent, finding: dict[str, Any]) -> bool:
+        evidence = _squash(str(finding.get("evidence", "")))
+        return judgement(entries, agent.slug, finding, evidence) is not None
+
+    return _keep_where(results, lambda agent, f: not judged(agent, f))
+
+
+def _decide(
+    outcomes: list[AgentOutcome],
+    config: ConsensusConfig,
+    ledger: list[Entry],
+    haystack: str,
+    *,
+    answered: list[tuple[str, str, int]],
+    required_low: frozenset[str],
+    anchors: dict[str, set[int]] | None,
+) -> tuple[Results, dict[str, int]]:
+    """Turn every agent's samples into the findings this review reports.
+
+    The whole verdict in one place, in order: per-sample filters, the tally
+    that makes votes out of samples, the ledger's judgements, then the filters
+    that apply to a tallied finding. Returns the findings and how many each
+    step dropped, keyed as post_pr_review takes them.
+    """
+    outcomes, dropped = _filter_outcomes(outcomes, haystack)
+    results = _tally(outcomes, config)
+    results, judged_count = _drop_judged(results, ledger)
+    results, cluster_dropped = _filter_clusters(results, answered, required_low, anchors)
+    dropped.update(cluster_dropped)
+    dropped["judged"] = judged_count
+    return results, dropped
+
+
+def _report_ledger(
+    results: Results, entries: list[Entry], haystack: str, judged_count: int = 0
+) -> None:
+    """Report the ledger: what it suppressed, what has gone stale, what to paste."""
+    if judged_count:
+        print(
+            f"Skipped {judged_count} finding(s) already judged in {LEDGER_FILE}.",
+            file=sys.stderr,
+        )
+    for entry in stale(entries, haystack):
+        print(
+            f"Stale {LEDGER_FILE} entry: the code it quotes is gone from "
+            f"{entry.file} ({entry.quote.splitlines()[0][:60]}). Delete it.",
+            file=sys.stderr,
+        )
+    pasteable = [
+        render_entry(agent.slug, finding) for agent, findings in results for finding in findings
+    ]
+    if pasteable:
+        print(
+            f"\nTo judge a finding, add it to {LEDGER_FILE} with a reason "
+            f"of at least {MIN_REASON_CHARS} characters:\n"
+        )
+        print("\n\n".join(pasteable))
 
 
 def _tally(outcomes: list[AgentOutcome], config: ConsensusConfig) -> Results:
@@ -965,6 +1059,7 @@ async def run_review(
         print("No changes to review since the last review.")
         return 0
 
+    ledger = _load_ledger()
     agents = get_agents(agent_slugs)
     config = _consensus_config(agents, samples)
     if config is None:
@@ -1003,15 +1098,19 @@ async def run_review(
 
     haystack = _evidence_haystack(diff, styleguide, constitution)
     answered = await threads if threads else []
-    outcomes, dropped = _filter_outcomes(outcomes, haystack)
-    all_results = _tally(outcomes, config)
-    all_results, cluster_dropped = _filter_clusters(
-        all_results, answered, required_low_agents, anchors
+    all_results, dropped = _decide(
+        outcomes,
+        config,
+        ledger,
+        haystack,
+        answered=answered,
+        required_low=required_low_agents,
+        anchors=anchors,
     )
-    dropped.update(cluster_dropped)
 
     if all_results or not failed:  # with no agent finished, there are no results to call clean
         format_results(all_results)
+    _report_ledger(all_results, ledger, haystack, dropped["judged"])
 
     has_blocking = _has_blocking_findings(all_results)
     request_changes = has_blocking and not advisory

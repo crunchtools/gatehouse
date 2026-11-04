@@ -2,8 +2,16 @@
 
 from __future__ import annotations
 
-from typing import Any
+import json
+from typing import TYPE_CHECKING, Any
+from unittest.mock import AsyncMock, patch
 
+import pytest
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+from gatehouse.agents import BUG_HUNTER
 from gatehouse.ledger import (
     DEFERRED,
     LEDGER_FILE,
@@ -14,7 +22,8 @@ from gatehouse.ledger import (
     render_entry,
     stale,
 )
-from gatehouse.review import _squash
+from gatehouse.llm import Completion
+from gatehouse.review import _squash, run_review
 
 REASON = "count is validated non-zero by the only caller"
 
@@ -199,3 +208,166 @@ def test_render_entry_escapes_a_multiline_quote() -> None:
 
 def test_the_ledger_file_is_named_for_the_repository_root() -> None:
     assert LEDGER_FILE == "gatehouse-findings.toml"
+
+
+LEDGERED = f"""\
+[[findings]]
+agent = "bugs"
+category = "bug"
+file = "src/app.py"
+evidence = "total = total / count"
+status = "{NOT_A_BUG}"
+reason = "{REASON}"
+"""
+
+DIFF = """\
+diff --git a/src/app.py b/src/app.py
+--- a/src/app.py
++++ b/src/app.py
+@@ -1,2 +1,4 @@
+-my_var = 1
++myVar = 1
+ x = get_data()
++user.name.lower()
++total = total / count
+"""
+
+
+def _model_finding(evidence: str = "total = total / count") -> dict[str, Any]:
+    return {
+        "file": "src/app.py",
+        "lineStart": 5,
+        "lineEnd": 5,
+        "severity": "high",
+        "category": "bug",
+        "description": "divides by a count that can be zero",
+        "suggestion": "guard it",
+        "evidence": evidence,
+        "confidence": 95,
+    }
+
+
+def _reply(findings: list[dict[str, Any]]) -> Completion:
+    return Completion(json.dumps(findings))
+
+
+@pytest.mark.asyncio
+async def test_a_judged_finding_is_not_raised_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The point of the ledger: answer a finding once and the gate passes next run."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / LEDGER_FILE).write_text(LEDGERED)
+
+    with (
+        patch("gatehouse.review.get_file_listing", return_value=None),
+        patch("gatehouse.review.load_styleguide", return_value=None),
+        patch(
+            "gatehouse.review.call_model",
+            new_callable=AsyncMock,
+            return_value=_reply([_model_finding()]),
+        ),
+        patch("gatehouse.review.format_results") as formatted,
+    ):
+        exit_code = await run_review(stdin_diff=DIFF, agent_slugs=["bugs"], api_key="k")
+    assert exit_code == 0
+    assert formatted.call_args.args[0] == [(BUG_HUNTER, [])]
+    assert "Skipped 1 finding(s) already judged" in capsys.readouterr().err
+
+
+@pytest.mark.asyncio
+async def test_without_the_ledger_the_same_finding_blocks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    with (
+        patch("gatehouse.review.get_file_listing", return_value=None),
+        patch("gatehouse.review.load_styleguide", return_value=None),
+        patch(
+            "gatehouse.review.call_model",
+            new_callable=AsyncMock,
+            return_value=_reply([_model_finding()]),
+        ),
+    ):
+        exit_code = await run_review(stdin_diff=DIFF, agent_slugs=["bugs"], api_key="k")
+    assert exit_code == 1
+
+
+@pytest.mark.asyncio
+async def test_a_judgement_does_not_cover_a_different_finding_in_the_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / LEDGER_FILE).write_text(LEDGERED)
+    with (
+        patch("gatehouse.review.get_file_listing", return_value=None),
+        patch("gatehouse.review.load_styleguide", return_value=None),
+        patch(
+            "gatehouse.review.call_model",
+            new_callable=AsyncMock,
+            return_value=_reply([_model_finding("user.name.lower()")]),
+        ),
+    ):
+        exit_code = await run_review(stdin_diff=DIFF, agent_slugs=["bugs"], api_key="k")
+    assert exit_code == 1
+
+
+@pytest.mark.asyncio
+async def test_a_run_prints_an_entry_to_paste_for_each_finding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    with (
+        patch("gatehouse.review.get_file_listing", return_value=None),
+        patch("gatehouse.review.load_styleguide", return_value=None),
+        patch(
+            "gatehouse.review.call_model",
+            new_callable=AsyncMock,
+            return_value=_reply([_model_finding()]),
+        ),
+    ):
+        await run_review(stdin_diff=DIFF, agent_slugs=["bugs"], api_key="k")
+    out = capsys.readouterr().out
+    assert "[[findings]]" in out
+    assert 'agent = "bugs"' in out
+    assert 'reason = ""' in out
+
+
+@pytest.mark.asyncio
+async def test_a_stale_entry_is_reported_for_deletion(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A suppression must not outlive the code it covered."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / LEDGER_FILE).write_text(
+        LEDGERED.replace("total = total / count", "gone = long_gone()")
+    )
+    with (
+        patch("gatehouse.review.get_file_listing", return_value=None),
+        patch("gatehouse.review.load_styleguide", return_value=None),
+        patch("gatehouse.review.call_model", new_callable=AsyncMock, return_value=_reply([])),
+    ):
+        await run_review(stdin_diff=DIFF, agent_slugs=["bugs"], api_key="k")
+    err = capsys.readouterr().err
+    assert "Stale gatehouse-findings.toml entry" in err
+    assert "src/app.py" in err
+
+
+@pytest.mark.asyncio
+async def test_a_broken_ledger_is_named_and_the_review_still_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / LEDGER_FILE).write_text("[[findings]\nagent = ")
+    with (
+        patch("gatehouse.review.get_file_listing", return_value=None),
+        patch("gatehouse.review.load_styleguide", return_value=None),
+        patch(
+            "gatehouse.review.call_model",
+            new_callable=AsyncMock,
+            return_value=_reply([_model_finding()]),
+        ),
+    ):
+        exit_code = await run_review(stdin_diff=DIFF, agent_slugs=["bugs"], api_key="k")
+    assert exit_code == 1  # the finding it would have judged still stands
+    assert "not valid TOML" in capsys.readouterr().err
