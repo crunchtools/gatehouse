@@ -389,10 +389,17 @@ def test_format_review_body_counts_filtered_findings() -> None:
     assert "3 more low finding(s) from advisory agents not posted." in body
 
 
-def test_format_comment_body_records_agent_and_confidence() -> None:
+def test_format_comment_body_records_agent_confidence_and_votes() -> None:
     body = _format_comment_body(BUG_HUNTER, SAMPLE_FINDING)
-    assert body.endswith("<!-- gatehouse agent=bugs confidence=95 -->")
+    assert body.endswith("<!-- gatehouse agent=bugs confidence=95 votes=1/1 -->")
     assert FINDING_HEADER_RE.match(body).groups() == ("HIGH", "Bug Hunter")
+
+
+def test_format_comment_body_records_the_vote_counts_it_was_given() -> None:
+    """The marker carries the agreement so a finding can be tuned against it later."""
+    finding = {**SAMPLE_FINDING, "votes": 2, "samples": 3}
+    body = _format_comment_body(BUG_HUNTER, finding)
+    assert body.endswith("<!-- gatehouse agent=bugs confidence=95 votes=2/3 -->")
 
 
 def _thread_comment(cid: int, user: str, *, reply_to: int | None = None, **extra: object) -> dict:
