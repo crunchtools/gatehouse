@@ -25,14 +25,15 @@ from gatehouse.agents import (
 )
 from gatehouse.config import CONFIG_FILE
 from gatehouse.consensus import (
+    BLOCKING_SEVERITIES,
     BLOCKING_VOTES_KEY,
     BLOCKS_KEY,
+    MEMBER_LINES_KEY,
     SAMPLES_KEY,
     VOTES_KEY,
 )
 from gatehouse.llm import Completion
 from gatehouse.review import (
-    BLOCKING_SEVERITIES,
     CONFIDENCE_THRESHOLD,
     MAX_ADVISORY_LOWS,
     _cap_advisory_lows,
@@ -46,7 +47,7 @@ from gatehouse.review import (
     run_review,
 )
 
-VOTE_KEYS = frozenset({VOTES_KEY, SAMPLES_KEY, BLOCKING_VOTES_KEY, BLOCKS_KEY})
+VOTE_KEYS = frozenset({VOTES_KEY, SAMPLES_KEY, BLOCKING_VOTES_KEY, BLOCKS_KEY, MEMBER_LINES_KEY})
 
 # Quotes every fixture's evidence: findings whose evidence is not in the
 # diff are dropped before they are reported.
@@ -557,13 +558,19 @@ def test_detect_default_branch_fallback() -> None:
 
 
 def test_has_blocking_findings_true() -> None:
-    finding = {"severity": "high", "confidence": 95}
+    finding = {"severity": "high", "confidence": 95, BLOCKS_KEY: True}
     results = [(BUG_HUNTER, [finding])]
     assert _has_blocking_findings(results) is True
 
 
+def test_has_blocking_findings_reads_only_the_tallys_verdict() -> None:
+    """No fallback rule: a severity without the verdict is not a blocking finding."""
+    results = [(BUG_HUNTER, [{"severity": "critical", "confidence": 99}])]
+    assert _has_blocking_findings(results) is False
+
+
 def test_has_blocking_findings_false_advisory_agent() -> None:
-    finding = {"severity": "high", "confidence": 95}
+    finding = {"severity": "high", "confidence": 95, BLOCKS_KEY: False}
     results = [(CONSISTENCY_CHECK, [finding])]
     assert _has_blocking_findings(results) is False
 

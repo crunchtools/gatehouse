@@ -24,6 +24,7 @@ VOTES_KEY = "votes"
 SAMPLES_KEY = "samples"
 BLOCKING_VOTES_KEY = "blockingVotes"
 BLOCKS_KEY = "blocksTheRun"
+MEMBER_LINES_KEY = "memberLines"
 
 
 def severity_rank(severity: str) -> int:
@@ -83,7 +84,9 @@ class _Cluster:
         """The cluster as one finding: its clearest member, with the vote counts.
 
         The text, line numbers and suggestion come from the most confident
-        member, because that is the one that explains the problem best. The
+        member, because that is the one that explains the problem best; every
+        member's line range is kept too, so a filter that needs a line inside
+        the diff can use one of the others instead of dropping the finding. The
         severity is the most severe any member gave it, so what is displayed
         can never be milder than what the blocking decision was made on.
         """
@@ -94,6 +97,13 @@ class _Cluster:
         finding[VOTES_KEY] = len(self.voters)
         finding[BLOCKING_VOTES_KEY] = len(self.blocking_voters)
         finding[SAMPLES_KEY] = samples
+        finding[MEMBER_LINES_KEY] = sorted(
+            {
+                (member.get("lineStart", 0), member.get("lineEnd", 0))
+                for member in self.members
+                if isinstance(member.get("lineStart"), int)
+            }
+        )
         return finding
 
 
@@ -145,6 +155,16 @@ def keep_reported(
 ) -> list[dict[str, Any]]:
     """The findings with enough votes to be shown at all."""
     return [f for f in findings if int(f.get(VOTES_KEY, 0)) >= consensus.report]
+
+
+def blocks_the_run(finding: dict[str, Any]) -> bool:
+    """The verdict recorded during the tally; absent means it was not reached.
+
+    The verdict is made once, by blocks(), where the agent's thresholds and its
+    finished sample count are both in hand. Reading it here rather than judging
+    severity again is what stops a finding blocking a run it was never shown in.
+    """
+    return bool(finding.get(BLOCKS_KEY, False))
 
 
 def blocks(agent: Agent, finding: dict[str, Any], consensus: AgentConsensus) -> bool:

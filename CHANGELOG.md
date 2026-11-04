@@ -9,11 +9,13 @@ All notable changes to this project are documented here, following
 
 ### Added
 
-- **Consensus voting.** Each agent now reviews the diff several times and the
-  samples are tallied: a finding's votes are how many samples saw it. With the
-  shipped defaults a critical/high from a blocking agent must be unanimous (3/3)
-  to fail the run, and any finding needs a majority (2/3) to be reported at all.
-  A HIGH only one sample saw is no longer a blocked commit. Findings cluster on
+- **Consensus voting.** Each agent now reviews the diff `samples` times and the
+  samples are tallied: a finding's votes are how many samples saw it. The
+  shipped defaults sample the five blocking agents three times and the three
+  advisory agents once, so a critical/high from a blocking agent must be
+  unanimous (3/3) to fail the run and needs a majority (2/3) to be reported at
+  all, while an advisory agent keeps its single-sample behaviour (1/1 to report,
+  never blocking). A HIGH only one sample saw is no longer a blocked commit. Findings cluster on
   agent, category, file and evidence containment, so a sample quoting one line
   and a sample quoting the three around it count as one finding; a hash of the
   quote would split them and unanimity would never be reached (spec 003, #104).

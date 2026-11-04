@@ -29,9 +29,10 @@ from gatehouse.config import (
     samples_from_env,
 )
 from gatehouse.consensus import (
-    BLOCKING_SEVERITIES,
     BLOCKS_KEY,
+    MEMBER_LINES_KEY,
     blocks,
+    blocks_the_run,
     cluster_samples,
     keep_reported,
 )
@@ -290,21 +291,12 @@ def _has_blocking_findings(
 ) -> bool:
     """True when any finding carries the verdict that it fails the run.
 
-    The verdict is made once, in _tally, where the agent's thresholds and its
-    finished sample count are both in hand; a second decision made here from
-    severity alone is how a finding came to block without being shown. A
-    finding that never went through the tally is judged the old way: any
-    critical/high from a blocking agent blocks.
+    One rule, no fallback: the verdict is made during the tally, which is the
+    only producer of reported findings, and every finding it returns carries
+    it. Judging severity again here is how a finding came to block a run it
+    was never shown in.
     """
-    for agent, findings in results:
-        for finding in findings:
-            verdict = finding.get(BLOCKS_KEY)
-            if verdict is not None:
-                if verdict:
-                    return True
-            elif agent.blocking and finding.get("severity", "low") in BLOCKING_SEVERITIES:
-                return True
-    return False
+    return any(blocks_the_run(finding) for _, findings in results for finding in findings)
 
 
 def _parse_findings(response_text: str) -> list[dict[str, Any]]:
@@ -465,7 +457,17 @@ def _drop_offdiff(results: Results, anchors: dict[str, set[int]] | None) -> tupl
         path, line = finding.get("file", ""), finding.get("lineStart", 0)
         if not path or not isinstance(line, int) or line <= 0:
             return True
-        return line in anchors.get(path, ())
+        shown = anchors.get(path, ())
+        if line in shown:
+            return True
+        # The representative member's line may be outside the diff while
+        # another sample quoted the same code at a line inside it. Re-anchor
+        # rather than drop a finding the agents agreed on.
+        for start, end in finding.get(MEMBER_LINES_KEY, ()):
+            if start in shown:
+                finding["lineStart"], finding["lineEnd"] = start, end
+                return True
+        return False
 
     return _keep_where(results, anchored)
 

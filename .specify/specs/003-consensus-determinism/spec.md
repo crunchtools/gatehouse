@@ -103,7 +103,7 @@ general = 1
 ```
 
 `block` and `report` take `"all"`, `"majority"` (strictly more than half) or an integer, resolved
-against that agent's own `n`. An integer above that `n` is unreachable and is a usage error.
+against that agent's own `n`. An integer above that `n` is unreachable and is a usage error, except `block` for an advisory agent, which resolves no blocking threshold at all.
 Precedence: `--samples` > `GATEHOUSE_SAMPLES` > `gatehouse.toml` > packaged defaults; per-agent
 counts live in the file only. Bounds: per-agent `n` in [1, 5] and at most 40 calls in one review;
 out of range is a usage error, never a silent clamp. `--samples 1` restores single-sample

@@ -54,15 +54,15 @@ All 8 agents run concurrently, each over several samples (see Consensus). Findin
 
 An LLM asked the same question twice does not always answer the same way, which is why a single-sample review could raise a new HIGH on every run and block a commit forever. Each agent therefore reviews the diff several times, and the samples vote.
 
-Votes are tallied additively — nothing penalizes anything else. With the shipped defaults:
+Votes are tallied additively — nothing penalizes anything else. The shipped defaults sample the five blocking agents three times each and the three advisory agents once:
 
-| | Votes needed | Default |
-|---|---|---|
-| Fail the run (`block`) | every sample agrees | 3 of 3, blocking agents only |
-| Be reported (`report`) | a majority agrees | 2 of 3 |
-| Appear under `--verbose` only | fewer | 1 of 3 |
+| | Votes needed | Blocking agents (3 samples) | Advisory agents (1 sample) |
+|---|---|---|---|
+| Fail the run (`block`) | every sample agrees | 3 of 3 | never — they cannot block |
+| Be reported (`report`) | a majority agrees | 2 of 3 | 1 of 1 |
+| Appear under `--verbose` only | fewer | 1 of 3 | — |
 
-So a HIGH only one sample saw is not a blocked commit, a 2/3 HIGH is reported for a human to judge without stopping work, and a 3/3 HIGH fails the run. Blocking votes count only the samples that called a finding critical or high: two MEDIUMs and one HIGH is three votes to report and one to block.
+So for the agents that can stop a commit, a HIGH only one sample saw is not a blocked commit, a 2/3 HIGH is reported for a human to judge without stopping work, and a 3/3 HIGH fails the run. An advisory agent runs once by default, since a second opinion buys nothing where no opinion can block; give it `samples` in `gatehouse.toml` if you want its findings tallied too. Blocking votes count only the samples that called a finding critical or high: two MEDIUMs and one HIGH is three votes to report and one to block.
 
 Findings from different samples are the same finding when the agent, category and file match and one's quoted evidence contains the other's — whitespace and line numbers take no part, so a reformatted or re-anchored quote still counts. Two findings from the *same* sample never merge: a sample that reported two findings found two things. A finding with nothing quotable stands alone with one vote and no blocking vote at all: unevidenced findings cannot add up to a unanimous one, and a claim with nothing to quote cannot fail a run even in a repository that configured one vote to block.
 

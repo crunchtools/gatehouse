@@ -13,6 +13,8 @@ from gatehouse.agents import BUG_HUNTER, GENERAL
 from gatehouse.config import CONFIG_FILE, AgentConsensus, load_config
 from gatehouse.consensus import (
     BLOCKING_VOTES_KEY,
+    BLOCKS_KEY,
+    MEMBER_LINES_KEY,
     SAMPLES_KEY,
     VOTES_KEY,
     blocks,
@@ -21,7 +23,7 @@ from gatehouse.consensus import (
     severity_rank,
 )
 from gatehouse.llm import Completion
-from gatehouse.review import _squash, run_review
+from gatehouse.review import AgentOutcome, _squash, _tally, run_review
 
 DIFF = """\
 diff --git a/src/app.py b/src/app.py
@@ -340,3 +342,49 @@ async def test_a_blocking_cluster_short_of_the_report_threshold_is_still_shown()
     assert exit_code == 1
     reported = formatted.call_args.args[0][0][1]
     assert [f[VOTES_KEY] for f in reported] == [1]
+
+
+def test_a_cluster_keeps_every_members_line_range() -> None:
+    samples = [
+        [finding("total = total / count", line=4, confidence=99)],
+        [finding("total = total / count", line=5, confidence=80)],
+    ]
+    assert cluster(samples)[0][MEMBER_LINES_KEY] == [(4, 4), (5, 5)]
+
+
+def test_every_tallied_finding_carries_the_blocking_verdict() -> None:
+    """_has_blocking_findings has no fallback, so the tally must always decide."""
+    outcome = AgentOutcome(
+        agent=BUG_HUNTER,
+        samples=[[finding("total = total / count")] for _ in range(3)],
+        replies=[],
+        reason=None,
+    )
+    results = _tally([outcome], load_config(None))
+    assert results[0][1]
+    assert all(BLOCKS_KEY in f for f in results[0][1])
+
+
+@pytest.mark.asyncio
+async def test_a_cluster_is_reanchored_to_a_member_line_inside_the_diff() -> None:
+    """The most confident sample may quote a line the PR diff does not show."""
+    replies = [
+        _reply([finding("total = total / count", line=99, confidence=99)]),
+        _reply([finding("total = total / count", line=5, confidence=90)]),
+        _reply([finding("total = total / count", line=5, confidence=85)]),
+    ]
+    with (
+        patch("gatehouse.review.get_file_listing", return_value=None),
+        patch("gatehouse.review.load_styleguide", return_value=None),
+        patch("gatehouse.review.right_side_lines", return_value={"src/app.py": {5}}),
+        patch("gatehouse.review.fetch_answered_threads", return_value=[]),
+        patch("gatehouse.review.post_pr_review", new_callable=AsyncMock) as post,
+        patch("gatehouse.review.call_model", new_callable=AsyncMock, side_effect=replies),
+    ):
+        await run_review(
+            stdin_diff=DIFF, agent_slugs=["bugs"], api_key="k", comment=True, advisory=True
+        )
+    posted = post.call_args.args[0][0][1]
+    assert len(posted) == 1
+    assert posted[0]["lineStart"] == 5
+    assert post.call_args.kwargs["offdiff"] == 0

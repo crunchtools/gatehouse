@@ -159,9 +159,27 @@ def _parse(text: str, source: str) -> dict[str, Any]:
 
 
 def packaged_defaults() -> ConsensusConfig:
-    """The shipped configuration, from defaults.toml next to this module."""
+    """The shipped configuration, from defaults.toml next to this module.
+
+    Every key must be present there: defaults.toml is the only statement of
+    what gatehouse ships with, so a missing key is a packaging error rather
+    than something a second copy in Python quietly supplies.
+    """
     text = resources.files("gatehouse").joinpath(DEFAULTS_RESOURCE).read_text()
-    return _build(_parse(text, DEFAULTS_RESOURCE), ConsensusConfig(3, ALL, MAJORITY, {}))
+    consensus = _table(_parse(text, DEFAULTS_RESOURCE), "consensus")
+    missing = [key for key in ("samples", "block", "report") if key not in consensus]
+    if missing:
+        msg = f"{DEFAULTS_RESOURCE} is missing consensus.{', consensus.'.join(missing)}"
+        raise ConfigError(msg)
+    agents: dict[str, int] = {}
+    for slug, value in _table(consensus, "agents").items():
+        agents[slug] = _samples(value, f"consensus.agents.{slug}")
+    return ConsensusConfig(
+        samples=_samples(consensus["samples"], "consensus.samples"),
+        block=consensus["block"],
+        report=consensus["report"],
+        agents=agents,
+    )
 
 
 def _build(document: dict[str, Any], base: ConsensusConfig) -> ConsensusConfig:
