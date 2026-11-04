@@ -53,12 +53,17 @@ class ConsensusConfig:
     slug. ``block`` and ``report`` are unresolved thresholds ("all",
     "majority" or an integer); each agent resolves them against its own count,
     so one setting means the same thing at every sample count.
+
+    ``clamp_report`` is set only by the --report-votes override, and lowers
+    ``report`` to an agent's own sample count rather than failing the run when
+    one number cannot be reached by every agent.
     """
 
     samples: int
     block: Threshold
     report: Threshold
     agents: dict[str, int]
+    clamp_report: bool = False
 
     def samples_for(self, slug: str) -> int:
         """The sample count for one agent slug."""
@@ -81,7 +86,7 @@ class ConsensusConfig:
         return AgentConsensus(
             samples=n,
             block=resolve_threshold(self.block, n, "block", slug) if blocking else None,
-            report=resolve_threshold(self.report, n, "report", slug),
+            report=resolve_threshold(self.report, n, "report", slug, clamp=self.clamp_report),
         )
 
     def total_calls(self, slugs: list[str]) -> int:
@@ -99,13 +104,22 @@ class ConsensusConfig:
             raise ConfigError(msg)
 
 
-def resolve_threshold(spec: Threshold, samples: int, field: str, slug: str) -> int:
+def resolve_threshold(
+    spec: Threshold, samples: int, field: str, slug: str, *, clamp: bool = False
+) -> int:
     """Turn a threshold spec into a vote count for an agent with ``samples`` samples.
 
     "all" is unanimity, "majority" is strictly more than half (2 of 3, 3 of 4),
     and an integer is itself. An integer above the agent's sample count can
     never be reached, which would silence that agent: that is a config error,
     not a clamp.
+
+    ``clamp`` lowers such an integer to the agent's own count instead of
+    raising, and is used only for the global --report-votes override. The
+    config file is never clamped: there you set a per-agent count beside the
+    threshold, so an unreachable one is a mistake worth failing on, while one
+    number passed on the command line has to mean something sane for every
+    agent at once, including the advisory ones that run a single sample.
     """
     if isinstance(spec, bool):  # bools are ints in Python; never a vote count
         msg = f"consensus.{field} must be {ALL!r}, {MAJORITY!r} or an integer, not a boolean"
@@ -114,6 +128,8 @@ def resolve_threshold(spec: Threshold, samples: int, field: str, slug: str) -> i
         if spec < 1:
             msg = f"consensus.{field} must be at least 1, got {spec}"
             raise ConfigError(msg)
+        if spec > samples and clamp:
+            return samples
         if spec > samples:
             msg = (
                 f"consensus.{field} is {spec} but agent {slug!r} runs {samples} "
@@ -209,34 +225,54 @@ def _build(document: dict[str, Any], base: ConsensusConfig) -> ConsensusConfig:
 
 
 def load_config(
-    repo_toml: str | None = None, samples_override: int | None = None
+    repo_toml: str | None = None,
+    samples_override: int | None = None,
+    report_override: int | None = None,
 ) -> ConsensusConfig:
-    """The configuration for a review: packaged defaults, the repo's file, then the override.
+    """The configuration for a review: packaged defaults, the repo's file, then the overrides.
 
     ``repo_toml`` is the text of the reviewed repository's gatehouse.toml, or
     None when it has none. ``samples_override`` is the global count from
     --samples or GATEHOUSE_SAMPLES; it replaces every per-agent override too,
     so `--samples 1` reproduces single-sample behaviour for all agents.
 
-    Thresholds are validated here for every agent, so an unreachable one fails
-    the run before any model is called.
+    ``report_override`` is the global report threshold from --report-votes or
+    GATEHOUSE_REPORT_VOTES. It only decides which findings are *shown*: a
+    finding with the votes to block is printed whatever this says, so raising
+    it cannot hide a failure and lowering it cannot cause one. `1` reports
+    every finding a single sample saw, with its vote count beside it.
+
+    A threshold from the file is validated here for every agent, so one no
+    agent could reach fails the run before any model is called. The
+    ``report_override`` is the exception: it clamps to each agent's own sample
+    count instead, since one number for every agent cannot also be checked
+    against each of them.
     """
     config = packaged_defaults()
     if repo_toml is not None:
         config = _build(_parse(repo_toml, CONFIG_FILE), config)
     if samples_override is not None:
         config = replace(config, samples=_samples(samples_override, "--samples"), agents={})
+    if report_override is not None:
+        if report_override < 1:
+            msg = f"--report-votes must be at least 1, got {report_override}"
+            raise ConfigError(msg)
+        config = replace(config, report=report_override, clamp_report=True)
     for slug in AGENT_BY_SLUG:
         config.for_agent(slug)
     return config
 
 
-def samples_from_env(value: str | None) -> int | None:
-    """Parse GATEHOUSE_SAMPLES, or None when it is unset or empty."""
+def int_from_env(value: str | None, name: str) -> int | None:
+    """One integer environment variable, or None when it is unset or empty.
+
+    ``name`` is the variable's own name, so a bad value names itself in the
+    error rather than the setting it happened to feed.
+    """
     if value is None or not value.strip():
         return None
     try:
         return int(value)
     except ValueError as exc:
-        msg = f"GATEHOUSE_SAMPLES must be an integer, got {value!r}"
+        msg = f"{name} must be an integer, got {value!r}"
         raise ConfigError(msg) from exc

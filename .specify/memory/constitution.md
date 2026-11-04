@@ -22,7 +22,7 @@ Semantic Versioning 2.0.0. MAJOR for CLI interface changes, MINOR for new agents
 
 ## CLI Interface
 
-Built with argparse. Flags: `--staged`, `--stdin`, `--base`, `--agents`, `--model`, `--constitution`, `--advisory`, `--comment`, `--samples`, `--verbose`.
+Built with argparse. Flags: `--staged`, `--stdin`, `--base`, `--agents`, `--model`, `--constitution`, `--advisory`, `--comment`, `--samples`, `--report-votes`, `--verbose`.
 
 Exit code `0` on success or advisory-only findings. Exit code `1` on blocking findings (critical/high severity from blocking agents). Exit code `2` on usage errors (missing API key, bad arguments) or when an agent could not finish, so an outage never reads as a clean review. Under `--advisory` an unfinished agent is reported in stderr and in the posted review, with the class of its failure, and the exit code stays `0` while at least half of the agents finished. Fewer than half is not a review: the exit code is `2` regardless of `--advisory`, and the posted review says how few agents finished, never "found no issues" alone, and carries a hidden failed marker.
 
@@ -57,7 +57,7 @@ Each agent runs `n` samples concurrently. Every sample's findings are unioned fo
 
 Findings cluster on agent, category, file and **evidence containment**: two findings cluster when one's whitespace-stripped evidence contains the other's. Never a hash of the evidence — two samples quoting different spans of one bug would never cluster, and a unanimity threshold would never fire. No line number takes part, so a cluster survives reformatting and line drift. A finding with no usable evidence does not cluster and carries at most one vote, so it can be reported but can never block.
 
-A cluster blocks only when its votes reach the `block` threshold, its severity is critical or high, and its agent is blocking. At `report` it is shown; below that it appears only under `--verbose`. Thresholds resolve against the samples that **finished**: an agent counts as unfinished only when fewer than a majority of its `n` finished, because a timeout is not a dissent.
+A cluster blocks only when its votes reach the `block` threshold, its severity is critical or high, and its agent is blocking. At `report` it is shown. The report threshold is `--report-votes` when it is given, else `GATEHOUSE_REPORT_VOTES`, else 1 under `--verbose`, else the configured value: so `--verbose` alone reports every finding one sample saw, and an explicit threshold is never overridden by it. Thresholds resolve against the samples that **finished**: an agent counts as unfinished only when fewer than a majority of its `n` finished, because a timeout is not a dissent.
 
 Per-sample filters (unverifiable evidence, disproved refs) run before the tally; cluster-level filters (off-diff lines, re-raises, the advisory LOW cap) run after it.
 

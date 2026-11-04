@@ -128,6 +128,17 @@ def main() -> None:
         "GATEHOUSE_SAMPLES and the config file",
     )
     parser.add_argument(
+        "--report-votes",
+        type=int,
+        default=None,
+        metavar="N",
+        help="How many votes a finding needs to be shown (default: from "
+        "gatehouse.toml, else a majority of the agent's samples). 1 reports "
+        "every finding a single sample saw, with its vote count. It never "
+        "changes the verdict: a finding with the votes to block is shown "
+        "either way. Overrides GATEHOUSE_REPORT_VOTES and the config file",
+    )
+    parser.add_argument(
         "--usage-json",
         metavar="PATH",
         default=None,
@@ -186,6 +197,7 @@ def main() -> None:
             incremental=args.incremental,
             usage_json=args.usage_json,
             samples=args.samples,
+            report_votes=args.report_votes,
             consensus_json=args.consensus_json,
             required_low_agents=frozenset(
                 name.strip() for name in args.required_low_agents.split(",") if name.strip()

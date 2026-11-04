@@ -30,6 +30,7 @@ if TYPE_CHECKING:
 from gatehouse.review import (
     AgentOutcome,
     _consensus_records,
+    _report_votes,
     _squash,
     _tally,
     run_review,
@@ -186,6 +187,35 @@ def test_keep_reported_drops_a_single_voter_at_majority() -> None:
     ]
     kept = keep_reported(findings, consensus)
     assert [f["description"] for f in kept] == ["two samples saw it"]
+
+
+def test_keep_reported_at_one_vote_keeps_the_single_voter() -> None:
+    """--report-votes 1: the minority tail is shown, with its vote count.
+
+    Issue #103's requirement. The best finding of the night it was filed over
+    was seen by one run in four, and the shipped default would not have
+    printed it at all.
+    """
+    consensus = AgentConsensus(samples=3, block=3, report=1)
+    findings = [
+        {VOTES_KEY: 1, "description": "one sample saw it"},
+        {VOTES_KEY: 2, "description": "two samples saw it"},
+    ]
+    kept = keep_reported(findings, consensus)
+    assert [f["description"] for f in kept] == ["one sample saw it", "two samples saw it"]
+
+
+def test_report_votes_precedence_flag_then_env_then_verbose(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The constitution promises --verbose shows the tail; an explicit flag still wins."""
+    monkeypatch.delenv("GATEHOUSE_REPORT_VOTES", raising=False)
+    assert _report_votes(None, False) is None
+    assert _report_votes(None, True) == 1
+    assert _report_votes(2, True) == 2
+    monkeypatch.setenv("GATEHOUSE_REPORT_VOTES", "3")
+    assert _report_votes(None, True) == 3
+    assert _report_votes(1, True) == 1
 
 
 def test_blocks_needs_unanimity_a_blocking_agent_and_a_blocking_severity() -> None:

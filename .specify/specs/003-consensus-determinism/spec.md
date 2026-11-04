@@ -123,6 +123,29 @@ nothing still does not fail the run.
 Under the fork-safe workflow `gatehouse.toml` MUST be loaded from the trusted base, like
 `.gatehouse-ignore` and the styleguide: a pull request cannot weaken the gate reviewing it.
 
+### The report override (0.23.0)
+
+`--report-votes N` > `GATEHOUSE_REPORT_VOTES` > `gatehouse.toml` > packaged defaults, overriding
+`report` for every agent and leaving `block` untouched. Because it governs only what is shown, and
+a cluster with the votes to block is reported whatever `report` says, it cannot weaken the gate in
+either direction — so unlike `gatehouse.toml` it is honoured from the invocation even in CI, where
+there is no trusted base to read it from.
+
+Where an agent's `n` is below `N` the threshold clamps to that agent's `n`. This is the one
+permitted clamp and it is deliberate: the file sets a per-agent count beside the threshold, so an
+unreachable value there is a mistake worth exit 2, while a single number on the command line has to
+hold for every agent at once, including the three advisory agents that run one sample.
+
+`--report-votes 1` reports every finding one sample saw, with its vote count.
+
+**Known deviation from issue #103.** #103 required that reporting never need a quorum: "a
+single-sample finding is still printed, as advisory, with its vote count shown", because the real
+CRITICAL that motivated the issue was seen by one run in four. The shipped default
+(`report = "majority"`) drops it instead, and a dropped finding is absent from the terminal, the
+posted review and `--consensus-json` alike. 0.23.0 makes that recall recoverable on demand; it does
+not change the default, because how noisy the gate is out of the box is a product judgement about
+adoption, not a correctness one. Open for a ruling.
+
 ### The ledger (0.22.0)
 
 `gatehouse-findings.toml`, committed at the reviewed repository's root, records findings already
@@ -165,7 +188,7 @@ live-model eval cannot gate a merge, and a floor is a warning to investigate, no
 
 - New `src/gatehouse/config.py`, `src/gatehouse/defaults.toml`, `src/gatehouse/ledger.py`
 - `review.py`: n-sample fan-out, clustering, tally, filter reorder, unfinished-agent rule
-- `cli.py`: `--samples`, `--consensus-json`
+- `cli.py`: `--samples`, `--report-votes`, `--consensus-json`
 - `output.py`, `github.py`: vote counts, and `votes=` in the hidden comment marker
 - `.github/workflows/review.yml`: pass the head repo and sha for the ledger fetch
 - No change to the pre-commit hook line, so no calling repository needs an edit
