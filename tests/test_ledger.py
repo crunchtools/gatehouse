@@ -17,10 +17,13 @@ from gatehouse.ledger import (
     LEDGER_FILE,
     NOT_A_BUG,
     Entry,
+    entries_added,
+    entry_line,
     judgement,
     parse_ledger,
     render_entry,
     stale,
+    suppression_finding,
 )
 from gatehouse.llm import Completion
 from gatehouse.review import _squash, run_review
@@ -371,3 +374,131 @@ async def test_a_broken_ledger_is_named_and_the_review_still_runs(
         exit_code = await run_review(stdin_diff=DIFF, agent_slugs=["bugs"], api_key="k")
     assert exit_code == 1  # the finding it would have judged still stands
     assert "not valid TOML" in capsys.readouterr().err
+
+
+BASE_ONLY = LEDGERED.replace("total = total / count", "already_judged_on_base = 1").replace(
+    REASON, "judged on the base branch when it was merged"
+)
+
+
+def test_entries_added_are_the_ones_the_base_does_not_have() -> None:
+    head, _ = parse(BASE_ONLY + LEDGERED)
+    base, _ = parse(BASE_ONLY)
+    added = entries_added(head, base)
+    assert [e.evidence for e in added] == ["total=total/count"]
+
+
+def test_nothing_is_added_when_the_ledgers_match() -> None:
+    head, _ = parse(LEDGERED)
+    assert entries_added(head, head) == []
+
+
+def test_entry_line_points_at_the_evidence_line() -> None:
+    entries, _ = parse(BASE_ONLY + LEDGERED)
+    text = BASE_ONLY + LEDGERED
+    assert entry_line(text, entries[0]) == 5
+    assert entry_line(text, entries[1]) == 12
+
+
+def test_entry_line_is_zero_when_the_quote_is_not_in_the_text() -> None:
+    entries, _ = parse(LEDGERED)
+    assert entry_line("nothing here\n", entries[0]) == 0
+
+
+def test_a_suppression_is_a_medium_finding_triage_demands_an_answer_to() -> None:
+    entries, _ = parse(LEDGERED)
+    item = suppression_finding(entries[0], 5)
+    assert item["severity"] == "medium"
+    assert item["file"] == LEDGER_FILE
+    assert item["lineStart"] == 5
+    assert "silences a bugs finding in src/app.py" in item["description"]
+    assert REASON in item["description"]
+
+
+@pytest.mark.asyncio
+async def test_a_new_entry_is_posted_for_a_maintainer_to_answer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A suppression is the one way to silence this gate, so it must be answered."""
+    monkeypatch.chdir(tmp_path)
+    head_text = BASE_ONLY + LEDGERED
+    ledger_diff = "".join(f"+{line}\n" for line in head_text.splitlines())
+    diff = (
+        "diff --git a/gatehouse-findings.toml b/gatehouse-findings.toml\n"
+        "--- a/gatehouse-findings.toml\n"
+        "+++ b/gatehouse-findings.toml\n"
+        f"@@ -0,0 +1,{len(head_text.splitlines())} @@\n"
+        f"{ledger_diff}"
+    )
+
+    def fake_fetch(_repo: str, ref: str, path: str, _token: str) -> str | None:
+        if path != LEDGER_FILE:
+            return None
+        return BASE_ONLY if ref == "base-sha" else head_text
+
+    monkeypatch.setenv("GATEHOUSE_CONTEXT_REPO", "crunchtools/gatehouse")
+    monkeypatch.setenv("GATEHOUSE_CONTEXT_REF", "base-sha")
+    monkeypatch.setenv("GATEHOUSE_HEAD_SHA", "head-sha")
+    monkeypatch.setenv("GATEHOUSE_HEAD_REPO", "crunchtools/gatehouse")
+    monkeypatch.setenv("GITHUB_TOKEN", "x")
+
+    with (
+        patch("gatehouse.review.fetch_repo_file", side_effect=fake_fetch),
+        patch("gatehouse.review.get_file_listing", return_value=None),
+        patch("gatehouse.review.load_styleguide", return_value=None),
+        patch("gatehouse.review.load_constitution", return_value=None),
+        patch("gatehouse.review.fetch_answered_threads", return_value=[]),
+        patch("gatehouse.review.call_model", new_callable=AsyncMock, return_value=_reply([])),
+        patch("gatehouse.review.post_pr_review", new_callable=AsyncMock) as post,
+    ):
+        await run_review(stdin_diff=diff, agent_slugs=["bugs"], api_key="k", comment=True)
+
+    posted = [f for _, findings in post.call_args.args[0] for f in findings]
+    assert len(posted) == 1
+    assert posted[0]["file"] == LEDGER_FILE
+    assert "silences a bugs finding" in posted[0]["description"]
+
+
+@pytest.mark.asyncio
+async def test_an_answered_suppression_is_not_asked_about_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The re-raise window already dedupes an answered thread; reuse it."""
+    monkeypatch.chdir(tmp_path)
+    head_text = BASE_ONLY + LEDGERED
+    diff = (
+        "diff --git a/gatehouse-findings.toml b/gatehouse-findings.toml\n"
+        "--- a/gatehouse-findings.toml\n"
+        "+++ b/gatehouse-findings.toml\n"
+        f"@@ -0,0 +1,{len(head_text.splitlines())} @@\n"
+        + "".join(f"+{line}\n" for line in head_text.splitlines())
+    )
+
+    def fake_fetch(_repo: str, ref: str, path: str, _token: str) -> str | None:
+        if path != LEDGER_FILE:
+            return None
+        return BASE_ONLY if ref == "base-sha" else head_text
+
+    monkeypatch.setenv("GATEHOUSE_CONTEXT_REPO", "crunchtools/gatehouse")
+    monkeypatch.setenv("GATEHOUSE_CONTEXT_REF", "base-sha")
+    monkeypatch.setenv("GATEHOUSE_HEAD_SHA", "head-sha")
+    monkeypatch.setenv("GATEHOUSE_HEAD_REPO", "crunchtools/gatehouse")
+    monkeypatch.setenv("GITHUB_TOKEN", "x")
+
+    with (
+        patch("gatehouse.review.fetch_repo_file", side_effect=fake_fetch),
+        patch("gatehouse.review.get_file_listing", return_value=None),
+        patch("gatehouse.review.load_styleguide", return_value=None),
+        patch("gatehouse.review.load_constitution", return_value=None),
+        patch(
+            "gatehouse.review.fetch_answered_threads",
+            return_value=[("Ledger", LEDGER_FILE, 12)],
+        ),
+        patch("gatehouse.review.call_model", new_callable=AsyncMock, return_value=_reply([])),
+        patch("gatehouse.review.post_pr_review", new_callable=AsyncMock) as post,
+    ):
+        await run_review(stdin_diff=diff, agent_slugs=["bugs"], api_key="k", comment=True)
+
+    posted = [f for _, findings in post.call_args.args[0] for f in findings]
+    assert posted == []
+    assert post.call_args.kwargs["reraised"] == 1

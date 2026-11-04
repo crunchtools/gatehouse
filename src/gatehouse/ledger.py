@@ -199,3 +199,57 @@ def _toml_string(value: str) -> str:
     """Escape a value for a TOML basic string, newlines included."""
     escaped = value.replace("\\", "\\\\").replace('"', '\\"')
     return escaped.replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
+
+
+def entries_added(head: list[Entry], base: list[Entry]) -> list[Entry]:
+    """The entries this branch adds, which nobody has reviewed yet.
+
+    An entry on the base branch was reviewed when it was merged. One that
+    appears only on the head is this pull request asking to silence a finding,
+    and that is a change a maintainer should have to answer for.
+    """
+    known = {_key(entry) for entry in base}
+    return [entry for entry in head if _key(entry) not in known]
+
+
+def _key(entry: Entry) -> tuple[str, str, str, str]:
+    return (entry.agent, entry.category, entry.file, entry.evidence)
+
+
+def entry_line(text: str, entry: Entry) -> int:
+    """The line in the ledger file where this entry's evidence is written.
+
+    Zero when it cannot be found, which keeps the finding out of the inline
+    comments rather than anchoring it to the wrong line.
+    """
+    needle = entry.quote.splitlines()[0] if entry.quote.splitlines() else entry.quote
+    for number, line in enumerate(text.splitlines(), start=1):
+        if line.strip().startswith("evidence") and needle in line:
+            return number
+    return 0
+
+
+def suppression_finding(entry: Entry, line: int) -> dict[str, Any]:
+    """A new ledger entry, as a finding someone has to answer on the pull request.
+
+    Medium severity because the triage check requires an answer to one from
+    any agent: a suppression is the single way to silence this gate, so it
+    must not be able to land without a maintainer saying yes to it.
+    """
+    return {
+        "file": LEDGER_FILE,
+        "lineStart": line,
+        "lineEnd": line,
+        "severity": "medium",
+        "category": "quality",
+        "description": (
+            f"This branch silences a {entry.agent} finding in {entry.file} "
+            f"as {entry.status}: {entry.reason}"
+        ),
+        "suggestion": (
+            "Confirm the judgement is right, or drop the entry and fix the finding. "
+            "The entry stops applying on its own once the code it quotes is gone."
+        ),
+        "evidence": entry.quote,
+        "confidence": 100,
+    }

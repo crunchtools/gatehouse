@@ -58,10 +58,13 @@ from gatehouse.ledger import (
     LEDGER_FILE,
     MIN_REASON_CHARS,
     Entry,
+    entries_added,
+    entry_line,
     judgement,
     parse_ledger,
     render_entry,
     stale,
+    suppression_finding,
 )
 from gatehouse.llm import DEFAULT_MODEL, Completion, call_model
 from gatehouse.output import format_results, print_summary, strip_ansi
@@ -555,6 +558,51 @@ def _filter_clusters(
     return results, {"offdiff": offdiff, "reraised": reraised, "capped": capped}
 
 
+LEDGER_AGENT = Agent(
+    name="Ledger",
+    slug="ledger",
+    blocking=False,
+    system_prompt="",
+)
+
+
+def _ledger_texts() -> tuple[str | None, str | None]:
+    """The ledger as this branch has it, and as the base branch has it.
+
+    The base copy is None outside a pull request, where there is nothing to
+    compare against: a local run is not the place to ask for approval of an
+    entry the developer is in the middle of writing.
+    """
+    source = _ledger_source()
+    if source is None:
+        path = Path(LEDGER_FILE)
+        return (path.read_text() if path.exists() else None), None
+    token = os.environ.get("GITHUB_TOKEN", "")
+    head = fetch_repo_file(source[0], source[1], LEDGER_FILE, token)
+    context = _context_source()
+    base = None
+    if context is not None and context != source:
+        base = fetch_repo_file(context[0], context[1], LEDGER_FILE, token)
+    elif context is not None:
+        base = head  # a fork's ledger already came from the base
+    return head, base
+
+
+def _suppressions(head_text: str | None, base_text: str | None) -> Results:
+    """The entries this branch adds, as findings to answer on the pull request."""
+    if head_text is None or base_text is None:
+        return []
+    head, _ = parse_ledger(head_text, _squash)
+    base, _ = parse_ledger(base_text, _squash)
+    added = entries_added(head, base)
+    findings = [
+        suppression_finding(entry, entry_line(head_text, entry))
+        for entry in added
+        if entry_line(head_text, entry)
+    ]
+    return [(LEDGER_AGENT, findings)] if findings else []
+
+
 def _ledger_source() -> tuple[str, str] | None:
     """The (repo, ref) to read the ledger from, or None to read the working tree.
 
@@ -580,20 +628,13 @@ def _ledger_source() -> tuple[str, str] | None:
     return base_repo, base_ref
 
 
-def _load_ledger() -> list[Entry]:
-    """The judged findings for this review.
+def _ledger_entries(text: str | None) -> list[Entry]:
+    """The judged findings for this review, from the ledger text.
 
     A problem with an entry is named on stderr and the entry ignored: a ledger
     can only ever make a review say less, so a typo in one must not stop the
     review that would have caught it.
     """
-    source = _ledger_source()
-    if source is not None:
-        token = os.environ.get("GITHUB_TOKEN", "")
-        text = fetch_repo_file(source[0], source[1], LEDGER_FILE, token)
-    else:
-        path = Path(LEDGER_FILE)
-        text = path.read_text() if path.exists() else None
     entries, problems = parse_ledger(text, _squash)
     for problem in problems:
         print(f"Ignoring {problem}", file=sys.stderr)
@@ -669,6 +710,7 @@ def _decide(
     answered: list[tuple[str, str, int]],
     required_low: frozenset[str],
     anchors: dict[str, set[int]] | None,
+    suppressions: Results,
 ) -> tuple[Results, dict[str, int]]:
     """Turn every agent's samples into the findings this review reports.
 
@@ -680,6 +722,7 @@ def _decide(
     outcomes, dropped = _filter_outcomes(outcomes, haystack)
     results = _tally(outcomes, config)
     results, judged_count = _drop_judged(results, ledger)
+    results += suppressions
     results, cluster_dropped = _filter_clusters(results, answered, required_low, anchors)
     dropped.update(cluster_dropped)
     dropped["judged"] = judged_count
@@ -1090,7 +1133,8 @@ async def run_review(
         print("No changes to review since the last review.")
         return 0
 
-    ledger = _load_ledger()
+    ledger_texts = _ledger_texts()
+    ledger = _ledger_entries(ledger_texts[0])
     agents = get_agents(agent_slugs)
     config = _consensus_config(agents, samples)
     if config is None:
@@ -1137,6 +1181,7 @@ async def run_review(
         answered=answered,
         required_low=required_low_agents,
         anchors=anchors,
+        suppressions=_suppressions(*ledger_texts) if comment else [],
     )
 
     if all_results or not failed:  # with no agent finished, there are no results to call clean

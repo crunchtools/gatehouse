@@ -193,7 +193,7 @@ def test_a_same_repo_pr_reads_the_ledger_from_its_own_head(tmp_path, monkeypatch
     monkeypatch.setattr(review, "fetch_repo_file", _ledger_fetcher(calls))
     _ci_env(monkeypatch, "crunchtools/gatehouse")
 
-    entries = review._load_ledger()
+    entries = review._ledger_entries(review._ledger_texts()[0])
 
     assert [e.agent for e in entries] == ["security"]
     assert (("crunchtools/gatehouse", HEAD_SHA, review.LEDGER_FILE)) in calls
@@ -206,7 +206,7 @@ def test_a_fork_pr_reads_the_ledger_from_the_base_only(tmp_path, monkeypatch):
     monkeypatch.setattr(review, "fetch_repo_file", _ledger_fetcher(calls))
     _ci_env(monkeypatch, "attacker/gatehouse")
 
-    entries = review._load_ledger()
+    entries = review._ledger_entries(review._ledger_texts()[0])
 
     assert [e.agent for e in entries] == ["bugs"]
     assert all(ref == BASE_SHA for _, ref, _ in calls)
@@ -221,7 +221,7 @@ def test_a_fork_cannot_suppress_a_finding_with_a_planted_ledger(tmp_path, monkey
     monkeypatch.setattr(review, "fetch_repo_file", _ledger_fetcher(calls))
     _ci_env(monkeypatch, "attacker/gatehouse")
 
-    entries = review._load_ledger()
+    entries = review._ledger_entries(review._ledger_texts()[0])
 
     assert [e.agent for e in entries] == ["bugs"]
     assert calls  # it went to the API, not to the planted file
@@ -249,6 +249,6 @@ def test_without_ci_context_the_ledger_comes_from_the_working_tree(tmp_path, mon
     monkeypatch.delenv("GATEHOUSE_CONTEXT_REPO", raising=False)
     monkeypatch.delenv("GATEHOUSE_CONTEXT_REF", raising=False)
 
-    entries = review._load_ledger()
+    entries = review._ledger_entries(review._ledger_texts()[0])
 
     assert [e.agent for e in entries] == ["security"]
