@@ -25,8 +25,8 @@ from gatehouse.config import (
     CONFIG_FILE,
     ConfigError,
     ConsensusConfig,
+    int_from_env,
     load_config,
-    samples_from_env,
 )
 from gatehouse.consensus import (
     BLOCKING_VOTES_KEY,
@@ -85,6 +85,7 @@ if TYPE_CHECKING:
 CONFIDENCE_THRESHOLD = 80
 
 SAMPLES_ENV = "GATEHOUSE_SAMPLES"
+REPORT_VOTES_ENV = "GATEHOUSE_REPORT_VOTES"
 HEAD_REPO_ENV = "GATEHOUSE_HEAD_REPO"
 
 
@@ -708,18 +709,42 @@ def _ledger_entries(text: str | None) -> list[Entry]:
     return entries
 
 
-def _consensus_config(agents: list[Agent], samples: int | None) -> ConsensusConfig | None:
+def _report_votes(report_votes: int | None, verbose: bool) -> int | None:
+    """The report threshold override: the flag, then the environment, then --verbose."""
+    if report_votes is not None:
+        return report_votes
+    from_env = int_from_env(os.environ.get(REPORT_VOTES_ENV), REPORT_VOTES_ENV)
+    if from_env is not None:
+        return from_env
+    return 1 if verbose else None
+
+
+def _consensus_config(
+    agents: list[Agent],
+    samples: int | None,
+    report_votes: int | None = None,
+    verbose: bool = False,
+) -> ConsensusConfig | None:
     """The sample counts and thresholds for this review, or None when the config is bad.
 
     The reviewed repository's gatehouse.toml comes through _load_context_file,
     so under the fork-safe workflow it is the base branch's copy: a pull
     request cannot weaken the gate that reviews it. A bad config is reported
     and the review does not start, so no tokens are spent on it.
+
+    ``verbose`` reports every finding one sample saw, which is what the
+    constitution promises of it: a cluster below the report threshold is shown
+    under --verbose rather than dropped. An explicit --report-votes wins, so
+    the two can disagree without --verbose quietly overriding the number the
+    caller asked for.
     """
     try:
         config = load_config(
             _load_context_file(CONFIG_FILE),
-            samples if samples is not None else samples_from_env(os.environ.get(SAMPLES_ENV)),
+            samples
+            if samples is not None
+            else int_from_env(os.environ.get(SAMPLES_ENV), SAMPLES_ENV),
+            _report_votes(report_votes, verbose),
         )
         config.check_budget([agent.slug for agent in agents])
     except ConfigError as exc:
@@ -1211,6 +1236,7 @@ async def run_review(
     incremental: bool = False,
     usage_json: str | None = None,
     samples: int | None = None,
+    report_votes: int | None = None,
     consensus_json: str | None = None,
 ) -> int:
     """Run the full review pipeline.
@@ -1238,6 +1264,12 @@ async def run_review(
     --samples and GATEHOUSE_SAMPLES do; a bad config exits 2 before any model
     is called. Each agent's samples are clustered and tallied, and every
     reported finding carries how many of them agreed.
+
+    report_votes overrides how many votes a finding needs to be shown, as
+    --report-votes and GATEHOUSE_REPORT_VOTES do. It cannot change the
+    verdict: a finding with the votes to block is printed either way, so 1
+    only adds the low-confidence tail and a higher number only removes
+    advisory noise. verbose implies 1 unless report_votes says otherwise.
     """
     diff = stdin_diff if stdin_diff is not None else get_git_diff(base, staged)
     spec = parse_ignore(_load_context_file(IGNORE_FILE)) if diff.strip() else None
@@ -1259,7 +1291,7 @@ async def run_review(
     ledger_texts = _ledger_texts()
     ledger = _ledger_entries(ledger_texts[0])
     agents = get_agents(agent_slugs)
-    config = _consensus_config(agents, samples)
+    config = _consensus_config(agents, samples, report_votes, verbose)
     if config is None:
         return 2
     styleguide = load_styleguide()

@@ -11,10 +11,10 @@ from gatehouse.config import (
     AgentConsensus,
     ConfigError,
     ConsensusConfig,
+    int_from_env,
     load_config,
     packaged_defaults,
     resolve_threshold,
-    samples_from_env,
 )
 
 
@@ -185,6 +185,64 @@ def test_samples_override_out_of_range_is_an_error() -> None:
         load_config(None, samples_override=9)
 
 
+def test_report_votes_one_shows_every_single_sample_finding() -> None:
+    config = load_config(None, report_override=1)
+    for slug in ("bugs", "security", "performance", "docs", "constitution"):
+        assert config.for_agent(slug) == AgentConsensus(samples=3, block=3, report=1)
+    for slug in ("tests", "consistency", "general"):
+        assert config.for_agent(slug) == AgentConsensus(samples=1, block=None, report=1)
+
+
+def test_report_votes_clamps_to_an_agent_that_runs_fewer_samples() -> None:
+    """One number on the command line has to mean something for every agent.
+
+    The single-sample advisory agents cannot reach 3, and the config file
+    would call that an error. The override clamps them to their own count
+    instead, so --report-votes 3 tightens the three-sample agents without
+    silencing the one-sample ones.
+    """
+    config = load_config(None, report_override=3)
+    assert config.for_agent("bugs").report == 3
+    assert config.for_agent("tests").report == 1
+    assert config.for_agent("general").report == 1
+
+
+def test_report_votes_resolves_against_finished_samples() -> None:
+    config = load_config(None, report_override=3)
+    assert config.for_agent("bugs", finished=2).report == 2
+
+
+def test_report_votes_below_one_is_an_error() -> None:
+    with pytest.raises(ConfigError, match="--report-votes must be at least 1"):
+        load_config(None, report_override=0)
+
+
+def test_report_votes_overrides_the_config_file() -> None:
+    config = load_config("[consensus]\nsamples = 3\nblock = 3\nreport = 3\n", report_override=1)
+    assert config.for_agent("bugs").report == 1
+    assert config.for_agent("bugs").block == 3
+
+
+def test_report_votes_does_not_touch_the_blocking_threshold() -> None:
+    config = load_config(None, report_override=1)
+    assert config.for_agent("bugs").block == 3
+    assert config.for_agent("tests").block is None
+
+
+def test_the_config_file_still_refuses_an_unreachable_report() -> None:
+    """Only the CLI override clamps; the file keeps failing on a mistake."""
+    with pytest.raises(ConfigError, match="can never be reached"):
+        load_config("[consensus]\nsamples = 3\nblock = 3\nreport = 4\n")
+
+
+def test_report_votes_from_env_parses_and_rejects() -> None:
+    assert int_from_env(None, "GATEHOUSE_REPORT_VOTES") is None
+    assert int_from_env("  ", "GATEHOUSE_REPORT_VOTES") is None
+    assert int_from_env("1", "GATEHOUSE_REPORT_VOTES") == 1
+    with pytest.raises(ConfigError, match="GATEHOUSE_REPORT_VOTES must be an integer"):
+        int_from_env("most", "GATEHOUSE_REPORT_VOTES")
+
+
 def test_budget_caps_a_review_at_forty_calls() -> None:
     config = ConsensusConfig(samples=5, block="all", report="majority", agents={})
     slugs = [f"agent{i}" for i in range(MAX_TOTAL_CALLS // 5 + 1)]
@@ -209,15 +267,15 @@ def test_max_samples_for_every_agent_stays_inside_the_budget() -> None:
 
 
 def test_env_samples_parsing() -> None:
-    assert samples_from_env(None) is None
-    assert samples_from_env("") is None
-    assert samples_from_env("  ") is None
-    assert samples_from_env("2") == 2
+    assert int_from_env(None, "GATEHOUSE_SAMPLES") is None
+    assert int_from_env("", "GATEHOUSE_SAMPLES") is None
+    assert int_from_env("  ", "GATEHOUSE_SAMPLES") is None
+    assert int_from_env("2", "GATEHOUSE_SAMPLES") == 2
 
 
 def test_env_samples_must_be_an_integer() -> None:
     with pytest.raises(ConfigError, match="GATEHOUSE_SAMPLES"):
-        samples_from_env("lots")
+        int_from_env("lots", "GATEHOUSE_SAMPLES")
 
 
 def _packaged(text: str) -> ConsensusConfig:

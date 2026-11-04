@@ -63,9 +63,15 @@ Votes are tallied additively — nothing penalizes anything else. The shipped de
 |---|---|---|---|
 | Fail the run (`block`) | every sample agrees | 3 of 3 | never — they cannot block |
 | Be reported (`report`) | a majority agrees | 2 of 3 | 1 of 1 |
-| Appear under `--verbose` only | fewer | 1 of 3 | — |
+| Shown under `--verbose` or `--report-votes 1` | fewer | 1 of 3 | — |
 
-So for the agents that can stop a commit, a HIGH only one sample saw is not a blocked commit, a 2/3 HIGH is reported for a human to judge without stopping work, and a 3/3 HIGH fails the run. An advisory agent runs once by default, since a second opinion buys nothing where no opinion can block; give it `samples` in `gatehouse.toml` if you want its findings tallied too. Blocking votes count only the samples that called a finding critical or high: two MEDIUMs and one HIGH is three votes to report and one to block.
+So for the agents that can stop a commit, a HIGH only one sample saw is not a blocked commit, a 2/3 HIGH is reported for a human to judge without stopping work, and a 3/3 HIGH fails the run.
+
+A quorum to report costs recall: by default a real finding one sample in three saw never reaches you, and it is absent from the terminal, the posted review and `--consensus-json` alike. Two ways to get the tail back. **`--verbose` reports every finding one sample saw**, which is what it has always promised; **`--report-votes 1`** does the same without the raw model output, and `GATEHOUSE_REPORT_VOTES` does it in CI. The threshold is `--report-votes` when given, else `GATEHOUSE_REPORT_VOTES`, else 1 under `--verbose`, else the configured value — so `--verbose` alone reports the whole tail, and a threshold you passed explicitly is never overridden by it. With `--report-votes 2 --verbose`, findings below 2 stay unreported.
+
+Neither can change a verdict in either direction: a finding with the votes to block is printed whatever the report threshold says, so lowering the threshold only lengthens the advisory tail and raising it only shortens it.
+
+An advisory agent runs once by default, since a second opinion buys nothing where no opinion can block; give it `samples` in `gatehouse.toml` if you want its findings tallied too. Blocking votes count only the samples that called a finding critical or high: two MEDIUMs and one HIGH is three votes to report and one to block.
 
 Findings from different samples are the same finding when the agent, category and file match and one's quoted evidence contains the other's — whitespace and line numbers take no part, so a reformatted or re-anchored quote still counts. Two findings from the *same* sample never merge: a sample that reported two findings found two things. A finding with nothing quotable stands alone with one vote and no blocking vote at all: unevidenced findings cannot add up to a unanimous one, and a claim with nothing to quote cannot fail a run even in a repository that configured one vote to block.
 
@@ -89,6 +95,7 @@ A reviewer that is not repeatable is not worth leaving installed, so repeatabili
 
 ```bash
 gatehouse --consensus-json votes.json          # per-finding votes and thresholds
+gatehouse --report-votes 1                     # report the 1-of-3 tail too, with its count
 uv run python scripts/stability_eval.py        # review tests/corpus 3x, compare
 uv run python scripts/stability_eval.py --samples 1   # the pre-consensus baseline
 ```
@@ -182,6 +189,12 @@ samples = 3          # how many times each agent reviews the diff
 block = "all"        # votes a critical/high from a blocking agent needs to fail the run
 report = "majority"  # votes any finding needs to be shown
 
+                     # Thresholds take "all", "majority" or an integer, resolved
+                     # against each agent's own sample count. An integer no agent
+                     # can reach is a config error here, not a clamp. The
+                     # --report-votes override clamps instead, since one number
+                     # on the command line has to hold for every agent at once.
+
 [consensus.agents]
 tests = 1            # per-agent overrides, by slug
 consistency = 1
@@ -191,6 +204,8 @@ general = 1
 `block` and `report` take `"all"`, `"majority"` (strictly more than half) or an integer, and resolve against each agent's own sample count: at 3 samples `"majority"` is 2, at 5 it is 3. An integer an agent could never reach would silence it, so that is a usage error (exit 2), not a clamp — the message names the agent. An advisory agent resolves no blocking threshold, since it cannot block what it finds.
 
 `--samples N` overrides the count for every agent, then `GATEHOUSE_SAMPLES`, then the file. `--samples 1` restores the single-sample gate, with one deliberate difference from 0.20.0: a critical or high finding that quotes nothing still does not fail the run. A count must be 1-5 and a review may make at most 40 model calls; both are checked before any model is called.
+
+`--report-votes N` overrides `report` for every agent, then `GATEHOUSE_REPORT_VOTES`, then `--verbose` (which means 1), then the file. It leaves `block` alone, so it cannot weaken the gate — which is why, unlike `gatehouse.toml`, it is read from the command line even in CI rather than from the base branch. Where an agent runs fewer than `N` samples the threshold clamps to that agent's own count instead of failing the run.
 
 In CI the file is read from the **base** branch, like `.gatehouse-ignore` and the styleguide: a pull request cannot widen the gate that reviews it.
 

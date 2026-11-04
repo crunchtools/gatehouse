@@ -5,7 +5,45 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-11-04
+
 ### Added
+
+- **`--report-votes N`** (and `GATEHOUSE_REPORT_VOTES`) overrides how many
+  votes a finding needs to be *shown*. `--report-votes 1` reports every
+  finding a single sample saw, with its `1/3` beside it (#103).
+- It cannot change a verdict in either direction: a finding with the votes to
+  block is printed whatever the report threshold says. That is why, unlike
+  `gatehouse.toml`, it is honoured from the command line in CI instead of
+  being read from the base branch — there is no gate to weaken.
+- Where an agent runs fewer than `N` samples the threshold clamps to that
+  agent's own count. The config file still refuses an unreachable threshold,
+  because there you set a per-agent count beside it; one number passed on the
+  command line has to hold for every agent at once, including the three
+  advisory ones that run a single sample.
+
+### Fixed
+
+- **`--verbose` now reports the findings below the report threshold**, which
+  the README, 0.21.0's release notes and this project's own constitution all
+  said it already did. It did not: a below-threshold finding was dropped from
+  the terminal, the posted review and `--consensus-json` alike, and
+  `--verbose` only dumped each agent's raw unparsed reply. Found by Gatehouse
+  reviewing this diff against the constitution it ships with.
+
+### Known trade-off
+
+0.21.0 made the default report threshold a majority, which means the shipped
+defaults drop a finding only one sample in three saw. Issue #103, which asked
+for consensus voting, explicitly required the opposite: "a single-sample
+finding is still printed, as advisory, with its vote count shown", on the
+strength of a real CRITICAL that one run in four caught. The shipped default
+contradicts that requirement. Changing the default is a judgement about how
+noisy the gate should be out of the box, which is why this release makes the
+recall recoverable — by flag, and under `--verbose` — rather than flipping the
+default. Open for a product ruling.
+
+### Also in this release
 
 - A release of this image now **triggers a python-sdlc rebuild**
   (`.github/workflows/container.yml`). python-sdlc bakes this image's venv, so

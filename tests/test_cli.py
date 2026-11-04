@@ -55,6 +55,32 @@ def test_samples_flag_reaches_run_review(monkeypatch: pytest.MonkeyPatch) -> Non
     assert review.call_args.kwargs["samples"] == 2
 
 
+def test_report_votes_flag_reaches_run_review(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The documented --report-votes option must actually be forwarded."""
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+    monkeypatch.setattr(sys, "argv", ["gatehouse", "--report-votes", "1"])
+    with (
+        patch("gatehouse.cli.run_review", new_callable=AsyncMock, return_value=0) as review,
+        pytest.raises(SystemExit) as exit_info,
+    ):
+        main()
+    assert exit_info.value.code == 0
+    assert review.call_args.kwargs["report_votes"] == 1
+
+
+def test_no_report_votes_flag_leaves_the_threshold_to_the_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+    monkeypatch.setattr(sys, "argv", ["gatehouse"])
+    with (
+        patch("gatehouse.cli.run_review", new_callable=AsyncMock, return_value=0) as review,
+        pytest.raises(SystemExit),
+    ):
+        main()
+    assert review.call_args.kwargs["report_votes"] is None
+
+
 def test_no_samples_flag_leaves_the_count_to_the_config(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENROUTER_API_KEY", "k")
     monkeypatch.setattr(sys, "argv", ["gatehouse"])
