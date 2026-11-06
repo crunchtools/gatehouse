@@ -23,6 +23,7 @@ EXAMPLE = Path(__file__).parent.parent / "examples" / "gatehouse.yml"
 BOT = "github-actions[bot]"
 SHA = "0123456789abcdef0123456789abcdef01234567"
 ISSUE = "https://github.com/crunchtools/gatehouse/issues/90"
+HEAD = "f" * 40  # the pull request head, and what the newest review looked at
 
 pytestmark = pytest.mark.skipif(shutil.which("jq") is None, reason="jq not installed")
 
@@ -33,10 +34,12 @@ def _comment(
     reply_to: int | None = None,
     header: str = "**HIGH** (Bug Hunter)",
     body: str | None = None,
+    *,
+    written_on: str | None = None,
 ) -> dict:
     if body is None:
         body = f"{header}: finding {cid}\nmore" if reply_to is None else f"fixed in {SHA}"
-    return {
+    comment = {
         "id": cid,
         "user": {"login": user},
         "in_reply_to_id": reply_to,
@@ -46,6 +49,9 @@ def _comment(
         "original_line": 10,
         "body": body,
     }
+    if written_on is not None:
+        comment["original_commit_id"] = written_on
+    return comment
 
 
 def _unanswered(
@@ -53,6 +59,8 @@ def _unanswered(
     required_low: str = "Bug Hunter,Security Scan",
     shas: tuple[str, ...] = (SHA,),
     open_issues: tuple[str, ...] = (ISSUE,),
+    reviewed: str = HEAD,
+    head: str = HEAD,
 ) -> list[dict]:
     block = re.search(
         r"# --- triage filter.*?\n(.*?)# --- end triage filter ---",
@@ -81,6 +89,12 @@ def _unanswered(
                 "--arg",
                 "required_low",
                 required_low,
+                "--arg",
+                "reviewed",
+                reviewed,
+                "--arg",
+                "head",
+                head,
                 *args,
                 program.group(1),
             ],
@@ -152,6 +166,29 @@ def test_other_replies_answer_nothing(body: str) -> None:
 def test_fixed_in_needs_a_commit_on_the_pr() -> None:
     assert not _answered_by(f"fixed in {SHA}", shas=())
     assert _answered_by(f"fixed in {SHA[:10]}", shas=("ffff", SHA))
+
+
+def test_a_finding_on_an_orphaned_commit_does_not_block() -> None:
+    """A rebuilt branch takes the reviewed code with it, and the answer naming it."""
+    finding = _comment(1, BOT, written_on="a" * 40)
+    assert _unanswered([finding], shas=(SHA,)) == []
+
+
+def test_an_orphaned_finding_still_blocks_until_the_head_is_reviewed() -> None:
+    """Otherwise a force-push of the same code sheds the finding with nothing re-reading it."""
+    finding = _comment(1, BOT, written_on="a" * 40)
+    assert len(_unanswered([finding], shas=(SHA,), reviewed="b" * 40)) == 1
+    assert len(_unanswered([finding], shas=(SHA,), reviewed="")) == 1
+
+
+def test_a_finding_still_on_the_pull_request_blocks() -> None:
+    finding = _comment(1, BOT, written_on=SHA.upper())
+    assert len(_unanswered([finding], shas=(SHA,))) == 1
+
+
+def test_a_finding_with_no_original_commit_still_blocks() -> None:
+    """Absent means unprovable, not orphaned: the gate fails closed."""
+    assert len(_unanswered([_comment(1, BOT)], shas=(SHA,))) == 1
 
 
 def test_deferred_needs_the_issue_open() -> None:

@@ -29,7 +29,13 @@
 #                  is marked failed (fewer than half its agents finished, or
 #                  the reviewer could not run). That fails this job too: no
 #                  findings because nothing was looked at is not a pass (#77).
-# Outdated findings still count: a later commit fixing one is answered by
+# A finding written against a commit no longer on the pull request does not
+# count: Ashigaru force-pushes a conflicted branch onto the new default branch,
+# which orphans both the reviewed code and every answer naming it. Added
+# 2026-11-06 after ashigaru#131 could not go green -- both findings were
+# answered, the branch was rebuilt four hours later, and the answers then named
+# a commit that no longer existed.
+# Otherwise outdated findings still count: a later commit fixing one is answered by
 # saying so, which is the audit trail this job exists to create.
 #
 # Callers run it after the review job, in the same pull_request_target run
@@ -76,6 +82,7 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REVIEWER: ${{ inputs.reviewer }}
           REQUIRED_LOW_AGENTS: ${{ inputs.required_low_agents }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
           if [ -z "${PR_NUMBER:-}" ]; then
@@ -97,6 +104,16 @@ jobs:
             | select(. != null and (.body | contains("<!-- gatehouse review failed -->")))
             | .html_url
           ' reviews.json > failed_review.txt
+          # The commit the newest Gatehouse review looked at. An orphaned
+          # finding is only dropped when that is the head: otherwise a
+          # force-push of the same code would drop the finding with nothing
+          # having re-read the code it was about.
+          jq -rs --arg bot "$REVIEWER" '
+            [ (add // [])[]
+              | select(.user.login == $bot and ((.body // "") | startswith("Gatehouse")))
+              | select((.body // "") | contains("<!-- gatehouse review failed -->") | not) ]
+            | last | (.commit_id // "") // ""
+          ' reviews.json > reviewed_sha.txt
           # --- end review gate ---
 
           if [ -s failed_review.txt ]; then
@@ -139,10 +156,13 @@ jobs:
 
           # --- triage filter (tests/test_triage.py runs this against fixtures) ---
           jq -s --arg bot "$REVIEWER" --arg required_low "$REQUIRED_LOW_AGENTS" \
+            --arg reviewed "$(cat reviewed_sha.txt)" --arg head "$HEAD_SHA" \
             --slurpfile shas shas.json --slurpfile open_issues open_issues.json '
             (add // []) as $all
             | ($required_low | split(",") | map(gsub("^\\s+|\\s+$"; ""))) as $low_agents
             | ($shas[0] | map(ascii_downcase)) as $commits
+            | ($commits | INDEX(.)) as $on_the_pr
+            | ($reviewed != "" and ($reviewed | ascii_downcase) == ($head | ascii_downcase)) as $fresh
             | ($open_issues[0] | map(ascii_downcase | rtrimstr("/"))) as $open
             | def answers:
                 ((.body // "") | sub("^\\s+"; "")) as $b
@@ -158,6 +178,17 @@ jobs:
                 | select(answers) | .in_reply_to_id) as $r ({}; .[$r | tostring] = true)) as $answered
             | [ $all[]
                 | select(.user.login == $bot and .in_reply_to_id == null)
+                # A rebuilt branch orphans the commit a finding was written
+                # against, and with it every `fixed in <sha>` answer on it.
+                # The reviewed code is not in this pull request, so the finding
+                # is not about this pull request; the review of the new head is.
+                # Which is why the drop needs that review: without it, a
+                # force-push of the same code would shed the finding with
+                # nothing having re-read what it was about. A comment carrying
+                # no original commit cannot be shown orphaned and still counts.
+                | select(
+                    ((.original_commit_id // "") | ascii_downcase) as $written
+                    | ($written != "" and $on_the_pr[$written] == null and $fresh) | not)
                 | select($answered[.id | tostring] | not)
                 | (.body | split("\n")[0]) as $head
                 | select(($head | startswith("**LOW** (") | not)
