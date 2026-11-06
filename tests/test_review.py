@@ -797,6 +797,62 @@ def test_cli_missing_api_key(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
     assert exc_info.value.code == 2
 
 
+def test_llm_url_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    from gatehouse.llm import OPENROUTER_API_URL, llm_url
+
+    monkeypatch.delenv("GATEHOUSE_LLM_BASE_URL", raising=False)
+    assert llm_url() == OPENROUTER_API_URL
+
+
+def test_llm_url_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    from gatehouse.llm import llm_url
+
+    monkeypatch.setenv("GATEHOUSE_LLM_BASE_URL", "https://gw.example/llm/v1/")
+    assert llm_url() == "https://gw.example/llm/v1/chat/completions"
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["ftp://gw.example/v1", "https://", "gw.example/v1", "https://gw.example/v1/chat/completions"],
+)
+def test_llm_url_invalid(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+    from gatehouse.llm import llm_url
+
+    monkeypatch.setenv("GATEHOUSE_LLM_BASE_URL", value)
+    with pytest.raises(ValueError, match="GATEHOUSE_LLM_BASE_URL"):
+        llm_url()
+
+
+def test_cli_invalid_base_url_exits_2(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from gatehouse import cli
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+    monkeypatch.setenv("GATEHOUSE_LLM_BASE_URL", "ftp://x")
+    monkeypatch.setattr(cli, "ENV_FILE", tmp_path / "nonexistent.env")
+    monkeypatch.setattr("sys.argv", ["gatehouse"])
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main()
+    assert exc_info.value.code == 2
+
+
+@pytest.mark.asyncio
+async def test_llm_override_targets_base_and_keeps_policy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import httpx
+
+    from gatehouse.llm import call_model
+
+    monkeypatch.setenv("GATEHOUSE_LLM_BASE_URL", "http://gw.example:8080/v1")
+    mock_client = AsyncMock(spec=httpx.AsyncClient)
+    mock_client.post = AsyncMock(return_value=_ok("[]"))
+    await call_model(mock_client, "sys", "user", "openai/gpt-6-luna", "k")
+
+    args, kwargs = mock_client.post.call_args
+    assert args[0] == "http://gw.example:8080/v1/chat/completions"
+    assert kwargs["json"]["provider"] == {"zdr": True, "data_collection": "deny"}
+
+
 def _ok(content: str) -> Any:
     import httpx
 

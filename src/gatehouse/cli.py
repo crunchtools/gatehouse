@@ -9,7 +9,7 @@ import re
 import sys
 from pathlib import Path
 
-from gatehouse.llm import DEFAULT_MODEL
+from gatehouse.llm import DEFAULT_MODEL, llm_url
 from gatehouse.review import REQUIRED_LOW_AGENTS, run_review
 
 ENV_FILE = Path.home() / ".config" / "mcp-env" / "gatehouse.env"
@@ -176,6 +176,12 @@ def main() -> None:
                 "  GEMINI_API_KEY is no longer used: gatehouse calls OpenRouter since 0.9.0",
                 file=sys.stderr,
             )
+        sys.exit(2)
+
+    try:
+        llm_url()
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
         sys.exit(2)
 
     agent_slugs: list[str] | None = args.agents.split(",") if args.agents else None
