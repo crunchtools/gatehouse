@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import http
+import ipaddress
 import os
 import random
 import re
@@ -69,6 +70,16 @@ class Completion:
         )
 
 
+def _is_loopback(host: str) -> bool:
+    """True for `localhost` or any loopback IP (127.0.0.0/8, ::1)."""
+    if host.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
 def llm_url() -> str:
     """The chat-completions URL, from GATEHOUSE_LLM_BASE_URL or the OpenRouter default.
 
@@ -86,7 +97,7 @@ def llm_url() -> str:
         parts, host = None, None
     if parts is None or parts.scheme not in ("http", "https") or not host:
         raise ValueError(f"{BASE_URL_ENV} must be an http(s) URL with a host, got {raw!r}")
-    if parts.scheme == "http" and host not in ("localhost", "127.0.0.1", "::1"):
+    if parts.scheme == "http" and not _is_loopback(host):
         raise ValueError(
             f"{BASE_URL_ENV} must use https unless the host is loopback; "
             f"plain http would send the API key unencrypted, got {raw!r}"
