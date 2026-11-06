@@ -813,7 +813,14 @@ def test_llm_url_override(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.parametrize(
     "value",
-    ["ftp://gw.example/v1", "https://", "gw.example/v1", "https://gw.example/v1/chat/completions"],
+    [
+        "ftp://gw.example/v1",
+        "https://",
+        "https://[",
+        "gw.example/v1",
+        "http://gw.example/v1",
+        "https://gw.example/v1/chat/completions",
+    ],
 )
 def test_llm_url_invalid(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
     from gatehouse.llm import llm_url
@@ -843,13 +850,13 @@ async def test_llm_override_targets_base_and_keeps_policy(
 
     from gatehouse.llm import call_model
 
-    monkeypatch.setenv("GATEHOUSE_LLM_BASE_URL", "http://gw.example:8080/v1")
+    monkeypatch.setenv("GATEHOUSE_LLM_BASE_URL", "http://localhost:8080/v1")
     mock_client = AsyncMock(spec=httpx.AsyncClient)
     mock_client.post = AsyncMock(return_value=_ok("[]"))
     await call_model(mock_client, "sys", "user", "openai/gpt-6-luna", "k")
 
     args, kwargs = mock_client.post.call_args
-    assert args[0] == "http://gw.example:8080/v1/chat/completions"
+    assert args[0] == "http://localhost:8080/v1/chat/completions"
     assert kwargs["json"]["provider"] == {"zdr": True, "data_collection": "deny"}
 
 

@@ -179,7 +179,7 @@ Gatehouse never writes this file — the pre-commit hook mounts your repository 
 
 Set `OPENROUTER_API_KEY`, or `OPENROUTER_API_KEY_FILE` pointing at a file that holds the key (the file wins when both are set). Either can live in `~/.config/mcp-env/gatehouse.env`. If `.gemini/styleguide.md` exists in the reviewed project, it is injected as context.
 
-Set `GATEHOUSE_LLM_BASE_URL` (environment or the same env file) to send requests to an OpenAI-compatible proxy instead of `https://openrouter.ai/api/v1`; `/chat/completions` is appended, so give the base URL only (an `http(s)` URL with a host, not ending in `/chat/completions`). The zero-retention provider policy (`zdr`, `data_collection: deny`) is still sent on every request, but pointing this at a proxy moves responsibility for zero retention to that proxy's operator.
+Set `GATEHOUSE_LLM_BASE_URL` (environment or the same env file) to send requests to an OpenAI-compatible proxy instead of `https://openrouter.ai/api/v1`; `/chat/completions` is appended, so give the base URL only (an `https` URL with a host, or `http` for loopback only, not ending in `/chat/completions`). The zero-retention provider policy (`zdr`, `data_collection: deny`) is still sent on every request, but pointing this at a proxy moves responsibility for zero retention to that proxy's operator.
 
 ### Consensus votes
 

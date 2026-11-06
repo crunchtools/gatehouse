@@ -86,6 +86,11 @@ def llm_url() -> str:
         parts, host = None, None
     if parts is None or parts.scheme not in ("http", "https") or not host:
         raise ValueError(f"{BASE_URL_ENV} must be an http(s) URL with a host, got {raw!r}")
+    if parts.scheme == "http" and host not in ("localhost", "127.0.0.1", "::1"):
+        raise ValueError(
+            f"{BASE_URL_ENV} must use https unless the host is loopback; "
+            f"plain http would send the API key unencrypted, got {raw!r}"
+        )
     base = raw.rstrip("/")
     if base.endswith(COMPLETIONS_PATH):
         raise ValueError(
