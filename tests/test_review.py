@@ -830,6 +830,55 @@ def test_llm_url_invalid(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
         llm_url()
 
 
+@pytest.mark.parametrize(
+    ("host", "expected"),
+    [
+        ("localhost", True),
+        ("LocalHost", True),
+        ("127.0.0.1", True),
+        ("127.255.0.9", True),
+        ("::1", True),
+        ("128.0.0.1", False),
+        ("10.0.0.1", False),
+        ("::2", False),
+        ("localhost.example", False),
+        ("gw.example", False),
+    ],
+)
+def test_is_loopback(host: str, expected: bool) -> None:
+    from gatehouse.llm import _is_loopback
+
+    assert _is_loopback(host) is expected
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "http://localhost:8080/v1",
+        "http://LOCALHOST/v1",
+        "http://127.0.0.2:8080/v1",
+        "http://[::1]:8080/v1",
+    ],
+)
+def test_llm_url_http_loopback_accepted(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+    from gatehouse.llm import llm_url
+
+    monkeypatch.setenv("GATEHOUSE_LLM_BASE_URL", value)
+    assert llm_url() == value + "/chat/completions"
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["http://128.0.0.1/v1", "http://[::2]/v1", "http://localhost.example/v1"],
+)
+def test_llm_url_http_non_loopback_rejected(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+    from gatehouse.llm import llm_url
+
+    monkeypatch.setenv("GATEHOUSE_LLM_BASE_URL", value)
+    with pytest.raises(ValueError, match="https unless the host is loopback"):
+        llm_url()
+
+
 def test_cli_invalid_base_url_exits_2(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     from gatehouse import cli
 
