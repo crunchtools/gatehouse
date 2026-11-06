@@ -32,7 +32,7 @@ The triage workflow (`.github/workflows/triage.yml`) is the opposite case and is
 
 ## External APIs
 
-Calls OpenRouter chat completions at `openrouter.ai/api/v1/chat/completions` via httpx async client. Credential: `OPENROUTER_API_KEY` (or a file named by `OPENROUTER_API_KEY_FILE`). Default model: `openai/gpt-6-luna`, with `google/gemini-3.1-flash-lite` as fallback. Every request requires zero data retention and forbids training on prompts.
+Calls OpenRouter chat completions at `openrouter.ai/api/v1/chat/completions` via httpx async client. `GATEHOUSE_LLM_BASE_URL` may redirect this to an OpenAI-compatible proxy (https, or http only for loopback); the zero-retention provider policy is still sent on every request. Credential: `OPENROUTER_API_KEY` (or a file named by `OPENROUTER_API_KEY_FILE`). Default model: `openai/gpt-6-luna`, with `google/gemini-3.1-flash-lite` as fallback. Every request requires zero data retention and forbids training on prompts.
 
 ## Agent Architecture
 

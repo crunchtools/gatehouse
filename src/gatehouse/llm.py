@@ -4,14 +4,20 @@ from __future__ import annotations
 
 import asyncio
 import http
+import ipaddress
+import os
 import random
 import re
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 
-OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
+DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
+COMPLETIONS_PATH = "/chat/completions"
+OPENROUTER_API_URL = DEFAULT_BASE_URL + COMPLETIONS_PATH
+BASE_URL_ENV = "GATEHOUSE_LLM_BASE_URL"
 DEFAULT_MODEL = "openai/gpt-6-luna"
 # Served when the requested model is rate-limited or down upstream. A
 # different vendor on purpose: Luna's only zero-retention route is Azure.
@@ -62,6 +68,47 @@ class Completion:
             int(_number(reasoning)),
             _number(usage.get("cost")),
         )
+
+
+def _is_loopback(host: str) -> bool:
+    """True for `localhost` or any loopback IP (127.0.0.0/8, ::1)."""
+    if host.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def llm_url() -> str:
+    """The chat-completions URL, from GATEHOUSE_LLM_BASE_URL or the OpenRouter default.
+
+    Read at call time so a value loaded from the env file takes effect.
+    Raises ValueError, naming the variable, when the value is not an http(s)
+    base URL with a host, or already ends in /chat/completions.
+    """
+    raw = os.environ.get(BASE_URL_ENV, "").strip()
+    if not raw:
+        return OPENROUTER_API_URL
+    try:
+        parts = urlsplit(raw)
+        host = parts.hostname
+    except ValueError:
+        parts, host = None, None
+    if parts is None or parts.scheme not in ("http", "https") or not host:
+        raise ValueError(f"{BASE_URL_ENV} must be an http(s) URL with a host, got {raw!r}")
+    if parts.scheme == "http" and not _is_loopback(host):
+        raise ValueError(
+            f"{BASE_URL_ENV} must use https unless the host is loopback; "
+            f"plain http would send the API key unencrypted, got {raw!r}"
+        )
+    base = raw.rstrip("/")
+    if base.endswith(COMPLETIONS_PATH):
+        raise ValueError(
+            f"{BASE_URL_ENV} must be a base URL; {COMPLETIONS_PATH} is appended for you, "
+            f"got {raw!r}"
+        )
+    return base + COMPLETIONS_PATH
 
 
 def _number(value: Any) -> float:
@@ -149,6 +196,7 @@ async def call_model(
         "X-Title": "gatehouse",
     }
 
+    url = llm_url()
     last_error: httpx.HTTPError | None = None
     delay = 0.0
     for attempt in range(MAX_RETRIES):
@@ -157,7 +205,7 @@ async def call_model(
             await asyncio.sleep(delay)
         try:
             response = await client.post(
-                OPENROUTER_API_URL,
+                url,
                 headers=headers,
                 json=payload,
                 timeout=REQUEST_TIMEOUT,

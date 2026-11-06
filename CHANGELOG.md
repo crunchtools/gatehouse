@@ -5,6 +5,13 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+### Added
+
+- **`GATEHOUSE_LLM_BASE_URL`** points Gatehouse at an OpenAI-compatible base
+  URL (for example a gateway's LLM proxy); `/chat/completions` is appended.
+  Unset, requests go to OpenRouter exactly as before, provider policy
+  included. An invalid value exits 2 naming the variable (#111).
+
 ## [0.23.0] - 2026-11-04
 
 ### Added
