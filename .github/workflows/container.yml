@@ -164,10 +164,18 @@ jobs:
   # Constitution XII (v1.30.0) states it as a rule, and the Container Image
   # profile already required it of any image others build FROM. After the major
   # tag moves, so the rebuild sees a registry and a tag that have both settled.
+  #
+  # Tags only, not every push to master. A release pushes master and then the
+  # tag, and both were 'push', so each release dispatched twice: on 2026-11-07
+  # the two runs landed 15 seconds apart, both computed python-sdlc 0.5.2, and
+  # the second failed pushing a branch the first had already created. The pin
+  # downstream can only move to a RELEASED tag -- update_tools.py reads the
+  # highest release tag, never master -- so a dispatch on a master push had
+  # nothing it could move and only raced the one that did.
   dispatch-downstream:
     name: Tell the SDLC images to rebuild
     needs: [build-and-push-quay, build-and-push-ghcr]
-    if: github.event_name == 'push'
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
