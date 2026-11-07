@@ -33,8 +33,11 @@
 #   3. Add a [[check_overrides]] entry, with classification, for every check
 #      disabled in [checks].
 #
-# Repos still on @v0.5.0 keep resolving to gourmand:latest and stay green, so
-# the fleet migrates one repo at a time rather than all at once.
+# Repos still on an older tag of this file keep resolving the default they
+# pinned and stay green, so the fleet migrates one repo at a time rather than
+# all at once. That is also why `crunchtools/gourmand` itself still publishes
+# `:latest` from main: flipping it before every repo has moved to a tag
+# carrying the `:main` default would freeze those repos' gate at v1.0.0.
 
 name: Gourmand (reusable)
 
@@ -50,7 +53,14 @@ on:
         description: "Gourmand image ref. Override to pin a specific digest/tag."
         type: string
         required: false
-        default: "quay.io/crunchtools/gourmand:latest"
+        # `:main`, not `:latest`. Constitution 1.33.0 makes `latest` the newest
+        # RELEASE, and Gourmand has exactly one tag, v1.0.0, with main far past
+        # it -- so `:latest` would hold this gate at v1.0.0 for every repo that
+        # calls this workflow. RT #1482 already caused that break once from the
+        # other direction, when tagging v1.0.0 moved `:latest` backwards and the
+        # Code Quality gate failed fleet-wide. `:main` is what the gate has
+        # actually tracked since; it now says so.
+        default: "quay.io/crunchtools/gourmand:main"
 
 jobs:
   gourmand:
