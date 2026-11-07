@@ -5,6 +5,8 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+## [0.24.1] - 2026-11-07
+
 ### Fixed
 
 - **A release tells the SDLC images to rebuild once, not twice.** The
