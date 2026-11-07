@@ -5,12 +5,30 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-11-07
+
 ### Added
 
 - **`GATEHOUSE_LLM_BASE_URL`** points Gatehouse at an OpenAI-compatible base
   URL (for example a gateway's LLM proxy); `/chat/completions` is appended.
   Unset, requests go to OpenRouter exactly as before, provider policy
   included. An invalid value exits 2 naming the variable (#111).
+
+### Changed
+
+- **A plaintext base URL is accepted for a private address, not only for
+  loopback.** The rule it enforces is that an API key must not cross a
+  network the operator does not control; loopback alone was a narrower
+  reading than that, and it ruled out the case the override exists for.
+  Crunchtools' Trentina gateway serves its LLM proxy over plain http on a
+  podman bridge with no TLS, so `http://10.89.15.2:8019/...` was refused and
+  the gateway route could not be taken at all (RT#1559). `localhost`,
+  loopback, RFC1918, link-local and IPv6 unique-local are now accepted over
+  http; a public address still is not, and neither is carrier-grade NAT
+  (`100.64.0.0/10`), which is the carrier's network rather than the
+  operator's. A hostname other than `localhost` is still refused over http,
+  because a name resolves wherever DNS says and that is not a property this
+  check can establish.
 
 ## [0.23.0] - 2026-11-04
 

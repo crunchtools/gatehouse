@@ -838,17 +838,28 @@ def test_llm_url_invalid(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
         ("127.0.0.1", True),
         ("127.255.0.9", True),
         ("::1", True),
+        # A gateway on the container bridge of the host Gatehouse runs on.
+        ("10.89.15.2", True),
+        ("10.0.0.1", True),
+        ("192.168.1.1", True),
+        ("172.16.0.1", True),
+        ("169.254.1.1", True),
+        ("fc00::1", True),
         ("128.0.0.1", False),
-        ("10.0.0.1", False),
+        ("8.8.8.8", False),
         ("::2", False),
+        # Carrier-grade NAT is the carrier's network, not the operator's.
+        ("100.64.0.1", False),
+        # A name resolves wherever DNS says, which this cannot check, so only
+        # the one name that is loopback by definition is accepted.
         ("localhost.example", False),
         ("gw.example", False),
     ],
 )
-def test_is_loopback(host: str, expected: bool) -> None:
-    from gatehouse.llm import _is_loopback
+def test_is_private(host: str, expected: bool) -> None:
+    from gatehouse.llm import _is_private
 
-    assert _is_loopback(host) is expected
+    assert _is_private(host) is expected
 
 
 @pytest.mark.parametrize(
@@ -858,9 +869,13 @@ def test_is_loopback(host: str, expected: bool) -> None:
         "http://LOCALHOST/v1",
         "http://127.0.0.2:8080/v1",
         "http://[::1]:8080/v1",
+        # The shape the developer seats use: Trentina's LLM proxy on the
+        # container bridge, which serves plain http and no TLS (RT#1559).
+        "http://10.89.15.2:8019/proxy/llm/openrouter/v1",
+        "http://[fc00::1]:8019/proxy/llm/openrouter/v1",
     ],
 )
-def test_llm_url_http_loopback_accepted(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+def test_llm_url_http_private_accepted(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
     from gatehouse.llm import llm_url
 
     monkeypatch.setenv("GATEHOUSE_LLM_BASE_URL", value)
@@ -869,13 +884,19 @@ def test_llm_url_http_loopback_accepted(monkeypatch: pytest.MonkeyPatch, value: 
 
 @pytest.mark.parametrize(
     "value",
-    ["http://128.0.0.1/v1", "http://[::2]/v1", "http://localhost.example/v1"],
+    [
+        "http://128.0.0.1/v1",
+        "http://[::2]/v1",
+        "http://localhost.example/v1",
+        "http://8.8.8.8/v1",
+        "http://openrouter.ai/api/v1",
+    ],
 )
-def test_llm_url_http_non_loopback_rejected(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+def test_llm_url_http_public_rejected(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
     from gatehouse.llm import llm_url
 
     monkeypatch.setenv("GATEHOUSE_LLM_BASE_URL", value)
-    with pytest.raises(ValueError, match="https unless the host is loopback"):
+    with pytest.raises(ValueError, match="loopback or on a private network"):
         llm_url()
 
 

@@ -70,14 +70,21 @@ class Completion:
         )
 
 
-def _is_loopback(host: str) -> bool:
-    """True for `localhost` or any loopback IP (127.0.0.0/8, ::1)."""
+def _is_private(host: str) -> bool:
+    """True for a host reachable only on a network the operator controls.
+
+    `localhost`, any loopback IP, and any address in a private, link-local or
+    unique-local range. The question this answers is whether plaintext may
+    carry an API key to `host`, so a NAME other than `localhost` is False: it
+    resolves wherever DNS says, which is not a property this can check.
+    """
     if host.lower() == "localhost":
         return True
     try:
-        return ipaddress.ip_address(host).is_loopback
+        address = ipaddress.ip_address(host)
     except ValueError:
         return False
+    return address.is_private
 
 
 def llm_url() -> str:
@@ -97,10 +104,11 @@ def llm_url() -> str:
         parts, host = None, None
     if parts is None or parts.scheme not in ("http", "https") or not host:
         raise ValueError(f"{BASE_URL_ENV} must be an http(s) URL with a host, got {raw!r}")
-    if parts.scheme == "http" and not _is_loopback(host):
+    if parts.scheme == "http" and not _is_private(host):
         raise ValueError(
-            f"{BASE_URL_ENV} must use https unless the host is loopback; "
-            f"plain http would send the API key unencrypted, got {raw!r}"
+            f"{BASE_URL_ENV} must use https unless the host is loopback or on a "
+            f"private network; plain http would send the API key unencrypted "
+            f"across a network this host does not control, got {raw!r}"
         )
     base = raw.rstrip("/")
     if base.endswith(COMPLETIONS_PATH):
