@@ -26,7 +26,10 @@ All notable changes to this project are documented here, following
   loopback, RFC1918, link-local and IPv6 unique-local are now accepted over
   http; a public address still is not, and neither is carrier-grade NAT
   (`100.64.0.0/10`), which is the carrier's network rather than the
-  operator's. A hostname other than `localhost` is still refused over http,
+  operator's. The ranges are enumerated in `PRIVATE_NETWORKS` rather than
+  taken from `ipaddress.is_private`, which answers the different question of
+  global reachability and so also admits special-purpose ranges —
+  benchmarking, documentation, reserved — that nobody's gateway is on. A hostname other than `localhost` is still refused over http,
   because a name resolves wherever DNS says and that is not a property this
   check can establish.
 

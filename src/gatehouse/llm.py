@@ -70,13 +70,34 @@ class Completion:
         )
 
 
-def _is_private(host: str) -> bool:
-    """True for a host reachable only on a network the operator controls.
+#: Networks an operator runs themselves, and the only ones plaintext may carry
+#: an API key to. Enumerated rather than taken from `ipaddress.is_private`,
+#: which answers the different question of whether an address is globally
+#: reachable and so also admits special-purpose ranges -- benchmarking
+#: (198.18.0.0/15), documentation (192.0.2.0/24), reserved (240.0.0.0/4) --
+#: that nobody's gateway is on. Gatehouse's own review of 0.24.0 caught that.
+PRIVATE_NETWORKS: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...] = tuple(
+    ipaddress.ip_network(cidr)
+    for cidr in (
+        "127.0.0.0/8",  # loopback
+        "10.0.0.0/8",  # RFC1918
+        "172.16.0.0/12",  # RFC1918
+        "192.168.0.0/16",  # RFC1918
+        "169.254.0.0/16",  # link-local
+        "::1/128",  # loopback
+        "fc00::/7",  # unique-local
+        "fe80::/10",  # link-local
+    )
+)
 
-    `localhost`, any loopback IP, and any address in a private, link-local or
-    unique-local range. The question this answers is whether plaintext may
-    carry an API key to `host`, so a NAME other than `localhost` is False: it
-    resolves wherever DNS says, which is not a property this can check.
+
+def _is_private(host: str) -> bool:
+    """True for a host on a network the operator runs themselves.
+
+    `localhost`, or an address in `PRIVATE_NETWORKS`. The question this answers
+    is whether plaintext may carry an API key to `host`, so a NAME other than
+    `localhost` is False: it resolves wherever DNS says, which is not a
+    property this can check.
     """
     if host.lower() == "localhost":
         return True
@@ -84,7 +105,7 @@ def _is_private(host: str) -> bool:
         address = ipaddress.ip_address(host)
     except ValueError:
         return False
-    return address.is_private
+    return any(address in network for network in PRIVATE_NETWORKS)
 
 
 def llm_url() -> str:

@@ -845,11 +845,18 @@ def test_llm_url_invalid(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
         ("172.16.0.1", True),
         ("169.254.1.1", True),
         ("fc00::1", True),
+        ("fe80::1", True),
         ("128.0.0.1", False),
         ("8.8.8.8", False),
         ("::2", False),
         # Carrier-grade NAT is the carrier's network, not the operator's.
         ("100.64.0.1", False),
+        # Special-purpose ranges `ipaddress.is_private` admits and no gateway
+        # is on: benchmarking, documentation, reserved.
+        ("198.18.0.1", False),
+        ("192.0.2.1", False),
+        ("240.0.0.1", False),
+        ("2001:db8::1", False),
         # A name resolves wherever DNS says, which this cannot check, so only
         # the one name that is loopback by definition is accepted.
         ("localhost.example", False),
