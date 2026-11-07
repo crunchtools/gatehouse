@@ -1,6 +1,6 @@
 # gatehouse Constitution
 
-> **Version:** 1.8.0
+> **Version:** 1.9.0
 > **Ratified:** 2026-04-04
 > **Amended:** 2026-11-04
 > **Status:** Active
@@ -100,3 +100,4 @@ Built on the `quay.io/hummingbird/python:3.14-fips-builder` image (git is needed
 | 1.6.0 | 2026-11-03 | Consensus voting over `n` samples per agent, clustering by evidence containment, and `gatehouse.toml` configuration loaded from the trusted base (0.21.0, spec 003) |
 | 1.7.0 | 2026-11-03 | The finding ledger: `gatehouse-findings.toml`, read-only, matched by containment, stale once its quoted code is gone, head-side except on a fork (0.22.0, spec 003) |
 | 1.8.0 | 2026-11-04 | The report threshold has a precedence of its own (`--report-votes`, `GATEHOUSE_REPORT_VOTES`, 1 under `--verbose`, the file), `--verbose` reports every finding one sample saw, and the override clamps to an agent's own sample count — the one permitted clamp, never from the file and never for `block` (0.23.0, spec 003) |
+| 1.9.0 | 2026-11-07 | `GATEHOUSE_LLM_BASE_URL` may be plain http to a loopback or private address, not loopback alone: the rule is that an API key must not cross a network the operator does not control, and the narrower reading ruled out the gateway route the override exists for (0.24.0, RT#1559) |
