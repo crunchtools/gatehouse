@@ -5,6 +5,16 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+### Fixed
+
+- **A release tells the SDLC images to rebuild once, not twice.** The
+  dispatch ran on any push, and a release pushes master and then the tag, so
+  0.24.0 dispatched twice 15 seconds apart. Both runs computed python-sdlc
+  0.5.2 and the second failed pushing a branch the first had already created —
+  a red run on a release that had otherwise succeeded. The downstream pin can
+  only move to a released tag, so the master-push dispatch had nothing it
+  could move and only raced the one that did. CI only; no image change.
+
 ## [0.24.0] - 2026-11-07
 
 ### Added
