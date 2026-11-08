@@ -35,8 +35,9 @@
 #      (Also sidesteps the actions/checkout v7 fork-head block entirely.)
 #   2. The diff arrives as data on stdin; `gatehouse --stdin` never runs `git`
 #      against, builds, installs, or executes the PR.
-#   3. The image is pinned to a release tag; the run step invokes only the container
-#      entrypoint — no repo-defined tooling runs.
+#   3. The image is pinned to a release tag (the version this workflow file
+#      ships in, read at its own commit); the run step invokes only the
+#      container entrypoint — no repo-defined tooling runs.
 #   4. Least-privilege GITHUB_TOKEN: contents:read + pull-requests:write.
 # -----------------------------------------------------------------------------
 
@@ -74,13 +75,17 @@ on:
         required: false
         default: false
       image:
-        # Pinned to the immutable release TAG, not a digest: our registry prunes
-        # untagged manifests on rebuild, so a digest pin dies the next time the
-        # tag is rebuilt. The release tag is controlled and not rebuilt casually.
-        description: "Gatehouse release image tag. Bump per release."
+        # Empty means the release this workflow file belongs to: the review step
+        # reads `__version__` from src/gatehouse/__init__.py at job.workflow_sha
+        # and runs quay.io/crunchtools/gatehouse:<that version>. It used to be a
+        # tag typed here by hand, which Ashigaru's release cannot bump (it never
+        # edits .github/), so 0.24.1 was cut with review.yml still naming 0.24.0.
+        # A release TAG, not a digest: our registry prunes untagged manifests on
+        # rebuild, so a digest pin dies the next time the tag is rebuilt.
+        description: "Gatehouse image override (default: the image of this workflow's release)."
         type: string
         required: false
-        default: "quay.io/crunchtools/gatehouse:0.24.0"
+        default: ""
     secrets:
       OPENROUTER_API_KEY:
         required: true
@@ -107,6 +112,10 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           ACTION: ${{ github.event.action }}
           IMAGE: ${{ inputs.image }}
+          # This workflow's own repository and commit, not the caller's: @v0
+          # resolves to the release the major tag points at.
+          WORKFLOW_REPO: ${{ job.workflow_repository }}
+          WORKFLOW_SHA: ${{ job.workflow_sha }}
           MODEL: ${{ inputs.model }}
           AGENTS: ${{ inputs.agents }}
           BLOCKING: ${{ inputs.blocking }}
@@ -157,6 +166,17 @@ jobs:
             exit 2
           }
           [ -n "${OPENROUTER_API_KEY:-}" ] || fail_review "no OPENROUTER_API_KEY reached this run."
+
+          # --- resolve image (tests/test_release_pins.py runs this) ---
+          if [ -z "${IMAGE:-}" ]; then
+            version="$(gh api -H 'Accept: application/vnd.github.raw' \
+              "repos/${WORKFLOW_REPO}/contents/src/gatehouse/__init__.py?ref=${WORKFLOW_SHA}" \
+              | sed -nE 's/^__version__ = "([0-9]+\.[0-9]+\.[0-9]+)"$/\1/p')" || version=""
+            [ -n "$version" ] || fail_review "could not read the Gatehouse version at ${WORKFLOW_REPO}@${WORKFLOW_SHA}."
+            IMAGE="quay.io/crunchtools/gatehouse:${version}"
+          fi
+          echo "Reviewer image: ${IMAGE}"
+          # --- end resolve image ---
 
           # Optional passthrough flags (only added when provided).
           # Advisory by default: unless the caller sets `blocking: true`, add

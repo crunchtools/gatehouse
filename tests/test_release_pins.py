@@ -1,13 +1,17 @@
 """The reusable review workflow must run the image of the release it ships in.
 
-`review.yml`'s default image is a hard-coded tag, bumped by hand. It sat at
-0.4.0 through three releases, so every `review.yml@v0.7.0` caller reviewed
-with a 0.4.0 container.
+`review.yml`'s default image used to be a hard-coded tag, bumped by hand. It sat
+at 0.4.0 through three releases, so every `review.yml@v0.7.0` caller reviewed
+with a 0.4.0 container, and Ashigaru's 0.24.1 release (which never edits
+`.github/`) failed here with the tag still at 0.24.0. The workflow now reads the
+version from its own commit, and these tests run that step.
 """
 
 from __future__ import annotations
 
+import os
 import re
+import subprocess
 from pathlib import Path
 
 from gatehouse import __version__
@@ -15,14 +19,71 @@ from gatehouse import __version__
 REVIEW_WORKFLOW = Path(__file__).parent.parent / ".github" / "workflows" / "review.yml"
 CONTAINER_WORKFLOW = REVIEW_WORKFLOW.with_name("container.yml")
 CONTAINERFILE = Path(__file__).parent.parent / "Containerfile"
+INIT = Path(__file__).parent.parent / "src" / "gatehouse" / "__init__.py"
 
 
-def test_review_workflow_default_image_matches_package_version():
-    match = re.search(
-        r'default: "quay\.io/crunchtools/gatehouse:([^"]+)"', REVIEW_WORKFLOW.read_text()
+def _resolve(tmp_path: Path, image: str, served: Path | None) -> subprocess.CompletedProcess[str]:
+    """Run review.yml's resolve-image block with a stub `gh` that serves `served`."""
+    block = re.search(
+        r"# --- resolve image.*?\n(.*?)# --- end resolve image ---",
+        REVIEW_WORKFLOW.read_text(),
+        re.S,
     )
-    assert match, "review.yml has no default gatehouse image"
-    assert match.group(1) == __version__
+    assert block, "resolve-image markers missing from review.yml"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    gh = bin_dir / "gh"
+    gh.write_text(
+        f'#!/bin/sh\necho "$@" > "{tmp_path}/gh-args"\n'
+        + (f'cat "{served}"\n' if served else "exit 1\n")
+    )
+    gh.chmod(0o755)
+    script = (
+        "set -euo pipefail\n"
+        'fail_review() { echo "FAILED: $1"; exit 2; }\n'
+        f"{block.group(1)}\n"
+    )
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "IMAGE": image,
+        "WORKFLOW_REPO": "crunchtools/gatehouse",
+        "WORKFLOW_SHA": "abc123",
+    }
+    return subprocess.run(
+        ["bash", "-c", script], check=False, env=env, capture_output=True, text=True
+    )
+
+
+def test_review_workflow_has_no_hand_bumped_default_image():
+    """The image is not typed into review.yml, so no release can leave it behind."""
+    match = re.search(
+        r'\n      image:\n(?:        .*\n)*?        default: "([^"]*)"', REVIEW_WORKFLOW.read_text()
+    )
+    assert match, "review.yml has no image input default"
+    assert match.group(1) == ""
+
+
+def test_review_workflow_default_image_matches_package_version(tmp_path: Path):
+    """With no image input, the review runs the image of the workflow's own release."""
+    done = _resolve(tmp_path, "", INIT)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert f"Reviewer image: quay.io/crunchtools/gatehouse:{__version__}" in done.stdout
+    args = (tmp_path / "gh-args").read_text()
+    assert "repos/crunchtools/gatehouse/contents/src/gatehouse/__init__.py?ref=abc123" in args
+
+
+def test_review_workflow_image_input_overrides(tmp_path: Path):
+    done = _resolve(tmp_path, "quay.io/example/gatehouse:9.9.9", INIT)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert "Reviewer image: quay.io/example/gatehouse:9.9.9" in done.stdout
+    assert not (tmp_path / "gh-args").exists()
+
+
+def test_review_workflow_fails_the_review_when_the_version_is_unreadable(tmp_path: Path):
+    done = _resolve(tmp_path, "", None)
+    assert done.returncode == 2
+    assert "FAILED: could not read the Gatehouse version" in done.stdout
 
 
 def test_containerfile_version_label_matches_package_version():
