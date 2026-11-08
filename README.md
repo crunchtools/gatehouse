@@ -150,7 +150,7 @@ Call the reusable workflows at the major tag, `@v0`, as the examples do. Each re
 
 A change that needs an edit in the calling repository (an input renamed or removed, a check name changed, a config format Gourmand rejects) is a new major tag, while the version is 0.x as well. Repositories move to a new major by editing their caller files.
 
-To release: bump the version in `pyproject.toml`, `src/gatehouse/__init__.py`, `uv.lock` and the default image in `review.yml`, add the CHANGELOG entry, merge, push the tag `vX.Y.Z`, and publish the GitHub Release (which publishes to PyPI). The tag builds the images and then moves `v0`.
+To release: bump the version in `pyproject.toml`, `src/gatehouse/__init__.py`, `Containerfile` and `uv.lock` (`review.yml` reads its image from `__init__.py` at its own commit, so it needs no bump), add the CHANGELOG entry, merge, push the tag `vX.Y.Z`, and publish the GitHub Release (which publishes to PyPI). The tag builds the images and then moves `v0`.
 
 ## The finding ledger
 

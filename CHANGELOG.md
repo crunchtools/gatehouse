@@ -7,6 +7,13 @@ All notable changes to this project are documented here, following
 
 ### Fixed
 
+- **`review.yml` runs the image of its own release without a hand bump.**
+  Its default image was a tag typed into the workflow, and Ashigaru's release
+  never edits `.github/`, so the 0.24.1 release PR failed its own pin test with
+  `review.yml` still naming 0.24.0. The default is now empty, and the review
+  reads `__version__` from `src/gatehouse/__init__.py` at the workflow's own
+  commit (`job.workflow_sha`), so `@v0` runs the image of the release the tag
+  points at. An explicit `image:` input still wins.
 - **A release tells the SDLC images to rebuild once, not twice.** The
   dispatch ran on any push, and a release pushes master and then the tag, so
   0.24.0 dispatched twice 15 seconds apart. Both runs computed python-sdlc
