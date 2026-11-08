@@ -5,6 +5,8 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+## [0.24.1] - 2026-11-07
+
 ### Fixed
 
 - **`review.yml` runs the image of its own release without a hand bump.**
