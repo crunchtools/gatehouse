@@ -5,6 +5,21 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-11-09
+
+### Added
+
+- **The required Gourmand job refuses a change that adds a plaintext secret**
+  (crunchtools/trentina#769). A new step, before Gourmand runs, reads only the
+  lines the change adds (against the PR base or the push's previous tip) and
+  fails on a Google, Anthropic, OpenRouter, GitHub, GitLab, AWS or Slack key
+  shape or a bare JWT, annotating file, line and key and never the value. It
+  sits in the job every Crunchtools repo already calls at `@v0` and already
+  requires, so moving `v0` reaches the whole fleet with no edit anywhere, and a
+  repo scaffolded later gets it with the workflow. A fixture line marked
+  `gatehouse: allow-secret` is skipped; `secret_scan: false` is an emergency
+  off switch.
+
 ## [0.24.1] - 2026-11-07
 
 ### Fixed
