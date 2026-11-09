@@ -18,6 +18,13 @@
 #       name: Code Quality (Gourmand)
 #       uses: crunchtools/gatehouse/.github/workflows/gourmand.yml@v0
 #
+# ── Plaintext secrets ────────────────────────────────────────────────────────
+# Before Gourmand runs, the job refuses any added line that carries a known
+# credential shape (Google, Anthropic, OpenRouter, GitHub, GitLab, AWS, Slack
+# keys and bare JWTs), crunchtools/trentina#769. A test fixture marks its line
+# `gatehouse: allow-secret`. `secret_scan: false` turns it off for one caller;
+# it is an emergency switch, not a setting.
+#
 # ── Migrating from v0.5.0 ────────────────────────────────────────────────────
 # v0.6.0 moves to Gourmand 1.0.0 (upstream v0.16.5) and is BREAKING. Bumping
 # the ref alone is not enough; the caller repo's config must change in the
@@ -61,6 +68,11 @@ on:
         # Code Quality gate failed fleet-wide. `:main` is what the gate has
         # actually tracked since; it now says so.
         default: "quay.io/crunchtools/gourmand:main"
+      secret_scan:
+        description: "Refuse added lines carrying a plaintext secret. Emergency off switch only."
+        type: boolean
+        required: false
+        default: true
 
 jobs:
   gourmand:
@@ -70,5 +82,69 @@ jobs:
       image: ${{ inputs.image }}
     steps:
       - uses: actions/checkout@v7
+      # Refuse a change that adds a plaintext secret (crunchtools/trentina#769).
+      # It lives in this job, not a repo's own CI, because every Crunchtools
+      # repo already calls this workflow at @v0 and this job is the org-required
+      # check: a rule here reaches all of them, and any repo scaffolded later,
+      # without a pin bump. Only ADDED lines are read, against the PR base or
+      # the push's previous tip, and a hit names file, line and key, never the
+      # value. A fixture line carrying `gatehouse: allow-secret` is skipped.
+      - name: Refuse plaintext secrets
+        if: ${{ inputs.secret_scan }}
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          BEFORE: ${{ github.event.before }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        shell: sh
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          case "$EVENT" in
+            pull_request|pull_request_target) BASE=$PR_BASE ;;
+            push) BASE=$BEFORE ;;
+            *) echo "No base commit for a $EVENT run; nothing to compare."; exit 0 ;;
+          esac
+          if [ -z "$BASE" ] || [ "$BASE" = 0000000000000000000000000000000000000000 ]; then
+            git fetch --no-tags --depth=1 origin "$DEFAULT_BRANCH"
+            BASE=$(git rev-parse FETCH_HEAD)
+          else
+            git fetch --no-tags --depth=1 origin "$BASE"
+          fi
+          set -eu
+          hits=0
+          file=""
+          line=0
+          pattern='AIza[0-9A-Za-z_-]{35}|sk-ant-[A-Za-z0-9_-]{20,}|sk-or-v1-[0-9a-f]{32,}|gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,}|glpat-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}|eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}'
+          diff_file=$(mktemp)
+          git diff --unified=0 --no-color --no-ext-diff "$BASE" HEAD > "$diff_file"
+          while IFS= read -r row; do
+            case "$row" in
+              '+++ b/'*) file=${row#+++ b/} ;;
+              '+++ '*) file="" ;;
+              '@@ '*)
+                start=$(printf '%s\n' "$row" | sed -n 's/^@@ -[0-9,]* +\([0-9]*\).*/\1/p')
+                line=${start:-0} ;;
+              '+'*)
+                if [ -n "$file" ]; then
+                  added=${row#+}
+                  case "$added" in
+                    *'gatehouse: allow-secret'*) ;;
+                    *)
+                      if printf '%s\n' "$added" | grep -Eq "$pattern"; then
+                        name=$(printf '%s\n' "$added" | sed -n -E 's/^[[:space:]]*(export[[:space:]]+)?"?([A-Za-z_][A-Za-z0-9_.-]*)"?[[:space:]]*[:=].*/\2/p')
+                        echo "::error file=${file},line=${line}::plaintext secret in ${name:-(unnamed value)}"
+                        hits=$((hits + 1))
+                      fi ;;
+                  esac
+                fi
+                line=$((line + 1)) ;;
+            esac
+          done < "$diff_file"
+          rm -f "$diff_file"
+          if [ "$hits" -gt 0 ]; then
+            echo "Refusing ${hits} plaintext secret(s). Move each to a *_FILE path or the host's encrypted store; mark a test fixture line 'gatehouse: allow-secret'."
+            exit 1
+          fi
+          echo "No plaintext secrets in the added lines."
       - name: Run Gourmand
         run: gourmand check --full ${{ inputs.path }}

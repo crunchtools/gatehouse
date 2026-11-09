@@ -144,6 +144,10 @@ with:
   blocking: true
 ```
 
+### Plaintext secrets
+
+The Gourmand job (`gourmand.yml`, the required `Code Quality (Gourmand)` check) first refuses any line a change ADDS that carries a known credential shape: Google (`AIza`), Anthropic (`sk-ant-`), OpenRouter (`sk-or-v1-`), GitHub (`gh?_`, `github_pat_`), GitLab (`glpat-`), AWS (`AKIA`), Slack (`xox?-`) and bare JWTs. Each hit is an annotation naming the file, line and key, never the value. A test fixture marks its line `gatehouse: allow-secret`. Secrets belong in a `*_FILE` path or the host's encrypted store; the constitution states the rule. `secret_scan: false` turns the step off for one caller, in an emergency only.
+
 ## Versions
 
 Call the reusable workflows at the major tag, `@v0`, as the examples do. Each release moves that tag once its container images are pushed, so a release reaches every repository without a pin bump there; `review.yml` at the tag names the image of the same release. Every release also keeps its own `vX.Y.Z` tag. To undo a release, move the major tag back: `git tag -f v0 vX.Y.Z && git push -f origin v0`.
