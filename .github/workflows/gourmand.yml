@@ -94,13 +94,22 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
           BEFORE: ${{ github.event.before }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         shell: sh
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          # The side to scan. pull_request checks out the merge commit, so HEAD.
+          # pull_request_target checks out the BASE branch, so the PR's own
+          # commits are fetched by ref and only diffed, never checked out or run.
+          TARGET=HEAD
           case "$EVENT" in
-            pull_request|pull_request_target) BASE=$PR_BASE ;;
+            pull_request) BASE=$PR_BASE ;;
+            pull_request_target)
+              BASE=$PR_BASE
+              git fetch --no-tags --depth=1 origin "refs/pull/$PR_NUMBER/head"
+              TARGET=$(git rev-parse FETCH_HEAD) ;;
             push) BASE=$BEFORE ;;
             *) echo "No base commit for a $EVENT run; nothing to compare."; exit 0 ;;
           esac
@@ -116,7 +125,14 @@ jobs:
           line=0
           pattern='AIza[0-9A-Za-z_-]{35}|sk-ant-[A-Za-z0-9_-]{20,}|sk-or-v1-[0-9a-f]{32,}|gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,}|glpat-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}|eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}'
           diff_file=$(mktemp)
-          git diff --unified=0 --no-color --no-ext-diff "$BASE" HEAD > "$diff_file"
+          git diff --unified=0 --no-color --no-ext-diff "$BASE" "$TARGET" > "$diff_file"
+          # One pass over every added line first: the common case, no match,
+          # costs one grep. The per-line walk below runs only to name a hit.
+          if ! grep -E '^\+' "$diff_file" | grep -v '^+++' | grep -Eq "$pattern"; then
+            rm -f "$diff_file"
+            echo "No plaintext secrets in the added lines."
+            exit 0
+          fi
           while IFS= read -r row; do
             case "$row" in
               '+++ b/'*) file=${row#+++ b/} ;;
