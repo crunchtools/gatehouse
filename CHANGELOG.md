@@ -5,6 +5,20 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+## [0.25.1] - 2026-11-10
+
+### Fixed
+
+- **The image installed whatever `pip install .` resolved at build time, not
+  the committed, Dependabot-maintained `uv.lock`** (RT#1564). A fresh resolve
+  means the shipped versions never ran against CI — the same gap that shipped
+  mcp-gemini's `google-genai` 3.0.0 against a 2.34.0-tested build and caused a
+  prod outage. A new `lock` stage exports `uv.lock` to a pinned
+  `requirements.txt` with `uv export --frozen`, and the build installs that
+  with `--no-deps` before installing the project, also `--no-deps`, so pip
+  cannot re-resolve anything. The pip-upgrade line ahead of the install is
+  unchanged.
+
 ## [0.25.0] - 2026-11-09
 
 ### Added
