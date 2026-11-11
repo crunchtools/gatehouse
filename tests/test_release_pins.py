@@ -39,9 +39,7 @@ def _resolve(tmp_path: Path, image: str, served: Path | None) -> subprocess.Comp
     )
     gh.chmod(0o755)
     script = (
-        "set -euo pipefail\n"
-        'fail_review() { echo "FAILED: $1"; exit 2; }\n'
-        f"{block.group(1)}\n"
+        f'set -euo pipefail\nfail_review() {{ echo "FAILED: $1"; exit 2; }}\n{block.group(1)}\n'
     )
     env = {
         **os.environ,
@@ -125,9 +123,9 @@ def test_examples_call_the_major_tag():
     assert {ref for _, ref in pins} == {__version__.split(".")[0]}, sorted(pins)
 
 
-def test_the_major_tag_moves_only_after_both_images_are_pushed():
+def test_the_major_tag_moves_only_after_the_image_is_promoted():
     """`@v0` callers run review.yml's default image, so the tag must not get there first."""
     job = CONTAINER_WORKFLOW.read_text().split("\n  major-tag:\n")[1]
-    assert "    needs: [build-and-push-quay, build-and-push-ghcr]\n" in job
+    assert "    needs: [container]\n" in job
     assert "    if: github.ref_type == 'tag'\n" in job
     assert "    permissions:\n      contents: write\n" in job

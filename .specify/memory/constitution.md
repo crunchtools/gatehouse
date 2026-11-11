@@ -4,7 +4,7 @@
 > **Ratified:** 2026-04-04
 > **Amended:** 2026-11-04
 > **Status:** Active
-> **Inherits:** [crunchtools/constitution](https://github.com/crunchtools/constitution) v1.32.0
+> **Inherits:** [crunchtools/constitution](https://github.com/crunchtools/constitution) v1.39.1
 > **Profile:** CLI Tool
 
 This file holds gatehouse's own rules. The fleet rules and the CLI Tool
@@ -28,7 +28,7 @@ Exit code `0` on success or advisory-only findings. Exit code `1` on blocking fi
 
 The blocking exit code applies to **local** invocation. The reusable CI workflow (`.github/workflows/review.yml`) is **advisory by default**: it passes `--advisory` so no finding fails the check, and posts findings as a plain `COMMENT` review, never gating a merge. When it cannot run the reviewer at all (no diff, no key, no image) it posts a review carrying the failed marker and fails. Callers opt into blocking with the `blocking: true` input, and even then the check MUST NOT be marked a required status check.
 
-The triage workflow (`.github/workflows/triage.yml`) is the opposite case and is kept separate on purpose. It never judges code — it fails only while a required inline finding has no reply from someone other than the reviewer, or while the newest Gatehouse review carries the failed marker — so it is deterministic and SHOULD be marked a required status check. One finding is not required: one written against a commit no longer on the pull request, once the newest finished Gatehouse review has looked at the head. A force-push that rebuilds the branch orphans both the reviewed code and every `fixed in <sha>` answer naming it, so no reply could satisfy the gate again; the review of the new head is the one that applies, and requiring it is what stops the drop becoming a way to shed a finding by re-pushing the same code. A finding whose original commit cannot be determined is still required: unprovable is not orphaned (constitution XII, v1.32.0). Required means CRITICAL, HIGH or MEDIUM from any agent, or LOW from an agent named in its `required_low_agents` input (Bug Hunter and Security Scan by default); the filter reads only the severity and agent name printed at the start of each finding. That is what makes an advisory reviewer's findings a merge condition without giving the LLM a vote.
+The triage workflow (`.github/workflows/triage.yml`) is the opposite case and is kept separate on purpose. It never judges code — it fails only while a required inline finding has no reply from someone other than the reviewer, or while the newest Gatehouse review carries the failed marker — so it is deterministic and SHOULD be marked a required status check. One finding is not required: one written against a commit no longer on the pull request, once the newest finished Gatehouse review has looked at the head. A force-push that rebuilds the branch orphans both the reviewed code and every `fixed in <sha>` answer naming it, so no reply could satisfy the gate again; the review of the new head is the one that applies, and requiring it is what stops the drop becoming a way to shed a finding by re-pushing the same code. A finding whose original commit cannot be determined is still required: unprovable is not orphaned (constitution XII, v1.39.1). Required means CRITICAL, HIGH or MEDIUM from any agent, or LOW from an agent named in its `required_low_agents` input (Bug Hunter and Security Scan by default); the filter reads only the severity and agent name printed at the start of each finding. That is what makes an advisory reviewer's findings a merge condition without giving the LLM a vote.
 
 ## External APIs
 
@@ -85,7 +85,7 @@ Under the fork-safe workflow the ledger is loaded from the pull request's head, 
 
 ## Container
 
-Built on the `quay.io/hummingbird/python:3.14-fips-builder` image (git is needed at runtime) with a venv. Published to `quay.io/crunchtools/gatehouse` and `ghcr.io/crunchtools/gatehouse`.
+Built on the `quay.io/hummingbird/python:3.14-fips-builder` image (git is needed at runtime) with a venv. Published to `quay.io/crunchtools/gatehouse`.
 
 ## History
 
