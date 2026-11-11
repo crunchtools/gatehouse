@@ -40,7 +40,7 @@ COPY src/ ./src/
 RUN pip install --no-cache-dir --no-deps .
 
 LABEL name="gatehouse" \
-      version="0.25.1" \
+      version="0.25.2" \
       summary="Local AI code review CLI using concurrent LLM agents" \
       description="5-agent concurrent code review with anti-noise prompting" \
       maintainer="crunchtools.com" \
