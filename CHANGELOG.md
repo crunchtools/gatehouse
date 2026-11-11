@@ -5,6 +5,12 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+## [0.25.2] - 2026-11-11
+
+### Changed
+
+- No functional change. First release on the build-once container pipeline (RT#1550): `:latest` now names a digest that passed the release gates.
+
 ## [0.25.1] - 2026-11-10
 
 ### Fixed
