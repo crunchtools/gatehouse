@@ -16,6 +16,7 @@ import httpx
 
 from gatehouse.agents import (
     CONSTITUTION,
+    FINDING_FIELDS,
     Agent,
     build_constitution_prompt,
     build_user_prompt,
@@ -136,9 +137,11 @@ class AgentRun(NamedTuple):
 class RetryBudget:
     """Model calls a review may still spend re-asking for unparseable replies.
 
-    The constitution caps one review at MAX_TOTAL_CALLS, retries included, so
-    retries get only what the planned samples leave under it. Shared by every
-    sample of the review; asyncio runs them on one thread, so no lock.
+    The constitution caps one review at MAX_TOTAL_CALLS, so parse retries get
+    only what the planned samples leave under it. A call is one sample asked
+    of the model: call_model's own HTTP retries of that call (MAX_RETRIES)
+    are the transport's, and are not counted. Shared by every sample of the
+    review; asyncio runs them on one thread, so no lock.
     """
 
     def __init__(self, planned: int) -> None:
@@ -376,14 +379,15 @@ def _json_values(text: str) -> list[Any]:
     Some models (GLM-5.3) emit a second array, or prose, after the first
     array. Consecutive JSON values are all kept so no findings are dropped;
     trailing non-JSON text is ignored. Raises JSONDecodeError when the text
-    does not start with JSON at all.
+    does not start with JSON at all, and ValueError when an object repeats a
+    key: quoted code can close a string and add a second "confidence", and
+    the last one would win.
     """
-    decoder = json.JSONDecoder()
     values: list[Any] = []
     pos = len(text) - len(text.lstrip())
     while pos < len(text):
         try:
-            value, end = decoder.raw_decode(text, pos)
+            value, end = _REPLY_DECODER.raw_decode(text, pos)
         except json.JSONDecodeError:
             repaired = _escape_stray_quotes(text, pos)
             if repaired is None:
@@ -391,7 +395,7 @@ def _json_values(text: str) -> list[Any]:
                     raise
                 break
             text = repaired
-            value, end = decoder.raw_decode(text, pos)
+            value, end = _STRICT_DECODER.raw_decode(text, pos)
         pos = end
         values.append(value)
         pos += len(text[pos:]) - len(text[pos:].lstrip())
@@ -408,6 +412,13 @@ def _escape_stray_quotes(text: str, pos: int) -> str | None:
     of the quote goes on. The quote just before that spot is the stray one:
     escape it and decode again, once per stray quote. None when the value
     fails for any other reason, or still fails after MAX_QUOTE_REPAIRS.
+
+    A repair can also succeed wrongly: quoted code like ``", "confidence": 50``
+    becomes a second key, and the last duplicate wins, so a finding could be
+    rewritten or filtered out by the diff it reviews. The repaired value is
+    therefore decoded strictly (_finding_pairs) and refused unless every key
+    is a finding field, none repeats, and nothing follows it; a refused repair
+    is asked for again.
     """
     decoder = json.JSONDecoder()
     for _ in range(MAX_QUOTE_REPAIRS):
@@ -421,8 +432,34 @@ def _escape_stray_quotes(text: str, pos: int) -> str | None:
                 return None
             text = text[:quote] + "\\" + text[quote:]
             continue
-        return text
+        try:
+            _, end = _STRICT_DECODER.raw_decode(text, pos)
+        except ValueError:
+            return None
+        # Text left over means quoted code closed the value early, and the
+        # findings after it would be dropped as trailing prose.
+        return None if text[end:].strip() else text
     return None
+
+
+def _unique_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """An object of a reply, refused when a key repeats."""
+    keys = [key for key, _ in pairs]
+    if len(set(keys)) != len(keys):
+        raise ValueError(f"reply repeats a key: {keys}")
+    return dict(pairs)
+
+
+def _finding_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """An object of a repaired reply: no repeated key, and every key a finding field."""
+    unknown = {key for key, _ in pairs} - FINDING_FIELDS - {"findings"}
+    if unknown:
+        raise ValueError(f"repaired reply has keys outside the finding schema: {sorted(unknown)}")
+    return _unique_pairs(pairs)
+
+
+_REPLY_DECODER = json.JSONDecoder(object_pairs_hook=_unique_pairs)
+_STRICT_DECODER = json.JSONDecoder(object_pairs_hook=_finding_pairs)
 
 
 def _squash(text: str) -> str:

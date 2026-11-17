@@ -14,6 +14,13 @@ All notable changes to this project are documented here, following
   parse is asked for once more before the sample counts as unfinished, out of
   whatever the planned samples leave under the 40-call cap; both replies'
   tokens are reported. Shared by every agent, not only Test Coverage.
+- **Quoted code could rewrite a finding** (review of #130). A quote like
+  `", "confidence": 50` reads as a second key and the last one wins, which
+  could drop a critical finding below the threshold. A reply that repeats a
+  key is now unparseable, and a repaired reply must also keep to the finding
+  fields with nothing after it; either way the reply is asked for again.
+  call_model's HTTP retries stay outside the 40-call cap; that counts samples
+  and parse retries.
 - Tests no longer read the developer's own `~/.config/mcp-env/gatehouse.env`,
   whose `GATEHOUSE_LLM_BASE_URL` broke a URL test on dev seats.
 
