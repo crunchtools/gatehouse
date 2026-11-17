@@ -5,6 +5,10 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+### Changed
+
+- **`Protect workflows` also guards `.sdlc/`** (a216): the fork guard in `examples/gatehouse.yml` and Gatehouse's own copy now match `^(\.github/workflows|\.sdlc)/`, as constitution#157 does. The required `sdlc ci` check runs the launcher committed at `.sdlc/bin/sdlc`, so a fork editing it must be rejected like a workflow edit.
+
 ## [0.29.1] - 2026-11-17
 
 ### Changed
