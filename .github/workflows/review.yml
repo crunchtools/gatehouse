@@ -178,12 +178,16 @@ jobs:
             > "$skip_reviews" 2>/dev/null && reviews_read=1 \
             || echo "::notice::Could not read the earlier reviews; not skipping." >&2
 
-          # 2) A bot we own (Dependabot, crunchtools-ci, Ashigaru) moving only
-          #    version and pin files (in a workflow or Containerfile, only
-          #    pin lines). Both sides of a rename must be one, the
-          #    API must list every changed file, and the head must be in this
-          #    repository: a fork is always reviewed. The file list is read
-          #    over the API; nothing of the PR is checked out.
+          # 2) A bot we own (Dependabot, crunchtools-ci, Ashigaru) bumping
+          #    the refs of actions in workflows, and nothing else. Every
+          #    changed line is a `uses:` line and the same actions come out
+          #    as went in. Any other file, dependency manifests and
+          #    Containerfiles included, is reviewed: a new dependency, hook
+          #    or base image is not a pin, and anyone with write access can
+          #    push to a bot's branch. Both sides of a rename must be a
+          #    workflow, the API must list every changed file, and the head
+          #    must be in this repository: a fork is always reviewed. The
+          #    file list is read over the API; nothing is checked out.
           case "$PR_AUTHOR" in
             "dependabot[bot]"|"crunchtools-ci[bot]"|"ashigaru-crunchtools[bot]") owned_bot=1 ;;
             *) owned_bot=0 ;;
@@ -194,39 +198,29 @@ jobs:
                 > "$pin_files" \
               && pr_changed="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq .changed_files)" \
               && jq -se --argjson changed "$pr_changed" '
-                # Workflows run with the secrets and Containerfiles run
-                # commands, so there every changed line must be a pin: a
-                # `uses:` line, or a FROM or ARG line. In a workflow the
-                # same actions must come out as went in, so a bump cannot
-                # swap one action for another, or add one.
-                def only($line):
-                  (.patch // null) != null
-                  and all(.patch | split("\n")[] | select(test("^[-+]")); test($line));
                 def actions($sign):
                   [ .patch | split("\n")[] | select(startswith($sign))
                     | capture("uses:\\s*(?<a>[^\\s@]+)@").a ] | sort;
                 (add // []) as $files
                 | ($files | length) == $changed and $changed > 0
                 and all($files[] | .filename, (.previous_filename // empty);
-                  test("^(.*/)?(pyproject\\.toml|uv\\.lock|requirements[^/]*\\.txt|Containerfile|IMAGE_TAG|CHANGELOG\\.md|\\.pre-commit-config\\.yaml)$")
-                  or test("^\\.github/workflows/[^/]+\\.yml$")
-                  or . == ".github/dependabot.yml")
-                and all($files[] | select(.filename | test("^\\.github/workflows/"));
-                  only("^[-+]\\s*(-\\s+)?uses:\\s*[^\\s]+@[^\\s]+(\\s+#.*)?$")
+                  test("^\\.github/workflows/[^/]+\\.yml$"))
+                and all($files[];
+                  (.patch // null) != null
+                  and all(.patch | split("\n")[] | select(test("^[-+]"));
+                    test("^[-+]\\s*(-\\s+)?uses:\\s*[^\\s]+@[^\\s]+(\\s+#.*)?$"))
                   and actions("+") == actions("-"))
-                and all($files[] | select(.filename | test("(^|/)Containerfile$"));
-                  only("^[-+]\\s*(FROM|ARG)\\s"))
               ' "$pin_files" > /dev/null; then
             # One review says so per PR, not one per Dependabot rebase.
             if jq -se --arg bot "$REVIEWER" '
                 [ (add // [])[] | select(.user.login == $bot and ((.body // "") | startswith("Gatehouse"))) ]
                 | last | (.body // "") | contains("<!-- gatehouse skipped: pins -->")
               ' "$skip_reviews" > /dev/null; then
-              echo "Bot PR moving only version pins; not reviewed. No model was called." \
+              echo "Bot PR moving only action refs; not reviewed. No model was called." \
                 | tee -a "$GITHUB_STEP_SUMMARY"
               exit 0
             fi
-            post_skip "Gatehouse skipped this review: ${PR_AUTHOR} changes only version and pin files."$'\n\n''<!-- gatehouse skipped: pins -->'
+            post_skip "Gatehouse skipped this review: ${PR_AUTHOR} only moves the refs of the actions its workflows use."$'\n\n''<!-- gatehouse skipped: pins -->'
           fi
 
           # 3) A head whose patch Gatehouse already reviewed: a rebase, or a

