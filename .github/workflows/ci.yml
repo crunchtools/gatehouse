@@ -7,8 +7,8 @@ on:
     branches: [master]
 
 jobs:
-  # Every check this repo runs, from python-sdlc at the .pre-commit-config.yaml
-  # pin -- the same image and commands `sdlc push` runs on a laptop, so a green
+  # Every check this repo runs, from quay.io/crunchtools/sdlc through the
+  # committed .sdlc/bin/sdlc -- the same image and commands `sdlc push` runs on a laptop, so a green
   # push predicts a green CI. Ruff, mypy, pytest, semgrep, pip-audit, the
   # constitution validator and CodeQL, plus the image build ([tool.sdlc.ci]).
   sdlc:
@@ -22,13 +22,9 @@ jobs:
           persist-credentials: false
 
       - name: sdlc ci
-        run: |
-          set -eu
-          rev=$(awk '/repo: https:\/\/github.com\/crunchtools\/python-sdlc/ {f=1; next}
-                     f && /rev:/ {print $2; exit}' .pre-commit-config.yaml)
-          [ -n "$rev" ] || { echo "no python-sdlc rev in .pre-commit-config.yaml" >&2; exit 2; }
-          git clone -q --depth 1 --branch "$rev" https://github.com/crunchtools/python-sdlc "$RUNNER_TEMP/sdlc"
-          "$RUNNER_TEMP/sdlc/bin/sdlc" ci
+        env:
+          SDLC_IMAGE: ${{ vars.SDLC_IMAGE }}
+        run: .sdlc/bin/sdlc ci
 
   # sdlc runs the suite on the image's Python (3.14). requires-python and the
   # classifiers promise 3.11 and 3.12, so each gets its own run.

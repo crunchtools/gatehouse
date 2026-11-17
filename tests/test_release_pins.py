@@ -1,10 +1,10 @@
-"""The reusable review workflow must run the image of the release it ships in.
+"""The reusable review workflow must run the image each release moves.
 
 `review.yml`'s default image used to be a hard-coded tag, bumped by hand. It sat
 at 0.4.0 through three releases, so every `review.yml@v0.7.0` caller reviewed
-with a 0.4.0 container, and Ashigaru's 0.24.1 release (which never edits
-`.github/`) failed here with the tag still at 0.24.0. The workflow now reads the
-version from its own commit, and these tests run that step.
+with a 0.4.0 container. Constitution XV rule 5 (v1.45.0) floats crunchtools
+tool images at `:latest`, so the workflow names that, and these tests run the
+step that picks it.
 """
 
 from __future__ import annotations
@@ -19,11 +19,10 @@ from gatehouse import __version__
 REVIEW_WORKFLOW = Path(__file__).parent.parent / ".github" / "workflows" / "review.yml"
 CONTAINER_WORKFLOW = REVIEW_WORKFLOW.with_name("container.yml")
 CONTAINERFILE = Path(__file__).parent.parent / "Containerfile"
-INIT = Path(__file__).parent.parent / "src" / "gatehouse" / "__init__.py"
 
 
-def _resolve(tmp_path: Path, image: str, served: Path | None) -> subprocess.CompletedProcess[str]:
-    """Run review.yml's resolve-image block with a stub `gh` that serves `served`."""
+def _resolve(tmp_path: Path, image: str) -> subprocess.CompletedProcess[str]:
+    """Run review.yml's resolve-image block with a stub `gh` that records any call."""
     block = re.search(
         r"# --- resolve image.*?\n(.*?)# --- end resolve image ---",
         REVIEW_WORKFLOW.read_text(),
@@ -33,10 +32,7 @@ def _resolve(tmp_path: Path, image: str, served: Path | None) -> subprocess.Comp
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     gh = bin_dir / "gh"
-    gh.write_text(
-        f'#!/bin/sh\necho "$@" > "{tmp_path}/gh-args"\n'
-        + (f'cat "{served}"\n' if served else "exit 1\n")
-    )
+    gh.write_text(f'#!/bin/sh\necho "$@" > "{tmp_path}/gh-args"\nexit 1\n')
     gh.chmod(0o755)
     script = (
         f'set -euo pipefail\nfail_review() {{ echo "FAILED: $1"; exit 2; }}\n{block.group(1)}\n'
@@ -45,8 +41,7 @@ def _resolve(tmp_path: Path, image: str, served: Path | None) -> subprocess.Comp
         **os.environ,
         "PATH": f"{bin_dir}:{os.environ['PATH']}",
         "IMAGE": image,
-        "WORKFLOW_REPO": "crunchtools/gatehouse",
-        "WORKFLOW_SHA": "abc123",
+        "LATEST_IMAGE": re.search(r"\n +LATEST_IMAGE: (\S+)\n", REVIEW_WORKFLOW.read_text())[1],
     }
     return subprocess.run(
         ["bash", "-c", script], check=False, env=env, capture_output=True, text=True
@@ -62,26 +57,24 @@ def test_review_workflow_has_no_hand_bumped_default_image():
     assert match.group(1) == ""
 
 
-def test_review_workflow_default_image_matches_package_version(tmp_path: Path):
-    """With no image input, the review runs the image of the workflow's own release."""
-    done = _resolve(tmp_path, "", INIT)
+def test_review_workflow_default_image_floats(tmp_path: Path):
+    """With no image input, the review runs `:latest`, and looks nothing up to get it."""
+    done = _resolve(tmp_path, "")
     assert done.returncode == 0, done.stdout + done.stderr
-    assert f"Reviewer image: quay.io/crunchtools/gatehouse:{__version__}" in done.stdout
-    args = (tmp_path / "gh-args").read_text()
-    assert "repos/crunchtools/gatehouse/contents/src/gatehouse/__init__.py?ref=abc123" in args
+    assert "Reviewer image: quay.io/crunchtools/gatehouse:latest" in done.stdout
+    assert not (tmp_path / "gh-args").exists()
 
 
 def test_review_workflow_image_input_overrides(tmp_path: Path):
-    done = _resolve(tmp_path, "quay.io/example/gatehouse:9.9.9", INIT)
+    done = _resolve(tmp_path, "quay.io/example/gatehouse:9.9.9")
     assert done.returncode == 0, done.stdout + done.stderr
     assert "Reviewer image: quay.io/example/gatehouse:9.9.9" in done.stdout
     assert not (tmp_path / "gh-args").exists()
 
 
-def test_review_workflow_fails_the_review_when_the_version_is_unreadable(tmp_path: Path):
-    done = _resolve(tmp_path, "", None)
-    assert done.returncode == 2
-    assert "FAILED: could not read the Gatehouse version" in done.stdout
+def test_review_workflow_pulls_the_image_fresh():
+    """A self-hosted runner keeps images, and a stale `:latest` is a stale reviewer."""
+    assert "docker run --rm -i --pull always " in REVIEW_WORKFLOW.read_text()
 
 
 def test_containerfile_version_label_matches_package_version():

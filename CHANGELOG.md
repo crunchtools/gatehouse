@@ -8,6 +8,8 @@ All notable changes to this project are documented here, following
 ### Changed
 
 - **`Protect workflows` also guards `.sdlc/`** (a216): the fork guard in `examples/gatehouse.yml` and Gatehouse's own copy now match `^(\.github/workflows|\.sdlc)/`, as constitution#157 does. The required `sdlc ci` check runs the launcher committed at `.sdlc/bin/sdlc`, so a fork editing it must be rejected like a workflow edit.
+- **Gates float with the sdlc image** (a225): `.pre-commit-config.yaml` drops the python-sdlc `rev:` for the two local hooks of python-sdlc 0.9.0, which run the committed bootstrap `.sdlc/bin/sdlc`, and the `sdlc ci` job runs exactly `.sdlc/bin/sdlc ci`. Constitution pins and `Inherits` move to v1.46.0.
+- **`review.yml` reviews with `quay.io/crunchtools/gatehouse:latest`** (a225), pulled fresh each run, instead of the release its own commit names. Constitution XV rule 5 (v1.45.0) floats crunchtools tool images at the tag each release moves; an `image:` input still overrides it.
 
 ## [0.29.1] - 2026-11-17
 
