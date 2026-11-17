@@ -5,6 +5,17 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+### Changed
+
+- **Checks run from python-sdlc** (#133). `.pre-commit-config.yaml` pins
+  crunchtools/python-sdlc v0.6.3 for `sdlc commit` and `sdlc push`, so the
+  hooks run on gateway seats, which cannot fetch ruff-pre-commit. CI's
+  hand-rolled ruff/mypy/pytest and docker build become one `sdlc ci` job that
+  also runs pip-audit, the constitution validator and CodeQL, and builds the
+  image with podman. The Gourmand and Gatehouse hooks stay as they were, since
+  the constitution still lists gatehouse as sdlc-exempt. Python 3.11 keeps its own pytest job as the
+  `requires-python` floor; 3.12 is covered by the image's newer Python.
+
 ### Fixed
 
 - **A reviewer reply with unescaped quotes failed the whole agent** (#129).
