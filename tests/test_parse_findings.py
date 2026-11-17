@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from gatehouse.review import _parse_findings
+from gatehouse.review import MAX_QUOTE_REPAIRS, _parse_findings
 
 HIT = {"severity": "high", "confidence": 100, "description": "x"}
 
@@ -69,3 +69,9 @@ def test_raw_quote_before_comma_is_repaired() -> None:
 def test_unrepairable_reply_is_unfinished() -> None:
     with pytest.raises(json.JSONDecodeError):
         _parse_findings('[{"severity": "high", "confidence": 100,')
+
+
+def test_repair_gives_up_after_max_quote_repairs() -> None:
+    quoted = " ".join(f'"w{i}"' for i in range(MAX_QUOTE_REPAIRS + 1))
+    with pytest.raises(json.JSONDecodeError):
+        _parse_findings(f'[{{"description": "{quoted}", "confidence": 100}}]')

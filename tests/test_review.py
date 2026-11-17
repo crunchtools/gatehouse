@@ -1110,6 +1110,24 @@ async def test_run_agent_retry_stays_under_call_cap() -> None:
     assert model.await_count == 1
 
 
+@pytest.mark.asyncio
+async def test_run_agents_never_exceed_call_cap_with_retries() -> None:
+    """Every sample unparseable: only the calls left under the cap are retried."""
+    from gatehouse import review
+    from gatehouse.config import MAX_TOTAL_CALLS, ConsensusConfig
+
+    config = ConsensusConfig(samples=5, block="all", report="majority", agents={})
+    prompts = [(TEST_COVERAGE, "u")] * 7  # 35 planned calls, 5 to spare
+    model = AsyncMock(return_value=Completion("No issues."))
+    with patch("gatehouse.review.call_model", model):
+        runs = await review._run_agents(
+            prompts, model="m", api_key="k", verbose=False, config=config
+        )
+    assert model.await_count == MAX_TOTAL_CALLS
+    assert sum(len(run.replies) for run in runs) == MAX_TOTAL_CALLS
+    assert all(run.findings is None for run in runs)
+
+
 def test_retry_budget_is_what_the_samples_leave() -> None:
     from gatehouse.config import MAX_TOTAL_CALLS
     from gatehouse.review import RetryBudget
