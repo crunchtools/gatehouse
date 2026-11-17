@@ -5,6 +5,8 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-11-17
+
 ### Changed
 
 - **Checks run from python-sdlc** (#133). `.pre-commit-config.yaml` pins
