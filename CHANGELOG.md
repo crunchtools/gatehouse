@@ -5,6 +5,8 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+## [0.29.1] - 2026-11-17
+
 ### Changed
 
 - **Fallback model is now `google/gemini-3.5-flash-lite`** (a172), replacing
