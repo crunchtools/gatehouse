@@ -971,7 +971,7 @@ async def test_llm_fallback_offered_on_last_attempt_only() -> None:
     """A rate-limited primary is retried alone; only the last attempt lists the fallback."""
     import httpx
 
-    from gatehouse.llm import FALLBACK_MODELS, MAX_RETRIES, call_model
+    from gatehouse.llm import MAX_RETRIES, call_model
 
     limited = httpx.Response(429, request=httpx.Request("POST", "https://example.com"))
     sent: list[list[str]] = []
@@ -985,7 +985,7 @@ async def test_llm_fallback_offered_on_last_attempt_only() -> None:
     with patch("asyncio.sleep", new_callable=AsyncMock):
         await call_model(mock_client, "sys", "user", "openai/gpt-6-luna", "k")
     assert sent[:-1] == [["openai/gpt-6-luna"]] * (MAX_RETRIES - 1)
-    assert sent[-1] == ["openai/gpt-6-luna", *FALLBACK_MODELS]
+    assert sent[-1] == ["openai/gpt-6-luna", "google/gemini-3.5-flash-lite"]
 
 
 _REQUEST = httpx.Request("POST", "https://example.com")
