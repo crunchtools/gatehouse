@@ -988,10 +988,7 @@ async def test_llm_fallback_offered_on_last_attempt_only() -> None:
     assert sent[-1] == ["openai/gpt-6-luna", *FALLBACK_MODELS]
 
 
-def _status(code: int, headers: dict[str, str] | None = None) -> httpx.Response:
-    return httpx.Response(
-        code, headers=headers, request=httpx.Request("POST", "https://example.com")
-    )
+_REQUEST = httpx.Request("POST", "https://example.com")
 
 
 async def _models_sent(*replies: httpx.Response | Exception) -> tuple[list[list[str]], AsyncMock]:
@@ -1021,7 +1018,7 @@ async def test_llm_unretryable_error_goes_straight_to_fallback(code: int) -> Non
     """A 400 (too long) or 404 (no ZDR endpoint) reaches the fallback on attempt 2, unslept."""
     from gatehouse.llm import FALLBACK_MODELS
 
-    sent, sleep = await _models_sent(_status(code))
+    sent, sleep = await _models_sent(httpx.Response(code, request=_REQUEST))
     assert sent == [["openai/gpt-6-luna"], ["openai/gpt-6-luna", *FALLBACK_MODELS]]
     assert sum(c.args[0] for c in sleep.await_args_list) == 0
 
@@ -1031,14 +1028,16 @@ async def test_llm_unretryable_error_goes_straight_to_fallback(code: int) -> Non
 async def test_llm_key_errors_raise_without_fallback(code: int) -> None:
     """A key, credit or permission error is not the model's fault; it raises at once."""
     with pytest.raises(httpx.HTTPStatusError):
-        await _models_sent(_status(code))
+        await _models_sent(httpx.Response(code, request=_REQUEST))
 
 
 @pytest.mark.asyncio
 async def test_llm_fallback_error_raises() -> None:
     """An unretryable error with the fallback already listed raises."""
     with pytest.raises(httpx.HTTPStatusError):
-        await _models_sent(_status(400), _status(400))
+        await _models_sent(
+            httpx.Response(400, request=_REQUEST), httpx.Response(400, request=_REQUEST)
+        )
 
 
 @pytest.mark.asyncio
@@ -1056,7 +1055,7 @@ async def test_llm_total_backoff_is_capped() -> None:
     """Long Retry-After hints sleep no more than MAX_TOTAL_BACKOFF across a call."""
     from gatehouse.llm import MAX_RETRIES, MAX_TOTAL_BACKOFF
 
-    limited = _status(429, {"Retry-After": "90"})
+    limited = httpx.Response(429, headers={"Retry-After": "90"}, request=_REQUEST)
     _, sleep = await _models_sent(*[limited] * (MAX_RETRIES - 1))
     assert sum(c.args[0] for c in sleep.await_args_list) == MAX_TOTAL_BACKOFF
 
