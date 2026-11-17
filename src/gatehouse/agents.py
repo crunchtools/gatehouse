@@ -20,6 +20,20 @@ Output a JSON array. Each element MUST have exactly these fields:
 - "confidence": integer, 0-100 how confident you are this is a real issue
 
 If there are no findings, return an empty array: []"""
+# The fields FINDING_SCHEMA asks for, kept beside it so the two change together.
+FINDING_FIELDS = frozenset(
+    {
+        "file",
+        "lineStart",
+        "lineEnd",
+        "severity",
+        "category",
+        "description",
+        "suggestion",
+        "evidence",
+        "confidence",
+    }
+)
 
 ANTI_NOISE = """\
 Do NOT flag:

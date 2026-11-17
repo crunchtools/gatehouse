@@ -5,6 +5,25 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+### Fixed
+
+- **A reviewer reply with unescaped quotes failed the whole agent** (#129).
+  Models copy code into `evidence` without escaping its double quotes, so the
+  JSON broke (`Expecting ',' delimiter`) and the run exited 2. The parser now
+  escapes the stray quotes and decodes again, and a reply that still does not
+  parse is asked for once more before the sample counts as unfinished, out of
+  whatever the planned samples leave under the 40-call cap; both replies'
+  tokens are reported. Shared by every agent, not only Test Coverage.
+- **Quoted code could rewrite a finding** (review of #130). A quote like
+  `", "confidence": 50` reads as a second key and the last one wins, which
+  could drop a critical finding below the threshold. A reply that repeats a
+  key is now unparseable, and a repaired reply must also keep to the finding
+  fields with nothing after it; either way the reply is asked for again.
+  The 40-call cap counts logical calls (samples and parse retries); each can
+  take up to 5 HTTP attempts in call_model, so the worst case is 200 requests.
+- Tests no longer read the developer's own `~/.config/mcp-env/gatehouse.env`,
+  whose `GATEHOUSE_LLM_BASE_URL` broke a URL test on dev seats.
+
 ## [0.25.2] - 2026-11-11
 
 ### Changed
