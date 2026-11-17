@@ -132,6 +132,18 @@ def test_guard_checks_both_sides_of_a_rename():
         assert "--name-only" not in text.split("changed=")[1].split("\n")[0], path
 
 
+def test_guard_covers_sdlc_launcher():
+    """The workflow guard also rejects fork changes under .sdlc/.
+
+    The required `sdlc ci` check runs the launcher committed at .sdlc/bin/sdlc,
+    so a fork editing it could rewrite a gate as surely as editing a workflow.
+    """
+    root = Path(__file__).parent.parent
+    for path in ("examples/gatehouse.yml", ".github/workflows/gatehouse.yml"):
+        text = (root / path).read_text()
+        assert "grep -qE '^(\\.github/workflows|\\.sdlc)/'" in text, path
+
+
 def test_guard_runs_on_reply_events():
     """The guard is not skipped on pull_request_review_comment.
 
