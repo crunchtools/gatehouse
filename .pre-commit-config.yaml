@@ -1,5 +1,4 @@
-# Ruff, mypy, pytest and the other checks run from python-sdlc, pinned here
-# once. This `rev:` fixes the launcher, the image and every tool in it, for
+# Every check runs from python-sdlc, pinned here once (constitution XII). This `rev:` fixes the launcher, the image and every tool in it, for
 # this laptop and for CI, which reads the same line. What each hook runs is
 # configured in pyproject.toml: [tool.sdlc.commit], [tool.sdlc.push],
 # [tool.sdlc.ci]. `sdlc tiers` prints it.
@@ -16,26 +15,3 @@ repos:
       - id: sdlc-commit
       - id: sdlc-push
 
-  # Gatehouse is in the constitution's sdlc_exempt list, which holds it to the
-  # standalone Gourmand and Gatehouse hooks below. pyproject.toml skips sdlc's
-  # commit-time Gourmand and push-time Gatehouse so neither reviewer runs twice
-  # on one change.
-  #
-  # Gourmand runs from its container: the PyPI package of the same name
-  # shadows the real binary on PATH, so a bare `gourmand` is the wrong tool.
-  - repo: local
-    hooks:
-      - id: gourmand
-        name: Gourmand (AI slop detection)
-        entry: podman --events-backend=none run --rm --log-driver=none -v .:/src:Z -w /src quay.io/crunchtools/gourmand:latest check --full
-        language: system
-        pass_filenames: false
-        always_run: true
-        stages: [pre-commit, pre-merge-commit]
-      - id: gatehouse
-        name: Gatehouse (AI code review, staged diff)
-        entry: bash -c 'git diff --cached | podman --events-backend=none run --rm --log-driver=none -i --env-file "$HOME/.config/mcp-env/gatehouse.env" -v .:/src:ro,Z -w /src quay.io/crunchtools/gatehouse:latest --stdin'
-        language: system
-        pass_filenames: false
-        always_run: true
-        stages: [pre-commit, pre-merge-commit]
