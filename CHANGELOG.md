@@ -5,6 +5,8 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-11-17
+
 ### Changed
 
 - **The standalone Gourmand and Gatehouse hooks are gone** (#135). sdlc runs
