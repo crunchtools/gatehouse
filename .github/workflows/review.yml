@@ -163,7 +163,7 @@ jobs:
           # body starts "Gatehouse" so triage reads it as the newest review
           # (clearing a failed one), and it carries no finding. Both skips
           # read the earlier reviews; without them, the PR is reviewed.
-          REVIEWER_LOGIN="github-actions[bot]"
+          REVIEWER="github-actions[bot]"
           post_skip() {
             if gh api -X POST "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/reviews" --silent \
                 -f event=COMMENT -f commit_id="$HEAD_SHA" -f body="$1"; then
@@ -196,10 +196,15 @@ jobs:
               && jq -se --argjson changed "$pr_changed" '
                 # Workflows run with the secrets and Containerfiles run
                 # commands, so there every changed line must be a pin: a
-                # `uses:` line, or a FROM or ARG line.
+                # `uses:` line, or a FROM or ARG line. In a workflow the
+                # same actions must come out as went in, so a bump cannot
+                # swap one action for another, or add one.
                 def only($line):
                   (.patch // null) != null
                   and all(.patch | split("\n")[] | select(test("^[-+]")); test($line));
+                def actions($sign):
+                  [ .patch | split("\n")[] | select(startswith($sign))
+                    | capture("uses:\\s*(?<a>[^\\s@]+)@").a ] | sort;
                 (add // []) as $files
                 | ($files | length) == $changed and $changed > 0
                 and all($files[] | .filename, (.previous_filename // empty);
@@ -207,12 +212,13 @@ jobs:
                   or test("^\\.github/workflows/[^/]+\\.yml$")
                   or . == ".github/dependabot.yml")
                 and all($files[] | select(.filename | test("^\\.github/workflows/"));
-                  only("^[-+]\\s*(-\\s+)?uses:\\s*[^\\s]+@[^\\s]+(\\s+#.*)?$"))
+                  only("^[-+]\\s*(-\\s+)?uses:\\s*[^\\s]+@[^\\s]+(\\s+#.*)?$")
+                  and actions("+") == actions("-"))
                 and all($files[] | select(.filename | test("(^|/)Containerfile$"));
                   only("^[-+]\\s*(FROM|ARG)\\s"))
               ' "$pin_files" > /dev/null; then
             # One review says so per PR, not one per Dependabot rebase.
-            if jq -se --arg bot "$REVIEWER_LOGIN" '
+            if jq -se --arg bot "$REVIEWER" '
                 [ (add // [])[] | select(.user.login == $bot and ((.body // "") | startswith("Gatehouse"))) ]
                 | last | (.body // "") | contains("<!-- gatehouse skipped: pins -->")
               ' "$skip_reviews" > /dev/null; then
@@ -241,10 +247,8 @@ jobs:
               "repos/${GITHUB_REPOSITORY}/compare/${BASE_REF}...$1" 2>/dev/null \
               | git patch-id --verbatim | cut -d' ' -f1
           }
-          head_patch="$(patch_id_of "$HEAD_SHA")" || head_patch=""
-          [ -n "$head_patch" ] || echo "::notice::No patch id for ${HEAD_SHA}; not checking for an earlier review of it."
-          if [ "$reviews_read" = 1 ] && [ -n "$head_patch" ]; then
-            jq -rs --arg bot "$REVIEWER_LOGIN" '
+          if [ "$reviews_read" = 1 ]; then
+            jq -rs --arg bot "$REVIEWER" '
               [ (add // [])[]
                 | select(.user.login == $bot and ((.body // "") | startswith("Gatehouse"))
                     and ((.body // "") | contains("<!-- gatehouse review complete -->")))
@@ -254,6 +258,14 @@ jobs:
               | reduce .[] as $r ([]; if any(.[]; .sha == $r.sha) then . else . + [$r] end)
               | .[:5][] | "\(.sha) \(.url)"
             ' "$skip_reviews" > "${skip_reviews}.heads" || : > "${skip_reviews}.heads"
+          fi
+          # The head's own diff is fetched only when there is a head to match.
+          head_patch=""
+          if [ -s "${skip_reviews}.heads" ]; then
+            head_patch="$(patch_id_of "$HEAD_SHA")" || head_patch=""
+            [ -n "$head_patch" ] || echo "::notice::No patch id for ${HEAD_SHA}; reviewing it."
+          fi
+          if [ -n "$head_patch" ]; then
             while read -r seen url; do
               [ "$(patch_id_of "$seen")" = "$head_patch" ] || continue
               # Unlisted, a finding on them would be dropped unread: review.

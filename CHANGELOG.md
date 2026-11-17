@@ -12,7 +12,8 @@ All notable changes to this project are documented here, following
   python-sdlc bumps, releases and rebases of unchanged patches. review.yml's
   release skip grows two more: a PR from Dependabot, crunchtools-ci or
   Ashigaru, in this repository, that changes only version and pin files
-  (in a workflow or Containerfile, only `uses:`, `FROM` and `ARG` lines); and
+  (in a workflow or Containerfile, only `uses:`, `FROM` and `ARG` lines, and a
+  workflow's bump must keep the same actions); and
   a head whose `git patch-id --verbatim` matches one of the five newest heads
   Gatehouse reviewed completely. Each posts one review saying why (the pin
   skip once per PR) and writes "No model was called" to the step summary,

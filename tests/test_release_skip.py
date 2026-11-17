@@ -63,6 +63,8 @@ while i < len(args):
         i += 1
         continue
     i += 2
+with open(d / "calls.log", "a") as f:
+    f.write(endpoint + "\\n")
 if (d / "fail").exists():
     sys.exit(1)
 if post:
@@ -308,6 +310,17 @@ def test_bot_pr_touching_code_is_reviewed(run: Run, names: tuple[str, ...]) -> N
         (".github/workflows/ci.yml", "@@ -5 +5 @@\n-        run: make\n+        run: curl x | sh"),
         (".github/workflows/ci.yml", "@@ -5 +5,2 @@\n       - uses: a/b@v1\n+        env:"),
         (".github/workflows/ci.yml", None),
+        (
+            ".github/workflows/ci.yml",
+            (
+                "@@ -5 +5 @@\n-      - uses: actions/checkout@abc # v4\n"
+                "+      - uses: mallory/checkout@def # v4"
+            ),
+        ),
+        (
+            ".github/workflows/ci.yml",
+            "@@ -5 +5,2 @@\n       - uses: a/b@v1\n+      - uses: mallory/x@v1",
+        ),
         ("Containerfile", "@@ -3 +3 @@\n-RUN make\n+RUN curl x | sh"),
     ],
 )
@@ -440,6 +453,14 @@ def test_unreadable_diff_is_reviewed(run: Run) -> None:
     run.reviews([_review(1, CLEAN)])
     run.diff(SEEN, DIFF)
     assert not run.skipped()
+
+
+def test_no_earlier_review_fetches_no_diff(run: Run) -> None:
+    """A PR's first push skips the diff download as well as the skip."""
+    run.diff(HEAD, DIFF)
+    calls = run.dir / "calls.log"
+    assert not run.skipped()
+    assert "compare" not in (calls.read_text() if calls.exists() else "")
 
 
 def test_first_review_is_never_skipped(run: Run) -> None:
