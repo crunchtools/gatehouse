@@ -138,10 +138,11 @@ class RetryBudget:
     """Model calls a review may still spend re-asking for unparseable replies.
 
     The constitution caps one review at MAX_TOTAL_CALLS, so parse retries get
-    only what the planned samples leave under it. A call is one sample asked
-    of the model: call_model's own HTTP retries of that call (MAX_RETRIES)
-    are the transport's, and are not counted. Shared by every sample of the
-    review; asyncio runs them on one thread, so no lock.
+    only what the planned samples leave under it. The cap counts logical
+    calls, one per sample or parse retry. call_model may send each of them
+    up to MAX_RETRIES times over HTTP (429s, 5xx, timeouts), so the worst
+    case is MAX_TOTAL_CALLS * MAX_RETRIES requests. Shared by every sample of
+    the review; asyncio runs them on one thread, so no lock.
     """
 
     def __init__(self, planned: int) -> None:

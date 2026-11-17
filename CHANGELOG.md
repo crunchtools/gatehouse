@@ -19,8 +19,8 @@ All notable changes to this project are documented here, following
   could drop a critical finding below the threshold. A reply that repeats a
   key is now unparseable, and a repaired reply must also keep to the finding
   fields with nothing after it; either way the reply is asked for again.
-  call_model's HTTP retries stay outside the 40-call cap; that counts samples
-  and parse retries.
+  The 40-call cap counts logical calls (samples and parse retries); each can
+  take up to 5 HTTP attempts in call_model, so the worst case is 200 requests.
 - Tests no longer read the developer's own `~/.config/mcp-env/gatehouse.env`,
   whose `GATEHOUSE_LLM_BASE_URL` broke a URL test on dev seats.
 
