@@ -556,12 +556,12 @@ def test_format_review_body_scope_fallback_and_offdiff() -> None:
         [(BUG_HUNTER, [])],
         scope="Reviewed 2 commits since abc1234 (incremental).",
         offdiff=1,
-        fallbacks={"google/gemini-3.1-flash-lite": 3},
+        fallbacks={"google/gemini-3.5-flash-lite": 3},
         agent_count=8,
     )
     assert "Reviewed 2 commits since abc1234 (incremental)." in body
     assert "1 finding(s) not posted: their line is outside the PR diff." in body
-    assert "3 of 8 agents served by google/gemini-3.1-flash-lite" in body
+    assert "3 of 8 agents served by google/gemini-3.5-flash-lite" in body
     assert body.endswith(REVIEW_MARKER)
 
 

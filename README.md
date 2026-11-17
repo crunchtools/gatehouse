@@ -231,7 +231,7 @@ In CI the file is read from the base branch, like the styleguide and constitutio
 
 ### Model
 
-The default model is `openai/gpt-6-luna`, with `google/gemini-3.1-flash-lite` as an automatic fallback when it is rate-limited or down. A burst of rate limits or timeouts is retried with backoff (45 s at most per call) on the default model, and the fallback is offered only on the last attempt; an error retrying won't fix, such as a diff too long for the default model, goes to the fallback at once. A rejected key (401/402/403) fails without one. Every request requires zero data retention and forbids training on prompts, so only providers that keep nothing may serve it. `--model` takes any OpenRouter slug; the fallback still applies.
+The default model is `openai/gpt-6-luna`, with `google/gemini-3.5-flash-lite` as an automatic fallback when it is rate-limited or down. A burst of rate limits or timeouts is retried with backoff (45 s at most per call) on the default model, and the fallback is offered only on the last attempt; an error retrying won't fix, such as a diff too long for the default model, goes to the fallback at once. A rejected key (401/402/403) fails without one. Every request requires zero data retention and forbids training on prompts, so only providers that keep nothing may serve it. `--model` takes any OpenRouter slug; the fallback still applies.
 
 Luna was chosen on a 33-diff replay of real crunchtools changes (see crunchtools RT #1505): it caught as many reintroduced bugs as `gemini-2.5-flash`, with far less noise on clean PRs, at about a sixth of the cost.
 

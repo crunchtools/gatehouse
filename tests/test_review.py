@@ -1734,10 +1734,10 @@ async def test_llm_returns_serving_model_and_usage() -> None:
     }
     mock_client = AsyncMock(spec=httpx.AsyncClient)
     mock_client.post = AsyncMock(
-        return_value=_ok_body(model="google/gemini-3.1-flash-lite", usage=usage)
+        return_value=_ok_body(model="google/gemini-3.5-flash-lite", usage=usage)
     )
     reply = await call_model(mock_client, "s", "u", "openai/gpt-6-luna", "k")
-    assert reply.model == "google/gemini-3.1-flash-lite"
+    assert reply.model == "google/gemini-3.5-flash-lite"
     assert reply.fallback is True
     assert reply.tokens() == (15690, 327, 320, 0.0021)
 
@@ -1780,7 +1780,7 @@ async def test_run_review_logs_usage_and_reports_fallback(
     async def fake(_c: Any, system_prompt: str, *_a: Any) -> Completion:
         if system_prompt == BUG_HUNTER.system_prompt:
             return _served("openai/gpt-6-luna")
-        return _served("google/gemini-3.1-flash-lite")
+        return _served("google/gemini-3.5-flash-lite")
 
     with (
         patch("gatehouse.review.get_file_listing", return_value=None),
@@ -1800,13 +1800,13 @@ async def test_run_review_logs_usage_and_reports_fallback(
         "agent=bugs model=openai/gpt-6-luna prompt=100 completion=10 reasoning=0 "
         "cost=$0.0010 fallback=no"
     ) in err
-    assert "agent=security model=google/gemini-3.1-flash-lite" in err
+    assert "agent=security model=google/gemini-3.5-flash-lite" in err
     assert "fallback=yes" in err
     assert "usage: calls=6 prompt=600 completion=60 reasoning=0 cost=$0.0060 fallback=3/6" in err
     assert "| **total** |" in summary.read_text()
     assert json.loads(usage_json.read_text())["total"]["fallback"] == 3
     kwargs = post.call_args.kwargs
-    assert kwargs["fallbacks"] == {"google/gemini-3.1-flash-lite": 3}
+    assert kwargs["fallbacks"] == {"google/gemini-3.5-flash-lite": 3}
     assert kwargs["agent_count"] == 2
     assert kwargs["scope"] == "Full review."
 

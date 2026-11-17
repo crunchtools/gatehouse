@@ -24,7 +24,7 @@ DEFAULT_MODEL = "openai/gpt-6-luna"
 # Offered on the last attempt only: OpenRouter moves to the next model on any
 # error, so listing it every time hands a burst's 429s straight to the
 # fallback before Gatehouse's own backoff can retry the requested model.
-FALLBACK_MODELS: tuple[str, ...] = ("google/gemini-3.1-flash-lite",)
+FALLBACK_MODELS: tuple[str, ...] = ("google/gemini-3.5-flash-lite",)
 # Zero data retention, no training on prompts. The reviewed diff is often
 # private code, so no provider that keeps it may serve the request.
 PROVIDER_POLICY: dict[str, Any] = {"zdr": True, "data_collection": "deny"}

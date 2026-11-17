@@ -5,6 +5,13 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+### Changed
+
+- **Fallback model is now `google/gemini-3.5-flash-lite`** (a172), replacing
+  `google/gemini-3.1-flash-lite`. A fallback review took 36-59 s on 3.1 and
+  8-15 s on 3.5, which already defaults to minimal reasoning on OpenRouter, so
+  no effort setting is sent.
+
 ## [0.29.0] - 2026-11-17
 
 ### Added
