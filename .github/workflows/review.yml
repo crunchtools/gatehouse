@@ -139,20 +139,132 @@ jobs:
             exit 1
           fi
 
-          # An Ashigaru release PR only moves the changelog and the version
-          # strings, and the constitution validator checks those (v1.28.0).
-          # Nobody reads a review there, so one unanswered finding held
-          # mcp-metsuke 3.5.0 for four days. Skipped, it posts nothing and
-          # triage passes. All three must hold: the app's own branch, in this
-          # repository, opened by the app.
-          # --- release skip (tests/test_release_skip.py runs this) ---
+          # Three kinds of PR skip the LLM review: no finding on them has ever
+          # been worth its cost (a155: half of a day's 294 reviews were
+          # these). A skip posts nothing a reviewer must answer, so the
+          # review job and `Gatehouse triage` stay green; each one says why
+          # in the step summary, and the last two in a review on the PR.
+          # Every lookup that fails falls through to the review.
+          # --- skips (tests/test_release_skip.py runs this) ---
+          # 1) An Ashigaru release PR only moves the changelog and the version
+          #    strings, and the constitution validator checks those (v1.28.0).
+          #    Nobody reads a review there, so one unanswered finding held
+          #    mcp-metsuke 3.5.0 for four days. Skipped, it posts nothing and
+          #    triage passes. All three must hold: the app's own branch, in
+          #    this repository, opened by the app.
           if [[ "$HEAD_REF" == ashigaru/release-* ]] \
               && [ "$HEAD_REPO" = "$GITHUB_REPOSITORY" ] \
               && [ "$PR_AUTHOR" = "ashigaru-crunchtools[bot]" ]; then
             echo "Ashigaru release PR; not reviewed." | tee -a "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          # --- end release skip ---
+
+          # A skip leaves a review of its own, from this job's token: its
+          # body starts "Gatehouse" so triage reads it as the newest review
+          # (clearing a failed one), and it carries no finding. Both skips
+          # read the earlier reviews; without them, the PR is reviewed.
+          REVIEWER_LOGIN="github-actions[bot]"
+          post_skip() {
+            if gh api -X POST "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/reviews" --silent \
+                -f event=COMMENT -f commit_id="$HEAD_SHA" -f body="$1"; then
+              echo "${1%%$'\n'*} No model was called." | tee -a "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            echo "::warning::Could not post the skip; reviewing instead." >&2
+          }
+          skip_reviews="$(mktemp)"
+          reviews_read=0
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/reviews?per_page=100" \
+            > "$skip_reviews" 2>/dev/null && reviews_read=1 \
+            || echo "::notice::Could not read the earlier reviews; not skipping." >&2
+
+          # 2) A bot we own (Dependabot, crunchtools-ci, Ashigaru) moving only
+          #    version and pin files (in a workflow or Containerfile, only
+          #    pin lines). Both sides of a rename must be one, the
+          #    API must list every changed file, and the head must be in this
+          #    repository: a fork is always reviewed. The file list is read
+          #    over the API; nothing of the PR is checked out.
+          case "$PR_AUTHOR" in
+            "dependabot[bot]"|"crunchtools-ci[bot]"|"ashigaru-crunchtools[bot]") owned_bot=1 ;;
+            *) owned_bot=0 ;;
+          esac
+          pin_files="$(mktemp)"
+          if [ "$reviews_read" = 1 ] && [ "$owned_bot" = 1 ] && [ "$HEAD_REPO" = "$GITHUB_REPOSITORY" ] \
+              && gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100" \
+                > "$pin_files" \
+              && pr_changed="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq .changed_files)" \
+              && jq -se --argjson changed "$pr_changed" '
+                # Workflows run with the secrets and Containerfiles run
+                # commands, so there every changed line must be a pin: a
+                # `uses:` line, or a FROM or ARG line.
+                def only($line):
+                  (.patch // null) != null
+                  and all(.patch | split("\n")[] | select(test("^[-+]")); test($line));
+                (add // []) as $files
+                | ($files | length) == $changed and $changed > 0
+                and all($files[] | .filename, (.previous_filename // empty);
+                  test("^(.*/)?(pyproject\\.toml|uv\\.lock|requirements[^/]*\\.txt|Containerfile|IMAGE_TAG|CHANGELOG\\.md|\\.pre-commit-config\\.yaml)$")
+                  or test("^\\.github/workflows/[^/]+\\.yml$")
+                  or . == ".github/dependabot.yml")
+                and all($files[] | select(.filename | test("^\\.github/workflows/"));
+                  only("^[-+]\\s*(-\\s+)?uses:\\s*[^\\s]+@[^\\s]+(\\s+#.*)?$"))
+                and all($files[] | select(.filename | test("(^|/)Containerfile$"));
+                  only("^[-+]\\s*(FROM|ARG)\\s"))
+              ' "$pin_files" > /dev/null; then
+            # One review says so per PR, not one per Dependabot rebase.
+            if jq -se --arg bot "$REVIEWER_LOGIN" '
+                [ (add // [])[] | select(.user.login == $bot and ((.body // "") | startswith("Gatehouse"))) ]
+                | last | (.body // "") | contains("<!-- gatehouse skipped: pins -->")
+              ' "$skip_reviews" > /dev/null; then
+              echo "Bot PR moving only version pins; not reviewed. No model was called." \
+                | tee -a "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            post_skip "Gatehouse skipped this review: ${PR_AUTHOR} changes only version and pin files."$'\n\n''<!-- gatehouse skipped: pins -->'
+          fi
+
+          # 3) A head whose patch Gatehouse already reviewed: a rebase, or a
+          #    re-push of the same change. `git patch-id --verbatim` (which
+          #    implies --stable) of the base...head diff ignores line offsets
+          #    and file order, so the same change on a newer base matches; it
+          #    keeps whitespace, so a re-indent is not the same patch. The
+          #    earlier heads are the newest five with a complete Gatehouse
+          #    review, diffed against the same base. The skip lists the
+          #    matched head's commits that the new head lacks (what a rebase
+          #    orphans) in `<!-- gatehouse carried <sha>... -->`: triage
+          #    counts them as on the PR, so the findings written on them,
+          #    and the `fixed in` answers naming them, carry forward instead
+          #    of being dropped as orphans or raised again. Listing them here,
+          #    once, spares triage a lookup per skipped rebase on every run.
+          patch_id_of() {
+            gh api -H 'Accept: application/vnd.github.diff' \
+              "repos/${GITHUB_REPOSITORY}/compare/${BASE_REF}...$1" 2>/dev/null \
+              | git patch-id --verbatim | cut -d' ' -f1
+          }
+          head_patch="$(patch_id_of "$HEAD_SHA")" || head_patch=""
+          [ -n "$head_patch" ] || echo "::notice::No patch id for ${HEAD_SHA}; not checking for an earlier review of it."
+          if [ "$reviews_read" = 1 ] && [ -n "$head_patch" ]; then
+            jq -rs --arg bot "$REVIEWER_LOGIN" '
+              [ (add // [])[]
+                | select(.user.login == $bot and ((.body // "") | startswith("Gatehouse"))
+                    and ((.body // "") | contains("<!-- gatehouse review complete -->")))
+                | {sha: (.commit_id // ""), url: (.html_url // "")}
+                | select(.sha | test("^[0-9a-f]{40}$")) ]
+              | reverse
+              | reduce .[] as $r ([]; if any(.[]; .sha == $r.sha) then . else . + [$r] end)
+              | .[:5][] | "\(.sha) \(.url)"
+            ' "$skip_reviews" > "${skip_reviews}.heads" || : > "${skip_reviews}.heads"
+            while read -r seen url; do
+              [ "$(patch_id_of "$seen")" = "$head_patch" ] || continue
+              # Unlisted, a finding on them would be dropped unread: review.
+              carried="$(gh api --paginate \
+                "repos/${GITHUB_REPOSITORY}/compare/${HEAD_SHA}...${seen}?per_page=100" \
+                --jq '.commits[].sha' | paste -sd' ')" || break
+              post_skip "Gatehouse skipped this review: the patch is unchanged since ${seen:0:7}, already reviewed (${url}). Its findings and their answers carry forward."$'\n\n''<!-- gatehouse review complete -->'$'\n'"<!-- gatehouse carried ${carried} -->"
+              break
+            done < "${skip_reviews}.heads"
+          fi
+          # --- end skips ---
 
           # A review that cannot run still posts one, marked failed, so the
           # triage check holds the PR open instead of passing on "no

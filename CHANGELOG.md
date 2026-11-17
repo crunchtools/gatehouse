@@ -5,6 +5,31 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+### Added
+
+- **Mechanical pull requests skip the model calls** (a155). OpenRouter
+  credit was down to $4, and half of a day's 294 reviews were Dependabot,
+  python-sdlc bumps, releases and rebases of unchanged patches. review.yml's
+  release skip grows two more: a PR from Dependabot, crunchtools-ci or
+  Ashigaru, in this repository, that changes only version and pin files
+  (in a workflow or Containerfile, only `uses:`, `FROM` and `ARG` lines); and
+  a head whose `git patch-id --verbatim` matches one of the five newest heads
+  Gatehouse reviewed completely. Each posts one review saying why (the pin
+  skip once per PR) and writes "No model was called" to the step summary,
+  next to the per-agent token table a real review already writes, so the
+  savings can be counted. The patch-id skip lists the commits the rebase
+  orphaned; triage.yml counts them as on the PR, so the findings written on
+  them and the `fixed in` answers naming them carry over a rebase instead of
+  being dropped or raised again (pending crunchtools/constitution#143).
+  A human's PR, a fork's, or a bot's touching anything else is reviewed as
+  before, and any lookup that fails falls through to the review.
+
+### Changed
+
+- **Tests run outside the checkout.** The review tests read
+  `gatehouse-findings.toml` from the working directory, so any finding
+  judged in this repository's own ledger failed four of them.
+
 ## [0.28.0] - 2026-11-17
 
 ### Changed

@@ -18,3 +18,14 @@ def _no_user_env_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     into every test that runs after the first CLI test.
     """
     monkeypatch.setattr("gatehouse.cli.ENV_FILE", tmp_path / "gatehouse.env")
+
+
+@pytest.fixture(autouse=True)
+def _no_repo_ledger(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Run each test outside the checkout, so this repo's own ledger stays out.
+
+    A local review reads gatehouse-findings.toml from the working directory;
+    from the repository root, every entry judged here was a finding the
+    review tests did not expect.
+    """
+    monkeypatch.chdir(tmp_path)

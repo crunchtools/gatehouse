@@ -400,3 +400,60 @@ def test_review_workflow_posts_the_marker_triage_reads() -> None:
     """The marker is spelled in three places; they must agree."""
     assert REVIEW_FAILED_MARKER in TRIAGE.read_text()
     assert REVIEW_FAILED_MARKER in (TRIAGE.parent / "review.yml").read_text()
+
+
+def _carried(*pages: list[dict]) -> list[str]:
+    """Run triage.yml's carried-commits block; the commits that count as the PR's."""
+    block = re.search(
+        r"# --- carried commits.*?\n(.*?)# --- end carried commits ---", TRIAGE.read_text(), re.S
+    )
+    assert block, "carried commits markers missing from triage.yml"
+    program = re.search(r"jq -rs --arg bot .*? '(.*?)'", block.group(1), re.S)
+    assert program, "jq program not found between the markers"
+    out = subprocess.run(
+        ["jq", "-rs", "--arg", "bot", BOT, program.group(1)],
+        input="".join(json.dumps(page) for page in pages),
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return out.stdout.split()
+
+
+def _skip(rid: int, *shas: str, user: str = BOT) -> dict:
+    marker = "<!-- gatehouse carried " + " ".join(shas) + " -->"
+    return _review(rid, user, f"Gatehouse skipped this review.\n\n{REVIEW_MARKER}\n{marker}")
+
+
+def test_carried_commits_come_from_every_skip_review() -> None:
+    """A later full review must not shed what an earlier skip carried."""
+    one, two, three = "1" * 40, "2" * 40, "3" * 40
+    pages = ([_skip(1, one, two), _review(2, BOT, CLEAN)], [_skip(3, three), _skip(4, one)])
+    assert _carried(*pages) == [one, two, three]
+
+
+def test_a_skip_with_nothing_orphaned_carries_nothing() -> None:
+    assert _carried([_skip(1)]) == []
+
+
+def test_carried_commits_ignore_other_authors_and_bad_shas() -> None:
+    assert _carried([_skip(1, "1" * 40, user="mallory")]) == []
+    assert _carried([_review(1, BOT, "Gatehouse <!-- gatehouse carried 1234; rm -rf / -->")]) == []
+    assert _carried([_review(1, BOT, "Gatehouse <!-- gatehouse carried 12345678 -->")]) == []
+    assert _carried([_review(1, BOT, "Note <!-- gatehouse carried " + "1" * 40 + " -->")]) == []
+
+
+def test_carried_finding_and_its_answer_survive_a_rebase() -> None:
+    """a155: a skipped rebase carries the old head's commits, so neither drops."""
+    old_head, old_fix = "a" * 40, "e" * 40
+    pages = [
+        _comment(1, BOT, written_on=old_head),
+        _comment(2, "maintainer", 1, body=f"fixed in {old_fix}"),
+        _comment(3, BOT, written_on=old_head),
+    ]
+    carried = (SHA, old_head, old_fix)
+    result = _unanswered(pages, shas=carried)
+    assert [r["url"] for r in result] == ["https://example.test/c/3"]
+    # Without the carried commits the answer names an orphan and the
+    # fresh skip review drops both findings.
+    assert _unanswered(pages) == []
