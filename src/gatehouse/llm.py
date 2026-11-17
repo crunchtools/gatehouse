@@ -21,6 +21,9 @@ BASE_URL_ENV = "GATEHOUSE_LLM_BASE_URL"
 DEFAULT_MODEL = "openai/gpt-6-luna"
 # Served when the requested model is rate-limited or down upstream. A
 # different vendor on purpose: Luna's only zero-retention route is Azure.
+# Offered on the last attempt only: OpenRouter moves to the next model on any
+# error, so listing it every time hands a burst's 429s straight to the
+# fallback before Gatehouse's own backoff can retry the requested model.
 FALLBACK_MODELS: tuple[str, ...] = ("google/gemini-3.1-flash-lite",)
 # Zero data retention, no training on prompts. The reviewed diff is often
 # private code, so no provider that keeps it may serve the request.
@@ -29,11 +32,22 @@ REQUEST_TIMEOUT = 120.0
 MAX_RETRIES = 5
 INITIAL_BACKOFF = 2.0
 MAX_RETRY_AFTER = 90.0
+# All the backoff one call may sleep, Retry-After included. The semaphore in
+# review.py is held across the sleeps, so a long wait also starves other agents.
+MAX_TOTAL_BACKOFF = 45.0
 RETRYABLE_STATUSES = frozenset(
     {
         http.HTTPStatus.TOO_MANY_REQUESTS,
         http.HTTPStatus.BAD_GATEWAY,
         http.HTTPStatus.SERVICE_UNAVAILABLE,
+    }
+)
+# Errors the fallback model cannot fix: the key, its credit, or its permissions.
+NO_FALLBACK_STATUSES = frozenset(
+    {
+        http.HTTPStatus.UNAUTHORIZED,
+        http.HTTPStatus.PAYMENT_REQUIRED,
+        http.HTTPStatus.FORBIDDEN,
     }
 )
 _FENCE = re.compile(r"^```(?:json)?\s*|\s*```$")
@@ -203,16 +217,20 @@ async def call_model(
     """Call OpenRouter chat completions and return the reply.
 
     The reply carries the serving model and the usage block from the response
-    body, so a fallback to FALLBACK_MODELS is visible to the caller.
+    body, so a fallback to FALLBACK_MODELS is visible to the caller. The
+    fallback is offered on the last attempt, or at once after an error that
+    retrying the requested model will not fix (a 400 for a diff too long for
+    it, a 404 when no zero-retention endpoint serves it, a 5xx outside
+    RETRYABLE_STATUSES). NO_FALLBACK_STATUSES raise at once.
 
     Retries on 429/502/503, on 200 responses carrying an upstream error, and
     on transport errors (timeouts, dropped connections), with exponential
     backoff and random jitter so concurrent agents do not retry in lockstep
-    (thundering herd). Raises the last error once retries are exhausted.
+    (thundering herd), sleeping at most MAX_TOTAL_BACKOFF in all. Raises the
+    last error once retries are exhausted.
     """
     payload: dict[str, Any] = {
         "model": model,
-        "models": _models_for(model),
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
@@ -228,10 +246,16 @@ async def call_model(
     url = llm_url()
     last_error: httpx.HTTPError | None = None
     delay = 0.0
+    slept = 0.0
+    fallback = False
     for attempt in range(MAX_RETRIES):
         # Back off between attempts only; the last failure raises at once.
         if attempt:
+            delay = min(delay, MAX_TOTAL_BACKOFF - slept)
             await asyncio.sleep(delay)
+            slept += delay
+        fallback = fallback or attempt == MAX_RETRIES - 1
+        payload["models"] = _models_for(model) if fallback else [model]
         try:
             response = await client.post(
                 url,
@@ -246,6 +270,20 @@ async def call_model(
             continue
         if response.status_code in RETRYABLE_STATUSES:
             delay = _backoff(response, attempt)
+            last_error = httpx.HTTPStatusError(
+                f"{response.status_code}",
+                request=response.request,
+                response=response,
+            )
+            continue
+        if (
+            response.is_error
+            and response.status_code not in NO_FALLBACK_STATUSES
+            and payload["models"] != _models_for(model)
+        ):
+            # Retrying the requested model won't help; offer the fallback now.
+            fallback = True
+            delay = 0.0
             last_error = httpx.HTTPStatusError(
                 f"{response.status_code}",
                 request=response.request,
