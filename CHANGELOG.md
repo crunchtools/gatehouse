@@ -28,8 +28,14 @@ All notable changes to this project are documented here, following
   in OpenRouter's `models`, and OpenRouter moves to the next model on any
   error, so when the 18 concurrent calls tripped rate limits on Luna's only
   zero-retention route (Azure), the 429s went straight to the fallback and
-  Gatehouse's own backoff never ran. The fallback is now offered only on a
-  call's last attempt; the earlier ones ask for the requested model alone.
+  Gatehouse's own backoff never ran. Rate limits, 502/503 and timeouts now
+  retry the requested model alone, and the fallback is offered on the last
+  attempt. An error retrying won't fix (a 400 for a diff too long, a 404 when
+  no zero-retention endpoint serves the model, another 5xx) goes to the
+  fallback on the next request, unslept; 401/402/403 raise at once.
+- **One call could sleep minutes between retries.** Retry-After is honoured
+  up to 90 s per attempt, and the semaphore is held while sleeping; a call's
+  total backoff is now capped at 45 s.
 
 ## [0.25.2] - 2026-11-11
 

@@ -988,6 +988,79 @@ async def test_llm_fallback_offered_on_last_attempt_only() -> None:
     assert sent[-1] == ["openai/gpt-6-luna", *FALLBACK_MODELS]
 
 
+def _status(code: int, headers: dict[str, str] | None = None) -> httpx.Response:
+    return httpx.Response(
+        code, headers=headers, request=httpx.Request("POST", "https://example.com")
+    )
+
+
+async def _models_sent(*replies: httpx.Response | Exception) -> tuple[list[list[str]], AsyncMock]:
+    """Run call_model against canned replies; return each attempt's models and the sleep mock."""
+    from gatehouse.llm import call_model
+
+    sent: list[list[str]] = []
+    queue = list(replies)
+
+    async def post(*_: Any, **kwargs: Any) -> httpx.Response:
+        sent.append(list(kwargs["json"]["models"]))
+        reply = queue.pop(0) if queue else _ok("[]")
+        if isinstance(reply, Exception):
+            raise reply
+        return reply
+
+    mock_client = AsyncMock(spec=httpx.AsyncClient)
+    mock_client.post = AsyncMock(side_effect=post)
+    with patch("asyncio.sleep", new_callable=AsyncMock) as sleep:
+        await call_model(mock_client, "sys", "user", "openai/gpt-6-luna", "k")
+    return sent, sleep
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", [400, 404, 500, 504])
+async def test_llm_unretryable_error_goes_straight_to_fallback(code: int) -> None:
+    """A 400 (too long) or 404 (no ZDR endpoint) reaches the fallback on attempt 2, unslept."""
+    from gatehouse.llm import FALLBACK_MODELS
+
+    sent, sleep = await _models_sent(_status(code))
+    assert sent == [["openai/gpt-6-luna"], ["openai/gpt-6-luna", *FALLBACK_MODELS]]
+    assert sum(c.args[0] for c in sleep.await_args_list) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", [401, 402, 403])
+async def test_llm_key_errors_raise_without_fallback(code: int) -> None:
+    """A key, credit or permission error is not the model's fault; it raises at once."""
+    with pytest.raises(httpx.HTTPStatusError):
+        await _models_sent(_status(code))
+
+
+@pytest.mark.asyncio
+async def test_llm_fallback_error_raises() -> None:
+    """An unretryable error with the fallback already listed raises."""
+    with pytest.raises(httpx.HTTPStatusError):
+        await _models_sent(_status(400), _status(400))
+
+
+@pytest.mark.asyncio
+async def test_llm_transport_errors_hold_fallback_to_last_attempt() -> None:
+    """Timeouts on attempts 1-4 retry the requested model; attempt 5 lists the fallback."""
+    from gatehouse.llm import FALLBACK_MODELS, MAX_RETRIES
+
+    sent, _ = await _models_sent(*[httpx.ReadTimeout("slow")] * (MAX_RETRIES - 1))
+    assert sent[:-1] == [["openai/gpt-6-luna"]] * (MAX_RETRIES - 1)
+    assert sent[-1] == ["openai/gpt-6-luna", *FALLBACK_MODELS]
+
+
+@pytest.mark.asyncio
+async def test_llm_total_backoff_is_capped() -> None:
+    """Long Retry-After hints sleep no more than MAX_TOTAL_BACKOFF across a call."""
+    from gatehouse.llm import MAX_RETRIES, MAX_TOTAL_BACKOFF
+
+    limited = _status(429, {"Retry-After": "90"})
+    _, sleep = await _models_sent(*[limited] * (MAX_RETRIES - 1))
+    assert sum(c.args[0] for c in sleep.await_args_list) == MAX_TOTAL_BACKOFF
+
+
 @pytest.mark.asyncio
 async def test_llm_fallback_not_duplicated() -> None:
     """Requesting the fallback model itself does not list it twice."""
