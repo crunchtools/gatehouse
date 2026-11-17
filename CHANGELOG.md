@@ -5,6 +5,10 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+### Changed
+
+- **Gatehouse tags its own releases** again: `.github/workflows/ashigaru.yml` is re-copied from Ashigaru 2.13.1, whose `release` job tags the merge commit the moment an Ashigaru release pull request merges. 0.27.0 sat untagged until it was cut by hand, which failed every review pinned to that image.
+
 ## [0.27.0] - 2026-11-17
 
 ### Changed
