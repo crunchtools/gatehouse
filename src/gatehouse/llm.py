@@ -21,6 +21,9 @@ BASE_URL_ENV = "GATEHOUSE_LLM_BASE_URL"
 DEFAULT_MODEL = "openai/gpt-6-luna"
 # Served when the requested model is rate-limited or down upstream. A
 # different vendor on purpose: Luna's only zero-retention route is Azure.
+# Offered on the last attempt only: OpenRouter moves to the next model on any
+# error, so listing it every time hands a burst's 429s straight to the
+# fallback before Gatehouse's own backoff can retry the requested model.
 FALLBACK_MODELS: tuple[str, ...] = ("google/gemini-3.1-flash-lite",)
 # Zero data retention, no training on prompts. The reviewed diff is often
 # private code, so no provider that keeps it may serve the request.
@@ -203,7 +206,9 @@ async def call_model(
     """Call OpenRouter chat completions and return the reply.
 
     The reply carries the serving model and the usage block from the response
-    body, so a fallback to FALLBACK_MODELS is visible to the caller.
+    body, so a fallback to FALLBACK_MODELS is visible to the caller. The
+    fallback is offered on the last attempt only, after the requested model
+    has had every earlier one.
 
     Retries on 429/502/503, on 200 responses carrying an upstream error, and
     on transport errors (timeouts, dropped connections), with exponential
@@ -212,7 +217,6 @@ async def call_model(
     """
     payload: dict[str, Any] = {
         "model": model,
-        "models": _models_for(model),
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
@@ -232,6 +236,8 @@ async def call_model(
         # Back off between attempts only; the last failure raises at once.
         if attempt:
             await asyncio.sleep(delay)
+        last = attempt == MAX_RETRIES - 1
+        payload["models"] = _models_for(model) if last else [model]
         try:
             response = await client.post(
                 url,

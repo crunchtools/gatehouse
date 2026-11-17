@@ -948,11 +948,11 @@ def _ok(content: str) -> Any:
 
 
 @pytest.mark.asyncio
-async def test_llm_payload_pins_zdr_and_fallback() -> None:
-    """Every request enforces ZDR/no-training and lists the fallback model."""
+async def test_llm_payload_pins_zdr_and_withholds_fallback() -> None:
+    """Every request enforces ZDR/no-training; the first offers no fallback model."""
     import httpx
 
-    from gatehouse.llm import FALLBACK_MODELS, OPENROUTER_API_URL, call_model
+    from gatehouse.llm import OPENROUTER_API_URL, call_model
 
     mock_client = AsyncMock(spec=httpx.AsyncClient)
     mock_client.post = AsyncMock(return_value=_ok("[]"))
@@ -962,8 +962,30 @@ async def test_llm_payload_pins_zdr_and_fallback() -> None:
     assert args[0] == OPENROUTER_API_URL
     body = kwargs["json"]
     assert body["provider"] == {"zdr": True, "data_collection": "deny"}
-    assert body["models"] == ["openai/gpt-6-luna", *FALLBACK_MODELS]
+    assert body["models"] == ["openai/gpt-6-luna"]
     assert kwargs["headers"]["Authorization"] == "Bearer k"
+
+
+@pytest.mark.asyncio
+async def test_llm_fallback_offered_on_last_attempt_only() -> None:
+    """A rate-limited primary is retried alone; only the last attempt lists the fallback."""
+    import httpx
+
+    from gatehouse.llm import FALLBACK_MODELS, MAX_RETRIES, call_model
+
+    limited = httpx.Response(429, request=httpx.Request("POST", "https://example.com"))
+    sent: list[list[str]] = []
+
+    async def post(*_: Any, **kwargs: Any) -> httpx.Response:
+        sent.append(list(kwargs["json"]["models"]))
+        return limited if len(sent) < MAX_RETRIES else _ok("[]")
+
+    mock_client = AsyncMock(spec=httpx.AsyncClient)
+    mock_client.post = AsyncMock(side_effect=post)
+    with patch("asyncio.sleep", new_callable=AsyncMock):
+        await call_model(mock_client, "sys", "user", "openai/gpt-6-luna", "k")
+    assert sent[:-1] == [["openai/gpt-6-luna"]] * (MAX_RETRIES - 1)
+    assert sent[-1] == ["openai/gpt-6-luna", *FALLBACK_MODELS]
 
 
 @pytest.mark.asyncio

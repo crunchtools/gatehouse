@@ -23,6 +23,13 @@ All notable changes to this project are documented here, following
   take up to 5 HTTP attempts in call_model, so the worst case is 200 requests.
 - Tests no longer read the developer's own `~/.config/mcp-env/gatehouse.env`,
   whose `GATEHOUSE_LLM_BASE_URL` broke a URL test on dev seats.
+- **Most reviewer calls were served by the fallback model** (#131): 11-12 of
+  18 per run went to `google/gemini-3.1-flash-lite`. Every request listed it
+  in OpenRouter's `models`, and OpenRouter moves to the next model on any
+  error, so when the 18 concurrent calls tripped rate limits on Luna's only
+  zero-retention route (Azure), the 429s went straight to the fallback and
+  Gatehouse's own backoff never ran. The fallback is now offered only on a
+  call's last attempt; the earlier ones ask for the requested model alone.
 
 ## [0.25.2] - 2026-11-11
 
