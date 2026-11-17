@@ -35,6 +35,9 @@
 # 2026-11-06 after ashigaru#131 could not go green -- both findings were
 # answered, the branch was rebuilt four hours later, and the answers then named
 # a commit that no longer existed.
+# A rebase that leaves the patch unchanged is not reviewed again (a155): the
+# skip names the reviewed head it matched, and that head's commits count as
+# on the pull request, so its findings and their answers carry over.
 # Otherwise outdated findings still count: a later commit fixing one is answered by
 # saying so, which is the audit trail this job exists to create.
 #
@@ -131,12 +134,29 @@ jobs:
           gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/comments?per_page=100" \
             > comments.json
 
+          # A review skipped because the patch matched an earlier reviewed head
+          # lists that head's commits the new head lacks (review.yml, a155). A
+          # rebase orphans them, but the same change is on the PR, so they
+          # count as the PR's: the findings written on them, and the `fixed in`
+          # answers naming them, carry forward. Only the reviewer's own reviews
+          # are read, and only full commit SHAs are taken from them.
+          # --- carried commits (tests/test_triage.py runs this against fixtures) ---
+          jq -rs --arg bot "$REVIEWER" '
+            [ (add // [])[]
+              | select(.user.login == $bot and ((.body // "") | startswith("Gatehouse")))
+              | .body | scan("<!-- gatehouse carried ([0-9a-f ]*) -->") | .[0]
+              | splits(" +") | select(test("^[0-9a-f]{40}$")) ]
+            | unique[]
+          ' reviews.json > carried_shas.txt
+          # --- end carried commits ---
+
           # What the answers point at, fetched here so the filter stays pure:
           # the PR's commits for `fixed in`, and the state of every issue a
           # `deferred:` reply names. The URL pattern admits only name
           # characters, so nothing from a comment reaches the shell unvetted.
           gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/commits?per_page=100" \
-            --jq '.[].sha' | jq -R . | jq -s . > shas.json
+            --jq '.[].sha' > pr_shas.txt
+          cat pr_shas.txt carried_shas.txt | jq -R . | jq -s . > shas.json
           jq -rs --arg bot "$REVIEWER" '
             (add // [])[]
             | select(.in_reply_to_id != null and .user.login != $bot)
