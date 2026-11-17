@@ -1,17 +1,26 @@
-repos:
-  # ruff runs from its own pre-commit environment, not a host install
-  # (constitution XII, host contract). Keep rev at the ruff version in uv.lock.
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.16.9
-    hooks:
-      - id: ruff-check
-        args: [--fix]
-        types: [python]
-        stages: [pre-commit, pre-merge-commit]
-      - id: ruff-format
-        types: [python]
-        stages: [pre-commit, pre-merge-commit]
+# Ruff, mypy, pytest and the other checks run from python-sdlc, pinned here
+# once. This `rev:` fixes the launcher, the image and every tool in it, for
+# this laptop and for CI, which reads the same line. What each hook runs is
+# configured in pyproject.toml: [tool.sdlc.commit], [tool.sdlc.push],
+# [tool.sdlc.ci]. `sdlc tiers` prints it.
+#
+# `default_install_hook_types` must name both: without pre-push, `pre-commit
+# install` wires only the commit hook and every verdict silently stops running.
 
+default_install_hook_types: [pre-commit, pre-push]
+
+repos:
+  - repo: https://github.com/crunchtools/python-sdlc
+    rev: v0.6.3
+    hooks:
+      - id: sdlc-commit
+      - id: sdlc-push
+
+  # Gatehouse is in the constitution's sdlc_exempt list, which holds it to the
+  # standalone Gourmand and Gatehouse hooks below. pyproject.toml skips sdlc's
+  # commit-time Gourmand and push-time Gatehouse so neither reviewer runs twice
+  # on one change.
+  #
   # Gourmand runs from its container: the PyPI package of the same name
   # shadows the real binary on PATH, so a bare `gourmand` is the wrong tool.
   - repo: local

@@ -7,12 +7,36 @@ on:
     branches: [master]
 
 jobs:
-  test:
+  # Every check this repo runs, from python-sdlc at the .pre-commit-config.yaml
+  # pin -- the same image and commands `sdlc push` runs on a laptop, so a green
+  # push predicts a green CI. Ruff, mypy, pytest, semgrep, pip-audit, the
+  # constitution validator and CodeQL, plus the image build ([tool.sdlc.ci]).
+  sdlc:
+    name: sdlc ci
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.11", "3.12"]
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
+      - name: sdlc ci
+        run: |
+          set -eu
+          rev=$(awk '/repo: https:\/\/github.com\/crunchtools\/python-sdlc/ {f=1; next}
+                     f && /rev:/ {print $2; exit}' .pre-commit-config.yaml)
+          [ -n "$rev" ] || { echo "no python-sdlc rev in .pre-commit-config.yaml" >&2; exit 2; }
+          git clone -q --depth 1 --branch "$rev" https://github.com/crunchtools/python-sdlc "$RUNNER_TEMP/sdlc"
+          "$RUNNER_TEMP/sdlc/bin/sdlc" ci
+
+  # sdlc runs the suite on the image's Python, the newest. requires-python
+  # promises 3.11, so the floor keeps its own run.
+  pytest-floor:
+    name: pytest (Python 3.11)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v7
 
@@ -21,17 +45,11 @@ jobs:
         with:
           version: "latest"
 
-      - name: Set up Python ${{ matrix.python-version }}
-        run: uv python install ${{ matrix.python-version }}
+      - name: Set up Python 3.11
+        run: uv python install 3.11
 
       - name: Install dependencies
-        run: uv sync --all-extras
-
-      - name: Run linter
-        run: uv run ruff check src tests
-
-      - name: Run type checker
-        run: uv run mypy src
+        run: uv sync --all-extras --python 3.11
 
       - name: Run tests
         run: uv run pytest -v
@@ -48,10 +66,3 @@ jobs:
     name: Code Quality (Gourmand)
     uses: ./.github/workflows/gourmand.yml
 
-  build-container:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Build container image
-        run: docker build -f Containerfile -t gatehouse:test .

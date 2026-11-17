@@ -68,6 +68,7 @@ max-statements = 50
 
 [tool.mypy]
 python_version = "3.11"
+files = ["src"]
 strict = true
 warn_return_any = true
 warn_unused_configs = true
@@ -75,3 +76,24 @@ warn_unused_configs = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+# Checks run from python-sdlc at the .pre-commit-config.yaml pin; `sdlc tiers`
+# prints what each command runs. The defaults cover what ci.yml ran by hand
+# (ruff, mypy, pytest) and add pip-audit, constitution and CodeQL.
+#
+# Gourmand and Gatehouse also run from their own hooks in
+# .pre-commit-config.yaml (the constitution's sdlc_exempt rule), so the copies
+# here that would repeat them are skipped. No semgrep: there is no .semgrep
+# rule set in this repo.
+[tool.sdlc.commit]
+skip = ["gourmand"]
+
+[tool.sdlc.push]
+skip = ["gatehouse", "semgrep"]
+#
+# The image is built here, as ci.yml's build job did.
+[tool.sdlc.ci]
+checks = ["image"]
+
+[tool.sdlc.ci.image]
+kind = "image-build"
