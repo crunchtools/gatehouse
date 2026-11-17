@@ -5,6 +5,8 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-11-17
+
 ### Added
 
 - **Mechanical pull requests skip the model calls** (a155). OpenRouter
