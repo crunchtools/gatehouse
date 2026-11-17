@@ -81,15 +81,9 @@ testpaths = ["tests"]
 # prints what each command runs. The defaults cover what ci.yml ran by hand
 # (ruff, mypy, pytest) and add pip-audit, constitution and CodeQL.
 #
-# Gourmand and Gatehouse also run from their own hooks in
-# .pre-commit-config.yaml (the constitution's sdlc_exempt rule), so the copies
-# here that would repeat them are skipped. No semgrep: there is no .semgrep
-# rule set in this repo.
-[tool.sdlc.commit]
-skip = ["gourmand"]
-
+# No semgrep: there is no .semgrep rule set in this repo.
 [tool.sdlc.push]
-skip = ["gatehouse", "semgrep"]
+skip = ["semgrep"]
 #
 # The image is built here, as ci.yml's build job did.
 [tool.sdlc.ci]

@@ -5,6 +5,17 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+### Changed
+
+- **The standalone Gourmand and Gatehouse hooks are gone** (#135). sdlc runs
+  both, now that constitution v1.43.0 no longer lists gatehouse as
+  sdlc-exempt (constitution#137), so the `[tool.sdlc.*]` skips they needed go
+  too. The constitution pin moves to v1.43.0.
+- **Python 3.12 gets its own pytest job.** 0.26.0 said the image's newer
+  Python covered it, but the image runs 3.14; 3.11 and 3.12, which
+  `requires-python` and the classifiers promise, now each have a job. The
+  job's checkout keeps no token.
+
 ## [0.26.0] - 2026-11-17
 
 ### Changed
