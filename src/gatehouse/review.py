@@ -23,6 +23,7 @@ from gatehouse.agents import (
 )
 from gatehouse.config import (
     CONFIG_FILE,
+    MAX_TOTAL_CALLS,
     ConfigError,
     ConsensusConfig,
     int_from_env,
@@ -83,6 +84,19 @@ if TYPE_CHECKING:
     from gatehouse.refs import Resolver
 
 CONFIDENCE_THRESHOLD = 80
+# A reply that does not parse is asked for again once before the sample fails,
+# while the review is still under MAX_TOTAL_CALLS (see RetryBudget).
+PARSE_ATTEMPTS = 2
+# Stray quotes escaped per reply before giving up on repairing it.
+MAX_QUOTE_REPAIRS = 50
+# What the decoder says when a string ended at a quote that should have been
+# escaped: the rest of the quote follows where a delimiter, or after a comma
+# the next key, was due.
+_STRAY_QUOTE_ERRORS = (
+    "Expecting ',' delimiter",
+    "Expecting ':' delimiter",
+    "Expecting property name enclosed in double quotes",
+)
 
 SAMPLES_ENV = "GATEHOUSE_SAMPLES"
 REPORT_VOTES_ENV = "GATEHOUSE_REPORT_VOTES"
@@ -115,8 +129,27 @@ class AgentRun(NamedTuple):
 
     agent: Agent
     findings: list[dict[str, Any]] | None
-    reply: Completion | None
+    replies: list[Completion]
     reason: str | None
+
+
+class RetryBudget:
+    """Model calls a review may still spend re-asking for unparseable replies.
+
+    The constitution caps one review at MAX_TOTAL_CALLS, retries included, so
+    retries get only what the planned samples leave under it. Shared by every
+    sample of the review; asyncio runs them on one thread, so no lock.
+    """
+
+    def __init__(self, planned: int) -> None:
+        self.left = max(0, MAX_TOTAL_CALLS - planned)
+
+    def take(self) -> bool:
+        """Spend one retry; False when none are left."""
+        if self.left <= 0:
+            return False
+        self.left -= 1
+        return True
 
 
 class AgentOutcome(NamedTuple):
@@ -350,16 +383,46 @@ def _json_values(text: str) -> list[Any]:
     pos = len(text) - len(text.lstrip())
     while pos < len(text):
         try:
-            value, pos = decoder.raw_decode(text, pos)
+            value, end = decoder.raw_decode(text, pos)
         except json.JSONDecodeError:
-            if not values:
-                raise
-            break
+            repaired = _escape_stray_quotes(text, pos)
+            if repaired is None:
+                if not values:
+                    raise
+                break
+            text = repaired
+            value, end = decoder.raw_decode(text, pos)
+        pos = end
         values.append(value)
         pos += len(text[pos:]) - len(text[pos:].lstrip())
     if not values:
         raise json.JSONDecodeError("Expecting value", text, pos)
     return values
+
+
+def _escape_stray_quotes(text: str, pos: int) -> str | None:
+    """``text`` with the stray quotes in the JSON value at ``pos`` escaped, or None.
+
+    Models copy code into "evidence" without escaping its double quotes, so
+    the string ends early and the decoder expects a delimiter where the rest
+    of the quote goes on. The quote just before that spot is the stray one:
+    escape it and decode again, once per stray quote. None when the value
+    fails for any other reason, or still fails after MAX_QUOTE_REPAIRS.
+    """
+    decoder = json.JSONDecoder()
+    for _ in range(MAX_QUOTE_REPAIRS):
+        try:
+            decoder.raw_decode(text, pos)
+        except json.JSONDecodeError as exc:
+            if not exc.msg.startswith(_STRAY_QUOTE_ERRORS):
+                return None
+            quote = text.rfind('"', pos, exc.pos)
+            if quote < 0:
+                return None
+            text = text[:quote] + "\\" + text[quote:]
+            continue
+        return text
+    return None
 
 
 def _squash(text: str) -> str:
@@ -911,29 +974,48 @@ async def run_agent(
     api_key: str,
     verbose: bool,
     semaphore: asyncio.Semaphore,
+    retry_budget: RetryBudget | None = None,
 ) -> AgentRun:
-    """Run a single agent; return its findings, the model's reply, and why it failed.
+    """Run a single agent; return its findings, the model's replies, and why it failed.
 
     Findings are None, and the reason a failure class (see _failure_class),
-    only when the agent did not finish. Logs the serving model and token
-    usage of every reply, even one whose findings do not parse: the tokens
-    were spent either way.
+    only when the agent did not finish. A reply that does not parse is asked
+    for again once, if retry_budget has a call to spare. Logs the serving
+    model and token usage of every reply, even one whose findings do not
+    parse: the tokens were spent either way.
     """
-    reply: Completion | None = None
+    replies: list[Completion] = []
+    findings: list[dict[str, Any]] | None = None
     reason: str | None = None
     async with semaphore:
-        try:
-            reply = await call_model(client, agent.system_prompt, user_prompt, model, api_key)
-            print(_usage_line(agent.slug, reply), file=sys.stderr)
-            if verbose:
-                print(f"\n--- {agent.name} raw response ---", file=sys.stderr)
-                print(reply.text, file=sys.stderr)
-            findings: list[dict[str, Any]] | None = _parse_findings(reply.text)
-        except (httpx.HTTPError, ValueError, TypeError) as exc:
-            print(f"Error: {agent.name} did not finish: {exc!r}", file=sys.stderr)
-            findings = None
-            reason = _failure_class(exc)
-    return AgentRun(agent, findings, reply, reason)
+        for attempt in range(PARSE_ATTEMPTS):
+            try:
+                reply = await call_model(client, agent.system_prompt, user_prompt, model, api_key)
+                replies.append(reply)
+                print(_usage_line(agent.slug, reply), file=sys.stderr)
+                if verbose:
+                    print(f"\n--- {agent.name} raw response ---", file=sys.stderr)
+                    print(reply.text, file=sys.stderr)
+                findings, reason = _parse_findings(reply.text), None
+                break
+            except httpx.HTTPError as exc:
+                # call_model has already retried; asking again would not help.
+                print(f"Error: {agent.name} did not finish: {exc!r}", file=sys.stderr)
+                reason = _failure_class(exc)
+                break
+            except (ValueError, TypeError) as exc:
+                # A malformed reply is the model's dice roll: ask once more.
+                retrying = (
+                    attempt + 1 < PARSE_ATTEMPTS
+                    and retry_budget is not None
+                    and retry_budget.take()
+                )
+                outcome = "asking again" if retrying else "did not finish"
+                print(f"Error: {agent.name} {outcome}: {exc!r}", file=sys.stderr)
+                reason = _failure_class(exc)
+                if not retrying:
+                    break
+    return AgentRun(agent, findings, replies, reason)
 
 
 def _usage_record(slug: str, reply: Completion) -> dict[str, Any]:
@@ -1125,6 +1207,8 @@ async def _run_agents(
     One agent with n samples is n independent calls on the same prompt: the
     model's own variation between them is what the tally measures.
     """
+    planned = sum(config.samples_for(agent.slug) for agent, _ in prompts)
+    retry_budget = RetryBudget(planned)
     async with httpx.AsyncClient() as client:
         semaphore = asyncio.Semaphore(MAX_CONCURRENT_CALLS)
         return await asyncio.gather(
@@ -1137,6 +1221,7 @@ async def _run_agents(
                     api_key=api_key,
                     verbose=verbose,
                     semaphore=semaphore,
+                    retry_budget=retry_budget,
                 )
                 for agent, prompt in prompts
                 for _ in range(config.samples_for(agent.slug))
@@ -1166,8 +1251,7 @@ def _collect(runs: list[AgentRun]) -> list[AgentOutcome]:
             samples[slug].append(run.findings)
         elif run.reason is not None:
             reasons[slug].append(run.reason)
-        if run.reply is not None:
-            replies[slug].append(run.reply)
+        replies[slug].extend(run.replies)
 
     outcomes: list[AgentOutcome] = []
     for agent in order:

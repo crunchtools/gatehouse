@@ -1049,6 +1049,97 @@ async def test_run_agent_accepts_wrapped_array() -> None:
     assert reason is None
 
 
+async def _run_tests_agent(*replies: str, planned: int = 1) -> tuple[Any, AsyncMock]:
+    """Run the Test Coverage agent against replies served in order."""
+    from gatehouse import review
+
+    model = AsyncMock(side_effect=[Completion(r) for r in replies])
+    with patch("gatehouse.review.call_model", model):
+        run = await review.run_agent(
+            AsyncMock(spec=httpx.AsyncClient),
+            TEST_COVERAGE,
+            user_prompt="u",
+            model="openai/gpt-6-luna",
+            api_key="k",
+            verbose=False,
+            semaphore=asyncio.Semaphore(1),
+            retry_budget=review.RetryBudget(planned),
+        )
+    return run, model
+
+
+@pytest.mark.asyncio
+async def test_run_agent_repairs_raw_quotes() -> None:
+    """Quotes copied unescaped from the diff (#129) are repaired, not retried."""
+    reply = (
+        '[{"file": "a.py", "severity": "low", "description": "no test for "x" == "y"", '
+        '"evidence": "assert f("a") == "b"", "confidence": 90}]'
+    )
+    run, model = await _run_tests_agent(reply)
+    assert run.reason is None
+    assert run.findings is not None
+    assert run.findings[0]["evidence"] == 'assert f("a") == "b"'
+    assert model.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_run_agent_retries_unparseable_reply_once() -> None:
+    """A reply that cannot be repaired is asked for again, and both are billed."""
+    run, model = await _run_tests_agent('[{"severity": "low",', "[]")
+    assert run.findings == []
+    assert run.reason is None
+    assert len(run.replies) == 2
+    assert model.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_run_agent_unparseable_twice_does_not_finish() -> None:
+    run, model = await _run_tests_agent("No issues.", "Still prose.")
+    assert run.findings is None
+    assert run.reason == "unparseable reply"
+    assert model.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_run_agent_retry_stays_under_call_cap() -> None:
+    """A review already at MAX_TOTAL_CALLS gets no retry (constitution, consensus)."""
+    from gatehouse.config import MAX_TOTAL_CALLS
+
+    run, model = await _run_tests_agent("No issues.", "[]", planned=MAX_TOTAL_CALLS)
+    assert run.reason == "unparseable reply"
+    assert model.await_count == 1
+
+
+def test_retry_budget_is_what_the_samples_leave() -> None:
+    from gatehouse.config import MAX_TOTAL_CALLS
+    from gatehouse.review import RetryBudget
+
+    budget = RetryBudget(MAX_TOTAL_CALLS - 1)
+    assert budget.take()
+    assert not budget.take()
+
+
+@pytest.mark.asyncio
+async def test_run_agent_http_error_is_not_retried() -> None:
+    """call_model already retries transport errors; run_agent does not add more."""
+    from gatehouse import review
+
+    model = AsyncMock(side_effect=httpx.ReadTimeout("slow"))
+    with patch("gatehouse.review.call_model", model):
+        run = await review.run_agent(
+            AsyncMock(spec=httpx.AsyncClient),
+            TEST_COVERAGE,
+            user_prompt="u",
+            model="openai/gpt-6-luna",
+            api_key="k",
+            verbose=False,
+            semaphore=asyncio.Semaphore(1),
+        )
+    assert run.reason == "timeout"
+    assert run.replies == []
+    assert model.await_count == 1
+
+
 def test_cli_key_file_wins(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """OPENROUTER_API_KEY_FILE takes precedence and is stripped."""
     from gatehouse import cli

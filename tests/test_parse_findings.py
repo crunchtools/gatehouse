@@ -48,3 +48,24 @@ def test_surrounding_whitespace() -> None:
 
 def test_malformed_second_value_is_trailing_text() -> None:
     assert _parse_findings(json.dumps([HIT]) + '\n[{"severity": ') == [HIT]
+
+
+def test_raw_quotes_in_evidence_are_repaired() -> None:
+    # Code quoted from the diff with its quotes unescaped, as in issue #129.
+    reply = (
+        '[{"severity": "high", "confidence": 100, "description": "x", '
+        '"evidence": "if name == "": raise ValueError("bad "name"")"}]'
+    )
+    assert _parse_findings(reply) == [
+        {**HIT, "evidence": 'if name == "": raise ValueError("bad "name"")'}
+    ]
+
+
+def test_raw_quote_before_comma_is_repaired() -> None:
+    reply = '[{"severity": "high", "confidence": 100, "description": "a = "b", c = "d""}]'
+    assert _parse_findings(reply) == [{**HIT, "description": 'a = "b", c = "d"'}]
+
+
+def test_unrepairable_reply_is_unfinished() -> None:
+    with pytest.raises(json.JSONDecodeError):
+        _parse_findings('[{"severity": "high", "confidence": 100,')

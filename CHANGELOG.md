@@ -5,6 +5,18 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+### Fixed
+
+- **A reviewer reply with unescaped quotes failed the whole agent** (#129).
+  Models copy code into `evidence` without escaping its double quotes, so the
+  JSON broke (`Expecting ',' delimiter`) and the run exited 2. The parser now
+  escapes the stray quotes and decodes again, and a reply that still does not
+  parse is asked for once more before the sample counts as unfinished, out of
+  whatever the planned samples leave under the 40-call cap; both replies'
+  tokens are reported. Shared by every agent, not only Test Coverage.
+- Tests no longer read the developer's own `~/.config/mcp-env/gatehouse.env`,
+  whose `GATEHOUSE_LLM_BASE_URL` broke a URL test on dev seats.
+
 ## [0.25.2] - 2026-11-11
 
 ### Changed
