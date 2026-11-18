@@ -92,7 +92,14 @@ on:
 jobs:
   review:
     name: Gatehouse Code Review
-    runs-on: ubuntu-latest
+    # Our uncached runner when the organization names it, for every event,
+    # pull_request_target and forks included: this job executes no pull
+    # request code under any of them (no checkout; the diff is piped to the reviewer image, never run), so the
+    # fork-and-Dependabot split the build jobs need (constitution#160) has
+    # nothing to protect here. Uncached, never cached: that runner starts every
+    # job from empty storage, so nothing one job sees reaches the next.
+    # Clearing UNCACHED_RUNNER_LABEL sends it back to GitHub's machines.
+    runs-on: ${{ vars.UNCACHED_RUNNER_LABEL || 'ubuntu-latest' }}
     permissions:
       contents: read          # read PR metadata / diff via the API
       pull-requests: write    # post the review (REQUEST_CHANGES / COMMENT)

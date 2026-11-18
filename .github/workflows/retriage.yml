@@ -36,7 +36,14 @@ permissions: {}
 jobs:
   retriage:
     name: Re-run Gatehouse triage
-    runs-on: ubuntu-latest
+    # Our uncached runner when the organization names it, for every event,
+    # pull_request_target and forks included: this job executes no pull
+    # request code under any of them (no checkout; API reads and one re-run), so the
+    # fork-and-Dependabot split the build jobs need (constitution#160) has
+    # nothing to protect here. Uncached, never cached: that runner starts every
+    # job from empty storage, so nothing one job sees reaches the next.
+    # Clearing UNCACHED_RUNNER_LABEL sends it back to GitHub's machines.
+    runs-on: ${{ vars.UNCACHED_RUNNER_LABEL || 'ubuntu-latest' }}
     # Replies queue per PR head: a re-run cannot start while one is running.
     concurrency:
       group: >-
