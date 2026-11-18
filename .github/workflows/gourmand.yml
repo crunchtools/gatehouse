@@ -77,7 +77,24 @@ on:
 jobs:
   gourmand:
     name: Code Quality (Gourmand)
-    runs-on: ubuntu-latest
+    # Our own runners when the organization names them (crunchtools/trentina's
+    # security.yml is the model): the CALLER's same-repository pull request on
+    # CACHED_RUNNER_LABEL, its push, schedule, manual run, release or merge
+    # queue on UNCACHED_RUNNER_LABEL. In a reusable workflow the event is the
+    # caller's, so the uncached side is a list, not "anything but a pull
+    # request": a fork's or Dependabot's pull request, a Dependabot branch, and
+    # pull_request_target, comment or workflow_run callers stay on GitHub's
+    # machines. Clearing a variable sends its jobs back with no commit: the kill
+    # switch. The job container runs through crunchtools/gha-runner's docker shim.
+    runs-on: >-
+      ${{ github.event_name == 'pull_request'
+          && github.event.pull_request.head.repo.full_name == github.repository
+          && github.event.pull_request.user.login != 'dependabot[bot]'
+          && (vars.CACHED_RUNNER_LABEL || 'ubuntu-latest')
+          || contains(fromJSON('["push","schedule","workflow_dispatch","release","merge_group"]'), github.event_name)
+          && !startsWith(github.ref, 'refs/heads/dependabot/')
+          && (vars.UNCACHED_RUNNER_LABEL || 'ubuntu-latest')
+          || 'ubuntu-latest' }}
     container:
       image: ${{ inputs.image }}
     steps:
