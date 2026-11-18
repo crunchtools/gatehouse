@@ -92,7 +92,17 @@ on:
 jobs:
   review:
     name: Gatehouse Code Review
-    runs-on: ubuntu-latest
+    # Private repos only, on our uncached runner when the organization names
+    # it: a public repo's hosted minutes are free, so routing it here would buy
+    # nothing and only widen what a fork could reach. For a private repo, every
+    # event, pull_request_target and forks included: this job executes no pull
+    # request code under any of them (no checkout; the diff is piped to the reviewer image, never run), so the
+    # fork-and-Dependabot split the build jobs need (constitution#160) has
+    # nothing to protect here. Uncached, never cached: that runner starts every
+    # job from empty storage, so nothing one job sees reaches the next.
+    # Public repos, and every repo when UNCACHED_RUNNER_LABEL is cleared, run
+    # on GitHub's machines.
+    runs-on: ${{ github.event.repository.private && vars.UNCACHED_RUNNER_LABEL || 'ubuntu-latest' }}
     permissions:
       contents: read          # read PR metadata / diff via the API
       pull-requests: write    # post the review (REQUEST_CHANGES / COMMENT)
