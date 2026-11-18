@@ -71,14 +71,17 @@ permissions: {}
 jobs:
   triage:
     name: Gatehouse triage
-    # Our uncached runner when the organization names it, for every event,
-    # pull_request_target and forks included: this job executes no pull
+    # Private repos only, on our uncached runner when the organization names
+    # it: a public repo's hosted minutes are free, so routing it here would buy
+    # nothing and only widen what a fork could reach. For a private repo, every
+    # event, pull_request_target and forks included: this job executes no pull
     # request code under any of them (no checkout; two API reads of the review), so the
     # fork-and-Dependabot split the build jobs need (constitution#160) has
     # nothing to protect here. Uncached, never cached: that runner starts every
     # job from empty storage, so nothing one job sees reaches the next.
-    # Clearing UNCACHED_RUNNER_LABEL sends it back to GitHub's machines.
-    runs-on: ${{ vars.UNCACHED_RUNNER_LABEL || 'ubuntu-latest' }}
+    # Public repos, and every repo when UNCACHED_RUNNER_LABEL is cleared, run
+    # on GitHub's machines.
+    runs-on: ${{ github.event.repository.private && vars.UNCACHED_RUNNER_LABEL || 'ubuntu-latest' }}
     # No issues: read. A reusable workflow gets no more than its caller
     # grants, and every caller grants pull-requests: read only; asking for
     # more fails the run at startup. Public repos' issues read without it.
