@@ -13,6 +13,7 @@ jobs:
   # constitution validator and CodeQL, plus the image build ([tool.sdlc.ci]).
   sdlc:
     name: sdlc ci
+    timeout-minutes: 30
     runs-on: ubuntu-latest
     permissions:
       contents: read
