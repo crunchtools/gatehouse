@@ -5,6 +5,10 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+### Changed
+
+- The reusable Gourmand job runs on the organization's own runners when it names them: a caller's same-repository, non-Dependabot pull request on `CACHED_RUNNER_LABEL`; its push, schedule, manual run, release or merge queue on `UNCACHED_RUNNER_LABEL`. Fork and Dependabot pull requests, Dependabot branches and every other event, `pull_request_target` included, stay on `ubuntu-latest`, and clearing either variable sends its jobs back with no commit. `review.yml`, `triage.yml` and `retriage.yml` stay on `ubuntu-latest`: they run under `pull_request_target` or `workflow_run`, and `review` holds the OpenRouter key.
+
 ## [0.30.0] - 2026-11-17
 
 ### Changed
