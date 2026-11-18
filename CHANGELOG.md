@@ -5,6 +5,8 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+## [0.31.0] - 2026-11-18
+
 ### Changed
 
 - The reusable Gourmand job runs on the organization's own runners when it names them: a caller's same-repository, non-Dependabot pull request on `CACHED_RUNNER_LABEL`; its push, schedule, manual run, release or merge queue on `UNCACHED_RUNNER_LABEL`. Fork and Dependabot pull requests, Dependabot branches and every other event, `pull_request_target` included, stay on `ubuntu-latest`, and clearing either variable sends its jobs back with no commit.

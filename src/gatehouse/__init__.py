@@ -1,3 +1,3 @@
 """Gatehouse -- local AI code review using concurrent LLM agents."""
 
-__version__ = "0.30.0"
+__version__ = "0.31.0"
