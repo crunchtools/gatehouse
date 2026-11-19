@@ -6,6 +6,20 @@ All notable changes to this project are documented here, following
 ## [Unreleased]
 
 ### Changed
+- **`Refuse plaintext secrets` also reads secret-named keys** (a475). Besides
+  vendor key shapes, the Gourmand job now refuses an added line that gives a
+  password, secret, token or API key a literal: a literal default on a
+  secret env read (after `||`, `??`, `or` or `:-`, or as `getenv`'s second
+  argument), a quoted assignment (`password: 'x'`), or an unquoted
+  value in env, compose, yaml and conf files (`PGPASSWORD=rotv`). A named
+  literal in a test path only warns; a fallback is refused there too.
+  Placeholders, references, CI fakes and a field's own name pass, and
+  `gatehouse: allow-secret` still exempts a line. Measured on 27 crunchtools
+  repos as if every line were new: 21 refusals, 20 of them in rotv and one
+  false positive, plus 171 warnings in tests. The step now parses the diff in
+  one awk pass and checks only candidate lines, so a large change no longer
+  costs a few processes per line, and it uses no awk, which the Gourmand
+  image lacks. Prompted by rotv#918.
 - The container release runs constitution v1.51.0's `container-release.yml`
   (was v1.46.0) and grants it `issues: write`, so a failed scheduled rebuild
   opens an issue instead of only warning. A `v*` promote now also refuses an
