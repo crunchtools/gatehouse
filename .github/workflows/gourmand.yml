@@ -24,11 +24,14 @@
 # keys and bare JWTs), crunchtools/trentina#769, or that gives a secret-named
 # key a literal (a475): a fallback on a secret env read (`|| 'x'`, `?? 'x'`,
 # `${X:-x}`, `getenv("X", "x")`), a quoted value (`password: 'x'`), or an
-# unquoted one in env, compose, yaml and conf files (`PGPASSWORD=x`). A named
-# literal in a test path is a warning, not a refusal, because fixtures are
-# full of fake tokens; a fallback is refused there too, since that is how a
-# dev password reaches production. Placeholders (`changeme`, `<...>`, `${...}`,
-# `example`) pass. A fixture marks its line `gatehouse: allow-secret`.
+# unquoted one in env, compose, yaml, conf and unit files and Containerfiles
+# (`PGPASSWORD=x`, `ENV X=x`, `Environment=X=x`). A named literal in a test
+# path is a warning, not a refusal, because fixtures are full of fake tokens;
+# a fallback is refused there too, since that is how a dev password reaches
+# production. In docs both only warn, since prose describes secrets. A value
+# that is wholly a placeholder (`changeme`, `<...>`, `${...}`, `example`) or
+# a switch (`yes`, `${X:-unset}`) passes. A vendor key shape is refused
+# everywhere. A fixture marks its line `gatehouse: allow-secret`.
 # `secret_scan: false` turns it off for one caller; it is an emergency switch,
 # not a setting.
 #
@@ -159,17 +162,26 @@ jobs:
           # default is what runs when the variable is unset.
           fallback="${ENV}[]\"')]*[[:space:]]*([|][|]|[?][?]|[[:space:]]or)[[:space:]]*${Q}[^\"']{3,}${Q}|[\$][{][A-Z0-9_]*${ENV}:?-[^}\$]{3,}[}]|(getenv|environ[.]get|env[.]get)[(]${Q}[A-Z0-9_]*${ENV}${Q},[[:space:]]*${Q}[^\"']{3,}${Q}"
           # A secret-named key given a quoted literal: `password: 'x'`, `token = "x"`.
-          assign="[A-Za-z0-9_.-]*${KEY}${Q}?[[:space:]]*(:|=|:=|=>)[[:space:]]*${Q}[^\"'[:space:]]{3,}${Q}"
-          # In env, compose, yaml and conf files: `PGPASSWORD=x`, `- SECRET: "x"`.
-          envline="^[[:space:]]*(-[[:space:]]+)?(export[[:space:]]+)?[A-Z0-9_]*${ENV}[[:space:]]*[=:][[:space:]]*${Q}?[^\"'[:space:]\$<{#|>&][^\"'[:space:]]{2,}"
-          # A default that is only a switch: `getenv("REQUIRE_PASSPHRASE", "yes")`.
-          switch="${Q}(yes|no|true|false|none|null|on|off)${Q}\$"
-          # Values that hold no secret: placeholders, references (`"$X"`, `${X}`),
-          # CI fakes (`test_token_for_ci`), masks, and a field's own name
+          akey="[A-Za-z0-9_.-]*${KEY}${Q}?[[:space:]]*(:|=|:=|=>)[[:space:]]*"
+          assign="${akey}${Q}[^\"'[:space:]]{3,}${Q}"
+          # In env, compose, yaml, conf and unit files and Containerfiles:
+          # `PGPASSWORD=x`, `- SECRET: "x"`, `ENV X=x`, `Environment="X=x"`,
+          # `PodmanArgs=--env X=x`.
+          prefix="(export[[:space:]]+|ENV[[:space:]]+|ARG[[:space:]]+|Environment=${Q}?|([A-Za-z]+=)?--env[[:space:]=]+)?"
+          ekey="^[[:space:]]*(-[[:space:]]+)?${prefix}[A-Z0-9_]*${ENV}[[:space:]]*[=:][[:space:]]*"
+          envline="${ekey}${Q}?[^\"'[:space:]\$<{#|>&][^\"'[:space:]]{2,}"
+          # A default that is only a switch or an unset sentinel:
+          # `getenv("REQUIRE_PASSPHRASE", "yes")`, `${TOKEN:-unset}`.
+          switch="(${Q}|[{][A-Z0-9_]*:?-)(yes|no|true|false|none|null|on|off|unset|not[_-]set|missing)(${Q}|[}])\$"
+          # Values that hold no secret, matched against the whole value:
+          # placeholders, references (`"$X"`, `a${X}`), CI fakes
+          # (`test_token_for_ci`), masks, and a field's own name
           # (`STATIC_TOKEN = "static_token"`).
-          placeholder="change[_-]?(me|this)|example|placeholder|<[^>]*>|${Q}[\$]|[\$][{]|[{][{]|%[(]|xxx|your[_-]|dummy|fake|${Q}test[_-]|for[_-]ci|redacted|[*][*][*]|••|replace[_-]?me|[.][.][.]|${Q}[a-z]+_[a-z_]*(pass(word|wd|phrase)|secret|token|key)${Q}\$|${Q}(yes|no|true|false|none|null|on|off)${Q}\$|[=:][[:space:]]*(yes|no|true|false|none|null|on|off)\$"
+          placeholder="^${Q}?(change[_-]?(me|this)|replace[_-]?me|example|placeholder|dummy|fake|redacted|x{3,}|(your|test|dummy|fake)[_-].*|.*[_-]for[_-]ci|.*<[^>]*>.*|[\$].*|.*([\$][{(]|[{][{]|%[(]).*|.*[*][*][*].*|.*(•)(•).*|.*[.][.][.].*|[a-z]+_[a-z_]*(pass(word|wd|phrase)|secret|token|key)|yes|no|true|false|none|null|on|off)${Q}?\$"
           tests='(^|/)(tests?|__tests__|spec|fixtures?|testdata)/|(^|/)test_[^/]*$|_test[.][a-z]+$|[.](test|spec)[.][jt]sx?$|(^|/)conftest[.]py$'
-          configs='(^|/)([.]env[^/]*|[^/]*[.](env|ya?ml|conf|cfg|ini|properties|container|service|sh)|Containerfile[^/]*|Dockerfile[^/]*|docker-compose[^/]*|compose[^/]*)$'
+          configs='(^|/)([.]env[^/]*|[^/]*[.](env|ya?ml|conf|cfg|ini|properties|container|service|sh|[Cc]ontainerfile|[Dd]ockerfile)|Containerfile[^/]*|Dockerfile[^/]*|docker-compose[^/]*|compose[^/]*)$'
+          # Prose describes secrets: a named literal or a fallback there warns.
+          docs='[.](md|markdown|rst|adoc)$|(^|/)docs?/'
           diff_file=$(mktemp)
           cand_file=$(mktemp)
           git diff --unified=0 --no-color --no-ext-diff "$BASE" "$TARGET" > "$diff_file"
@@ -179,7 +191,9 @@ jobs:
           # below spawns nothing for a line that is not a candidate, so a large
           # change costs one grep, not a few processes per line. No awk: the
           # Gourmand image has none.
-          sed -e 's/^+++ .*//' -e 's/^+//' -e t -e 's/.*//' "$diff_file" \
+          # A `+++ ` row is a file header only between `diff --git` and the
+          # first `@@`; past that it is an added line that began `++ `.
+          sed -e '/^diff --git /,/^@@ /s/^+++ .*//' -e 's/^+//' -e t -e 's/.*//' "$diff_file" \
             | grep -nE -e "$shapes" -e "$fallback" -e "$assign" -e "$envline" \
             | cut -d: -f1 > "$cand_file" || true
           if [ ! -s "$cand_file" ]; then
@@ -192,20 +206,27 @@ jobs:
           file=""
           line=0
           row_no=0
+          hdr=0
           while IFS= read -r row; do
             row_no=$((row_no + 1))
             case "$row" in
-              '+++ b/'*) file=${row#+++ b/}; continue ;;
-              '+++ '*) file=""; continue ;;
+              'diff --git '*) hdr=1; continue ;;
               '@@ '*)
                 # `@@ -a,b +c,d @@`: the new side starts at c.
+                hdr=0
                 start=${row#*+}
                 start=${start%% *}
                 line=${start%%,*}
                 continue ;;
-              '+'*) ;;
-              *) continue ;;
             esac
+            if [ "$hdr" -eq 1 ]; then
+              case "$row" in
+                '+++ b/'*) file=${row#+++ b/} ;;
+                '+++ '*) file="" ;;
+              esac
+              continue
+            fi
+            case "$row" in '+'*) ;; *) continue ;; esac
             added=${row#+}
             at=$line
             line=$((line + 1))
@@ -213,27 +234,35 @@ jobs:
             read -r want <&3 || want=0
             [ -n "$file" ] || continue
             case "$added" in *'gatehouse: allow-secret'*) continue ;; esac
+            soft=""
+            if printf '%s\n' "$file" | grep -Eq "$tests"; then
+              soft=test
+            elif printf '%s\n' "$file" | grep -Eq "$docs"; then
+              soft=doc
+            fi
             verdict=""
             if printf '%s\n' "$added" | grep -Eq -e "$shapes"; then
               verdict=refuse
             elif printf '%s\n' "$added" | grep -oE -e "$fallback" | grep -vEq "$switch"; then
-              verdict=refuse
+              if [ "$soft" = doc ]; then verdict=warn; else verdict=refuse; fi
             else
               named=$(printf '%s\n' "$added" | grep -oE -e "$assign" || true)
               if printf '%s\n' "$file" | grep -Eq "$configs"; then
                 named="${named}$(printf '\n%s\n' "$added" | grep -oE -e "$envline" || true)"
               fi
-              if [ -n "$named" ] && printf '%s\n' "$named" | grep -v '^$' | grep -viEq "$placeholder"; then
-                if printf '%s\n' "$file" | grep -Eq "$tests"; then verdict=warn; else verdict=refuse; fi
+              # Strip each key so the placeholder test reads the value alone.
+              values=$(printf '%s\n' "$named" | grep -v '^$' | sed -E -e "s/^${akey}//" -e "s/${ekey}//" || true)
+              if [ -n "$values" ] && printf '%s\n' "$values" | grep -viEq "$placeholder"; then
+                if [ -n "$soft" ]; then verdict=warn; else verdict=refuse; fi
               fi
             fi
             [ -n "$verdict" ] || continue
-            name=$(printf '%s\n' "$added" | sed -n -E 's/^[[:space:]]*(-[[:space:]]+)?(export[[:space:]]+)?"?([A-Za-z_][A-Za-z0-9_.-]*)"?[[:space:]]*[:=].*/\3/p')
+            name=$(printf '%s\n' "$added" | sed -n -E "s/^[[:space:]]*(-[[:space:]]+)?${prefix}\"?([A-Za-z_][A-Za-z0-9_.-]*)\"?[[:space:]]*[:=].*/\\4/p")
             if [ "$verdict" = refuse ]; then
               echo "::error file=${file},line=${at}::plaintext secret in ${name:-(unnamed value)}"
               hits=$((hits + 1))
             else
-              echo "::warning file=${file},line=${at}::literal secret in test ${name:-(unnamed value)}; mark it 'gatehouse: allow-secret' if it is a fixture"
+              echo "::warning file=${file},line=${at}::literal secret in ${soft} file, ${name:-(unnamed value)}; mark it 'gatehouse: allow-secret' if it is a fixture"
               warns=$((warns + 1))
             fi
           done < "$diff_file"
@@ -244,7 +273,7 @@ jobs:
             exit 1
           fi
           if [ "$warns" -gt 0 ]; then
-            echo "${warns} literal secret(s) in test files, warned only."
+            echo "${warns} literal secret(s) in test or doc files, warned only."
           fi
           echo "No plaintext secrets in the added lines."
       - name: Run Gourmand

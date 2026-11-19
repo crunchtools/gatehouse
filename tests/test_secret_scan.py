@@ -122,6 +122,20 @@ REFUSED = {
     ),
     "compose list": ("compose.yaml", "    environment:\n      - POSTGRES_PASSWORD=rotv\n"),
     "yaml quoted": ("deploy/app.yml", 'API_TOKEN: "abc123def"\n'),  # gatehouse: allow-secret
+    "unit environment": ("rotv.container", "Environment=PGPASSWORD=rotv\n"),
+    "quoted unit environment": ("rotv.service", 'Environment="PGPASSWORD=rotv"\n'),
+    "containerfile env": ("Containerfile", "ENV PGPASSWORD=rotv\n"),
+    "suffixed containerfile": ("app.Containerfile", "ARG PGPASSWORD=rotv\n"),
+    "podman args": ("rotv.container", "PodmanArgs=--env PGPASSWORD=rotv\n"),
+    "placeholder word inside": (
+        "src/settings.py",
+        'api_key = "myexample-prod-key-9f3a"\n',  # gatehouse: allow-secret
+    ),
+    "x run inside": (
+        "src/settings.py",
+        'api_key = "xxxREALSECRETxxx"\n',  # gatehouse: allow-secret
+    ),
+    "vendor shape in a doc": ("README.md", "Use `ghp_" + "a" * 36 + "`.\n"),
 }
 
 PASSED = {
@@ -141,6 +155,9 @@ PASSED = {
     "field name": ("src/shapes.py", '    STATIC_TOKEN = "static_token"\n'),
     "mask": ("src/Settings.jsx", "const MASKED_SECRET = '••••••';\n"),
     "switch fallback": ("src/reconnect.py", 'r = env.get("RELAY_REQUIRE_PASSPHRASE", "yes")\n'),
+    "unset sentinel": ("run.sh", 'TOKEN="${TOKEN:-unset}"\n'),
+    "missing sentinel": ("run.sh", ': "${VAULT_TOKEN:-missing}"\n'),
+    "not set sentinel": ("src/config.py", 'pw = os.environ.get("PGPASSWORD", "not-set")\n'),
 }
 
 
@@ -176,6 +193,31 @@ def test_named_literal_in_a_test_only_warns(tmp_path, name):
     assert result.returncode == 0, result.stdout + result.stderr
     assert f"::warning file={name},line=1::" in result.stdout
     assert "::error" not in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("name", "text"),
+    [
+        ("README.md", 'password: "hunter2"\n'),  # gatehouse: allow-secret
+        ("docs/setup.txt", "pw = process.env.PGPASSWORD || 'rotv'\n"),  # gatehouse: allow-secret
+    ],
+)
+def test_prose_about_a_secret_only_warns(tmp_path, name, text):
+    result = _scan(tmp_path, {name: text})
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"::warning file={name},line=1::" in result.stdout
+    assert "::error" not in result.stdout
+
+
+def test_an_added_line_that_looks_like_a_header_is_read(tmp_path):
+    result = _scan(tmp_path, {".env": "++ counter\nPGPASSWORD=rotv\n"})
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "::error file=.env,line=2::plaintext secret in PGPASSWORD" in result.stdout
+
+
+def test_a_unit_hit_names_the_variable(tmp_path):
+    result = _scan(tmp_path, {"rotv.container": 'Environment="PGPASSWORD=rotv"\n'})
+    assert "::error file=rotv.container,line=1::plaintext secret in PGPASSWORD" in result.stdout
 
 
 def test_a_hit_names_the_key_and_line_never_the_value(tmp_path):

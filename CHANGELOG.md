@@ -11,15 +11,20 @@ All notable changes to this project are documented here, following
   password, secret, token or API key a literal: a literal default on a
   secret env read (after `||`, `??`, `or` or `:-`, or as `getenv`'s second
   argument), a quoted assignment (`password: 'x'`), or an unquoted
-  value in env, compose, yaml and conf files (`PGPASSWORD=rotv`). A named
-  literal in a test path only warns; a fallback is refused there too.
-  Placeholders, references, CI fakes and a field's own name pass, and
-  `gatehouse: allow-secret` still exempts a line. Measured on 27 crunchtools
-  repos as if every line were new: 21 refusals, 20 of them in rotv and one
-  false positive, plus 171 warnings in tests. The step now parses the diff in
-  one awk pass and checks only candidate lines, so a large change no longer
-  costs a few processes per line, and it uses no awk, which the Gourmand
-  image lacks. Prompted by rotv#918.
+  value in env, compose, yaml, conf and unit files and Containerfiles
+  (`PGPASSWORD=rotv`, `ENV`, `Environment=`, `PodmanArgs=--env`). A named
+  literal in a test path only warns; a fallback is refused there too. In
+  Markdown, reST, AsciiDoc and `docs/`, both only warn, since prose
+  describes secrets; a vendor key shape is refused everywhere. Placeholders,
+  references, CI fakes and a field's own name pass when they are the whole
+  value, and so do switch and sentinel defaults (`yes`, `${X:-unset}`,
+  `missing`); `gatehouse: allow-secret` still exempts a line. Measured on 27
+  crunchtools repos as if every line were new: 21 refusals, 20 of them in
+  rotv and one false positive, plus 171 warnings in tests. The step now picks
+  candidate lines in one grep pass over the diff and walks only those, so a
+  large change no longer costs a few processes per line. An added line that
+  starts with `++ ` is read as content, not as a file header. Prompted by
+  rotv#918.
 - The container release runs constitution v1.51.0's `container-release.yml`
   (was v1.46.0) and grants it `issues: write`, so a failed scheduled rebuild
   opens an issue instead of only warning. A `v*` promote now also refuses an
