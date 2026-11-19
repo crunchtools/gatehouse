@@ -77,6 +77,13 @@ def test_review_workflow_pulls_the_image_fresh():
     assert "docker run --rm -i --pull always " in REVIEW_WORKFLOW.read_text()
 
 
+def test_review_workflow_passes_the_diff_limit_through():
+    """#161: the limit the refusal names must reach the container, or it does nothing in CI."""
+    text = REVIEW_WORKFLOW.read_text()
+    assert "MAX_DIFF_BYTES: ${{ inputs.max_diff_bytes }}" in text
+    assert '-e GATEHOUSE_MAX_DIFF_BYTES="$MAX_DIFF_BYTES"' in text
+
+
 def test_containerfile_version_label_matches_package_version():
     """The constitution's VERSION check compares this label to the CHANGELOG.
 

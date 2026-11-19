@@ -229,6 +229,10 @@ tests/fixtures/
 
 In CI the file is read from the base branch, like the styleguide and constitution: a pull request cannot widen it to hide its own changes. The posted review says how many files were skipped; when every changed file is ignored, gatehouse prints `No changes to review.`, exits 0 and posts nothing.
 
+### Oversize diffs
+
+Before any model is called, a deleted file whose diff is over 64 KiB is cut down to its header and a note of how many lines it removed, since none of them reach the new tree; a smaller deletion is still sent whole, so a removed protection stays visible. If the diff is still over 1 MiB (`GATEHOUSE_MAX_DIFF_BYTES`, or `review.yml`'s `max_diff_bytes` input, to change it), gatehouse names the largest files, calls nothing and exits 2; under `--comment` it posts that as a review marked failed, so triage holds the PR. Every agent sample would carry the whole diff, so a diff no model can take is refused rather than paid for and rejected upstream.
+
 ### Model
 
 The default model is `openai/gpt-6-luna`, with `google/gemini-3.5-flash-lite` as an automatic fallback when it is rate-limited or down. A burst of rate limits or timeouts is retried with backoff (45 s at most per call) on the default model, and the fallback is offered only on the last attempt; an error retrying won't fix, such as a diff too long for the default model, goes to the fallback at once. A rejected key (401/402/403) fails without one. Every request requires zero data retention and forbids training on prompts, so only providers that keep nothing may serve it. `--model` takes any OpenRouter slug; the fallback still applies.

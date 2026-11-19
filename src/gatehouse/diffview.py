@@ -18,6 +18,13 @@ import re
 from dataclasses import dataclass, field
 
 _HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
+# A header line oversize.elide_deletions puts where a deleted file's hunks were.
+OMITTED_PREFIX = "gatehouse: omitted "
+# Said of every deleted file, its lines sent or elided: a removed protection is a finding.
+DELETED_CONTROLS = (
+    "Flag any security controls, validation, or critical logic it contained "
+    "that is not replaced elsewhere in this change."
+)
 
 DIFF_VIEW_PREAMBLE = """\
 Each change below is shown as a BEFORE block (the old code, which no longer
@@ -59,6 +66,7 @@ class FileDiff:
     old_path: str | None = None
     status: str = "modified"
     is_binary: bool = False
+    omitted: str = ""
     hunks: list[Hunk] = field(default_factory=list)
 
 
@@ -94,10 +102,10 @@ def _apply_metadata(current: FileDiff, line: str) -> None:
     """Apply a file-header line (mode, rename, ---/+++ paths) to a FileDiff."""
     if line.startswith("Binary files ") or line == "GIT binary patch":
         current.is_binary = True
-    elif line.startswith("new file mode"):
-        current.status = "added"
-    elif line.startswith("deleted file mode"):
-        current.status = "deleted"
+    elif line.startswith(OMITTED_PREFIX):
+        current.omitted = line[len(OMITTED_PREFIX) :]
+    elif line.startswith(("new file mode", "deleted file mode")):
+        current.status = "added" if line.startswith("new") else "deleted"
     elif line.startswith("rename from "):
         current.old_path = line[len("rename from ") :]
         current.status = "renamed"
@@ -223,12 +231,14 @@ def render_diff_view(diff: str) -> str | None:
         parts: list[str] = [_file_header(file)]
         if file.is_binary:
             parts.append("Binary file changed — not reviewable as text.")
-        elif file.status == "deleted":
+        elif file.omitted:
             parts.append(
-                "This file was DELETED. Flag any security controls, "
-                "validation, or critical logic it contained that is not "
-                "replaced elsewhere in this change."
+                f"This file was DELETED. Its content ({file.omitted}) was too large "
+                "to send for review; do not guess at its lines, but judge from its path and "
+                f"from what the rest of the change still uses. {DELETED_CONTROLS}"
             )
+        elif file.status == "deleted":
+            parts.append(f"This file was DELETED. {DELETED_CONTROLS}")
             parts.extend(p for h in file.hunks if (p := _render_hunk(h)))
         elif not file.hunks:
             parts.append("Metadata-only change (mode or rename), no content.")

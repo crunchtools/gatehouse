@@ -30,6 +30,7 @@ gatehouse --samples 1               # single-sample review (pre-0.21.0 behaviour
 - `src/gatehouse/github.py` -- PR review posting, answered threads, last reviewed commit and compare diff for `--incremental`
 - `src/gatehouse/review.py` -- orchestration and exit code logic
 - `src/gatehouse/ignore.py` -- `.gatehouse-ignore` (gitignore syntax) filtering of diff and file listing
+- `src/gatehouse/oversize.py` -- elides large deleted files and refuses a diff over `GATEHOUSE_MAX_DIFF_BYTES` before any call
 - `src/gatehouse/output.py` -- terminal output with ANSI colors
 
 ## Agents
@@ -76,4 +77,4 @@ answer.
 
 - 0: No issues or advisory-only
 - 1: Blocking findings (critical/high from blocking agents)
-- 2: Usage error (missing API key, bad args), or an agent could not finish (exit 0 under --advisory, unless fewer than half of the agents finished)
+- 2: Usage error (missing API key, bad args), a diff too large to send, or an agent could not finish (exit 0 under --advisory, unless fewer than half of the agents finished)

@@ -26,9 +26,12 @@
 #                  but as advisory: most were noise, and each one answered
 #                  cost a fix-push-review round (#56).
 #   • a review that did not finish = the newest review by the reviewer account
-#                  is marked failed (fewer than half its agents finished, or
-#                  the reviewer could not run). That fails this job too: no
-#                  findings because nothing was looked at is not a pass (#77).
+#                  of the head is marked failed (fewer than half its agents
+#                  finished, or the reviewer could not run), or there is none
+#                  of the head while an older head has one, or there is none
+#                  at all and the review job did not succeed. That fails this
+#                  job too: no findings because nothing was looked at is not
+#                  a pass (#77).
 # A finding written against a commit no longer on the pull request does not
 # count: Ashigaru force-pushes a conflicted branch onto the new default branch,
 # which orphans both the reviewed code and every answer naming it. Added
@@ -65,6 +68,15 @@ on:
         type: string
         required: false
         default: "Bug Hunter,Security Scan"
+      review_result:
+        # needs.review.result. With no Gatehouse review on the PR at all, only
+        # a review job that succeeded (the Ashigaru release skip posts
+        # nothing) lets triage pass; one that died before posting does not.
+        # Unset keeps the old behaviour, where no review at all passes.
+        description: "The review job's result, as needs.review.result."
+        type: string
+        required: false
+        default: ""
 
 permissions: {}
 
@@ -96,6 +108,7 @@ jobs:
           REVIEWER: ${{ inputs.reviewer }}
           REQUIRED_LOW_AGENTS: ${{ inputs.required_low_agents }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          REVIEW_RESULT: ${{ inputs.review_result }}
         run: |
           set -euo pipefail
           if [ -z "${PR_NUMBER:-}" ]; then
@@ -104,26 +117,37 @@ jobs:
           fi
 
           # A review that did not happen has no findings to answer, and is not
-          # a clean one (#77). The newest Gatehouse review decides, so
-          # re-running the review job is what clears it.
+          # a clean one (#77). The newest Gatehouse review of the head
+          # decides, so re-running the review job is what clears it. Not the
+          # newest of all: pushes are reviewed concurrently, and an older
+          # head's slower review can post after the head's (#161). With none
+          # of the head, an older head's review holds (posting the failed
+          # review itself failed, so its clean result says nothing of this
+          # one); with none at all, the review job's own result decides.
           gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/reviews?per_page=100" \
             > reviews.json
 
           # --- review gate (tests/test_triage.py runs this against fixtures) ---
-          jq -rs --arg bot "$REVIEWER" '
+          jq -rs --arg bot "$REVIEWER" --arg head "$HEAD_SHA" --arg result "$REVIEW_RESULT" '
             [ (add // [])[]
               | select(.user.login == $bot and ((.body // "") | startswith("Gatehouse"))) ]
-            | last
-            | select(. != null and (.body | contains("<!-- gatehouse review failed -->")))
-            | .html_url
+            | . as $all
+            | [ .[] | select(((.commit_id // "") | ascii_downcase) == ($head | ascii_downcase)) ]
+            | if length > 0 then
+                last | select(.body | contains("<!-- gatehouse review failed -->")) | .html_url
+              elif ($all | length) > 0 then $all | last | .html_url
+              elif $result == "" or $result == "success" then empty
+              else "no review was posted (the review job: \($result))"
+              end
           ' reviews.json > failed_review.txt
-          # The commit the newest Gatehouse review looked at. An orphaned
-          # finding is only dropped when that is the head: otherwise a
-          # force-push of the same code would drop the finding with nothing
-          # having re-read the code it was about.
-          jq -rs --arg bot "$REVIEWER" '
+          # The head, if a finished Gatehouse review looked at it. An orphaned
+          # finding is only dropped then: otherwise a force-push of the same
+          # code would drop the finding with nothing having re-read the code
+          # it was about.
+          jq -rs --arg bot "$REVIEWER" --arg head "$HEAD_SHA" '
             [ (add // [])[]
               | select(.user.login == $bot and ((.body // "") | startswith("Gatehouse")))
+              | select(((.commit_id // "") | ascii_downcase) == ($head | ascii_downcase))
               | select((.body // "") | contains("<!-- gatehouse review failed -->") | not) ]
             | last | (.commit_id // "") // ""
           ' reviews.json > reviewed_sha.txt
@@ -133,11 +157,11 @@ jobs:
             {
               echo "## The last Gatehouse review did not finish"
               echo
-              echo "Nothing was reviewed: $(cat failed_review.txt)"
+              echo "Nothing reviewed ${HEAD_SHA:0:7}: $(cat failed_review.txt)"
               echo
-              echo "Fix the cause it names, then re-run the review job."
+              echo "Fix the cause it names, if any, then re-run the review job."
             } >> "$GITHUB_STEP_SUMMARY"
-            echo "::error::The last Gatehouse review did not finish: $(cat failed_review.txt)"
+            echo "::error::The last Gatehouse review did not finish on ${HEAD_SHA:0:7}: $(cat failed_review.txt)"
             exit 1
           fi
 

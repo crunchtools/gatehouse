@@ -75,6 +75,14 @@ on:
         type: boolean
         required: false
         default: false
+      max_diff_bytes:
+        # Passed to the reviewer as GATEHOUSE_MAX_DIFF_BYTES. A diff still over
+        # it once large deletions are elided is refused before any model call,
+        # with a review marked failed. Empty keeps the 1 MiB default.
+        description: "Largest diff, in bytes, sent for review (default: 1 MiB)."
+        type: string
+        required: false
+        default: ""
       image:
         # Empty means quay.io/crunchtools/gatehouse:latest: crunchtools tool
         # images float at the tag each release moves (constitution XV rule 5),
@@ -126,6 +134,7 @@ jobs:
           AGENTS: ${{ inputs.agents }}
           BLOCKING: ${{ inputs.blocking }}
           REQUIRED_LOW_AGENTS: ${{ inputs.required_low_agents }}
+          MAX_DIFF_BYTES: ${{ inputs.max_diff_bytes }}
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
           # Which repository the head belongs to: the same as GITHUB_REPOSITORY
           # for a branch here, a fork's own full name otherwise. Used to skip
@@ -217,10 +226,12 @@ jobs:
                     test("^[-+]\\s*(-\\s+)?uses:\\s*[^\\s]+@[^\\s]+(\\s+#.*)?$"))
                   and actions("+") == actions("-"))
               ' "$pin_files" > /dev/null; then
-            # One review says so per PR, not one per Dependabot rebase.
-            if jq -se --arg bot "$REVIEWER" '
+            # One review says so per head, not one per re-run: triage holds
+            # while the newest review is on an older head.
+            if jq -se --arg bot "$REVIEWER" --arg head "$HEAD_SHA" '
                 [ (add // [])[] | select(.user.login == $bot and ((.body // "") | startswith("Gatehouse"))) ]
-                | last | (.body // "") | contains("<!-- gatehouse skipped: pins -->")
+                | last | ((.body // "") | contains("<!-- gatehouse skipped: pins -->"))
+                  and ((.commit_id // "") | ascii_downcase) == ($head | ascii_downcase)
               ' "$skip_reviews" > /dev/null; then
               echo "Bot PR moving only action refs; not reviewed. No model was called." \
                 | tee -a "$GITHUB_STEP_SUMMARY"
@@ -251,7 +262,8 @@ jobs:
             jq -rs --arg bot "$REVIEWER" '
               [ (add // [])[]
                 | select(.user.login == $bot and ((.body // "") | startswith("Gatehouse"))
-                    and ((.body // "") | contains("<!-- gatehouse review complete -->")))
+                    and ((.body // "") | contains("<!-- gatehouse review complete -->"))
+                    and ((.body // "") | contains("<!-- gatehouse review failed -->") | not))
                 | {sha: (.commit_id // ""), url: (.html_url // "")}
                 | select(.sha | test("^[0-9a-f]{40}$")) ]
               | reverse
@@ -375,6 +387,7 @@ jobs:
             -e GATEHOUSE_CONTEXT_REF="$BASE_REF" \
             -e GATEHOUSE_HEAD_SHA="$HEAD_SHA" \
             -e GATEHOUSE_HEAD_REPO="$HEAD_REPO" \
+            -e GATEHOUSE_MAX_DIFF_BYTES="$MAX_DIFF_BYTES" \
             -v "$out_dir:/out" \
             -e GITHUB_STEP_SUMMARY=/out/step-summary.md \
             "$IMAGE" \

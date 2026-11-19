@@ -7,16 +7,18 @@ cannot drift from what CI actually runs.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import shutil
 import subprocess
 import tempfile
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from gatehouse.github import REVIEW_FAILED_MARKER, REVIEW_MARKER
+from gatehouse.github import REVIEW_FAILED_MARKER, REVIEW_MARKER, post_empty_review
 
 TRIAGE = Path(__file__).parent.parent / ".github" / "workflows" / "triage.yml"
 EXAMPLE = Path(__file__).parent.parent / "examples" / "gatehouse.yml"
@@ -336,11 +338,12 @@ def test_review_takes_the_same_required_low_agents() -> None:
     assert '--required-low-agents "$REQUIRED_LOW_AGENTS"' in text
 
 
-def _review(rid: int, user: str, body: str) -> dict:
+def _review(rid: int, user: str, body: str, sha: str = HEAD) -> dict:
     return {
         "id": rid,
         "user": {"login": user},
         "body": body,
+        "commit_id": sha,
         "html_url": f"https://example.test/r/{rid}",
     }
 
@@ -349,8 +352,8 @@ CLEAN = f"Gatehouse found no issues.\n\n{REVIEW_MARKER}"
 FAILED = f"Gatehouse could not review this PR: 0 of 8 agents finished.\n\n{REVIEW_FAILED_MARKER}"
 
 
-def _failed_review(*pages: list[dict]) -> str:
-    """Run triage.yml's review gate; the URL of the failed review holding the PR, or ""."""
+def _failed_review(*pages: list[dict], result: str = "success") -> str:
+    """Run triage.yml's review gate; what holds the PR (a review's URL), or ""."""
     block = re.search(
         r"# --- review gate.*?\n(.*?)# --- end review gate ---", TRIAGE.read_text(), re.S
     )
@@ -358,7 +361,20 @@ def _failed_review(*pages: list[dict]) -> str:
     program = re.search(r"jq -rs --arg bot .*? '(.*?)'", block.group(1), re.S)
     assert program, "jq program not found between the markers"
     out = subprocess.run(
-        ["jq", "-rs", "--arg", "bot", BOT, program.group(1)],
+        [
+            "jq",
+            "-rs",
+            "--arg",
+            "bot",
+            BOT,
+            "--arg",
+            "head",
+            HEAD.upper(),
+            "--arg",
+            "result",
+            result,
+            program.group(1),
+        ],
         input="".join(json.dumps(page) for page in pages),
         capture_output=True,
         text=True,
@@ -384,6 +400,92 @@ def test_review_gate_holds_a_failed_review() -> None:
 def test_review_gate_newest_review_decides() -> None:
     assert _failed_review([_review(1, BOT, FAILED)], [_review(2, BOT, CLEAN)]) == ""
     assert _failed_review([_review(1, BOT, CLEAN), _review(2, BOT, FAILED)]).endswith("/r/2")
+
+
+def test_review_gate_holds_a_newest_review_of_an_older_head() -> None:
+    """#161: if the failed review could not be posted, an older clean one must not pass."""
+    older = "a" * 40
+    assert _failed_review([_review(1, BOT, CLEAN, sha=older)]) == "https://example.test/r/1"
+    assert _failed_review([_review(1, BOT, CLEAN, sha=older), _review(2, BOT, CLEAN)]) == ""
+
+
+def test_review_gate_reads_the_review_of_the_head_not_the_newest() -> None:
+    """Push A then B: B's review can post before A's slower one, and A's must not hold B."""
+    older = "a" * 40
+    reviews = [_review(1, BOT, CLEAN), _review(2, BOT, CLEAN, sha=older)]
+    assert _failed_review(reviews) == ""
+    assert _failed_review([_review(1, BOT, CLEAN), _review(2, BOT, FAILED, sha=older)]) == ""
+    assert _failed_review([_review(1, BOT, FAILED), _review(2, BOT, CLEAN, sha=older)]).endswith(
+        "/r/1"
+    )
+
+
+def test_review_gate_newest_review_of_the_head_decides() -> None:
+    older = "a" * 40
+    reviews = [_review(1, BOT, FAILED), _review(2, BOT, CLEAN, sha=older), _review(3, BOT, CLEAN)]
+    assert _failed_review(reviews) == ""
+
+
+@pytest.mark.parametrize("result", ["failure", "cancelled", "skipped"])
+def test_review_gate_holds_no_review_when_the_review_job_did_not_succeed(result: str) -> None:
+    """The review job died before posting on the first push: nothing was reviewed."""
+    assert _failed_review([], result=result) != ""
+    assert _failed_review(result=result) != ""
+
+
+def test_review_gate_passes_no_review_when_the_review_job_succeeded() -> None:
+    """The Ashigaru release skip exits 0 and posts nothing; that still passes."""
+    assert _failed_review([], result="success") == ""
+
+
+def test_review_gate_passes_no_review_when_the_caller_passes_no_result() -> None:
+    """A caller that has not passed review_result keeps the old behaviour."""
+    assert _failed_review([], result="") == ""
+
+
+def test_review_gate_holds_an_older_head_review_even_after_a_successful_job() -> None:
+    older = "a" * 40
+    assert _failed_review([_review(1, BOT, CLEAN, sha=older)], result="success").endswith("/r/1")
+
+
+def test_review_gate_passes_a_pins_skip_on_the_head() -> None:
+    pins = (
+        "Gatehouse skipped this review: dependabot[bot] only moves refs.\n\n"
+        "<!-- gatehouse skipped: pins -->"
+    )
+    assert _failed_review([_review(1, BOT, pins)], result="success") == ""
+
+
+def _reviewed_sha(*pages: list[dict]) -> str:
+    """Run triage.yml's reviewed-head lookup: the head if a finished review read it, or ""."""
+    block = re.search(
+        r"# --- review gate.*?\n(.*?)# --- end review gate ---", TRIAGE.read_text(), re.S
+    )
+    assert block, "review gate markers missing from triage.yml"
+    programs = re.findall(r"jq -rs --arg bot .*? '(.*?)'", block.group(1), re.S)
+    assert len(programs) == 2, "reviewed-head program not found between the markers"
+    out = subprocess.run(
+        ["jq", "-rs", "--arg", "bot", BOT, "--arg", "head", HEAD.upper(), programs[1]],
+        input="".join(json.dumps(page) for page in pages),
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return out.stdout.strip()
+
+
+def test_reviewed_head_ignores_an_older_heads_later_review() -> None:
+    older = "a" * 40
+    assert _reviewed_sha([_review(1, BOT, CLEAN), _review(2, BOT, CLEAN, sha=older)]) == HEAD
+    assert _reviewed_sha([_review(1, BOT, CLEAN, sha=older)]) == ""
+    assert _reviewed_sha([_review(1, BOT, FAILED)]) == ""
+
+
+def test_triage_receives_the_review_result() -> None:
+    text = TRIAGE.read_text()
+    assert "REVIEW_RESULT: ${{ inputs.review_result }}" in text
+    for caller in (EXAMPLE, TRIAGE.parent / "gatehouse.yml"):
+        assert "review_result: ${{ needs.review.result }}" in caller.read_text(), caller
 
 
 def test_review_gate_ignores_other_authors_and_other_bot_reviews() -> None:
@@ -457,3 +559,25 @@ def test_carried_finding_and_its_answer_survive_a_rebase() -> None:
     # Without the carried commits the answer names an orphan and the
     # fresh skip review drops both findings.
     assert _unanswered(pages) == []
+
+
+def test_review_gate_passes_once_an_empty_review_is_posted() -> None:
+    """#161: a push of only ignored files posts a review of the head, which releases the gate."""
+    older = "a" * 40
+    reviews = [_review(1, BOT, CLEAN, sha=older)]
+    assert _failed_review(reviews, result="success") == "https://example.test/r/1"
+    with (
+        patch.dict(
+            "os.environ",
+            {
+                "GITHUB_REPOSITORY": "crunchtools/gatehouse",
+                "GITHUB_REF": "refs/pull/7/merge",
+                "GITHUB_TOKEN": "t",
+            },
+        ),
+        patch("gatehouse.github._post_review", new_callable=AsyncMock) as post,
+    ):
+        asyncio.run(post_empty_review("No changes to review since the last review.", HEAD))
+    payload = post.call_args.args[3]
+    posted = _review(2, BOT, payload["body"], sha=payload["commit_id"])
+    assert _failed_review([*reviews, posted], result="success") == ""

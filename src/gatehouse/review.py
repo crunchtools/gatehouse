@@ -48,6 +48,8 @@ from gatehouse.github import (
     fetch_compare,
     fetch_last_reviewed_commit,
     fetch_repo_file,
+    post_empty_review,
+    post_failed_review,
     post_pr_review,
     review_failed,
 )
@@ -77,10 +79,18 @@ from gatehouse.ledger import (
 )
 from gatehouse.llm import DEFAULT_MODEL, Completion, call_model
 from gatehouse.output import format_results, print_summary, strip_ansi
+from gatehouse.oversize import (
+    MAX_DIFF_BYTES,
+    MAX_DIFF_BYTES_ENV,
+    elide_deletions,
+    oversize_message,
+)
 from gatehouse.refs import cited_refs, ref_exists
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    import pathspec
 
     from gatehouse.refs import Resolver
 
@@ -1315,6 +1325,84 @@ def _collect(runs: list[AgentRun]) -> list[AgentOutcome]:
     return outcomes
 
 
+def _filtered_diff(
+    stdin_diff: str | None, base: str | None, staged: bool
+) -> tuple[str, pathspec.GitIgnoreSpec | None, list[str]]:
+    """The diff to review, without the files .gatehouse-ignore names; the spec; what it dropped."""
+    diff = stdin_diff if stdin_diff is not None else get_git_diff(base, staged)
+    spec = parse_ignore(_load_context_file(IGNORE_FILE)) if diff.strip() else None
+    diff, ignored = filter_diff(diff, spec)
+    if ignored:
+        print(f"Ignored {len(ignored)} file(s) per {IGNORE_FILE}.", file=sys.stderr)
+    return diff, spec, ignored
+
+
+async def _empty_diff(*, comment: bool, ignored: bool) -> int:
+    """Handle a diff with nothing left to send, before any incremental scoping.
+
+    Every file ignored is nothing to review. With comment and nothing
+    ignored, no diff arrived at all: review.yml always sends a non-empty
+    diff for a PR that changes anything, so an empty one was lost on the
+    way. That is posted as a review marked failed and exits 2, so triage
+    holds instead of passing on nothing.
+    """
+    if ignored or not comment:
+        return await _nothing_to_review("No changes to review.", comment=comment)
+    print("Error: the PR diff is empty; nothing was reviewed.", file=sys.stderr)
+    await post_failed_review("its diff is empty.", os.environ.get("GATEHOUSE_HEAD_SHA", ""))
+    return 2
+
+
+async def _nothing_to_review(note: str, *, comment: bool) -> int:
+    """Say there is nothing to review; with comment, post that as a clean review of the head.
+
+    Only for a diff that arrived and left nothing to send: every file
+    ignored, or no change since the last complete review. Triage reads the
+    review of the head, so such a push must still leave one, or the PR
+    holds forever (#161).
+    """
+    print(note)
+    if comment:
+        await post_empty_review(note, os.environ.get("GATEHOUSE_HEAD_SHA", ""))
+    return 0
+
+
+async def _sendable(diff: str, *, comment: bool) -> str | None:
+    """The diff with large deletions elided, or None, after saying why, when it is too large.
+
+    With comment, the refusal is posted as a review marked failed, so triage
+    holds the PR instead of passing on an older review, or on none.
+    """
+    diff, refusal = _measured(diff)
+    if not refusal:
+        return diff
+    print(f"Error: {refusal}", file=sys.stderr)
+    if comment:
+        await post_failed_review(refusal, os.environ.get("GATEHOUSE_HEAD_SHA", ""))
+    return None
+
+
+def _measured(diff: str) -> tuple[str, str]:
+    """The diff with large deletions elided, and why it cannot be sent, or "" when it can.
+
+    Runs before any model is called: an oversize diff is refused here instead
+    of being sent to every agent sample and failing upstream.
+    """
+    try:
+        limit = int_from_env(os.environ.get(MAX_DIFF_BYTES_ENV), MAX_DIFF_BYTES_ENV)
+    except ConfigError as exc:
+        return diff, str(exc)
+    if limit is not None and limit <= 0:
+        return diff, f"{MAX_DIFF_BYTES_ENV} must be positive, got {limit}"
+    diff, elided = elide_deletions(diff)
+    if elided:
+        print(
+            f"Elided {len(elided)} large deleted file(s): {', '.join(elided)}.",
+            file=sys.stderr,
+        )
+    return diff, oversize_message(diff, MAX_DIFF_BYTES if limit is None else limit) or ""
+
+
 def _agent_prompts(
     agents: list[Agent],
     user_prompt: str,
@@ -1364,10 +1452,10 @@ async def run_review(
     """Run the full review pipeline.
 
     When comment=True, posts findings as a GitHub PR review after printing.
-    Returns exit code (0 clean, 1 blocking, 2 usage error or an agent that
-    could not finish). An unfinished agent outranks findings, except under
-    --advisory: there it is reported, not raised, unless fewer than half of
-    the agents finished. That is no review at all, and exits 2 regardless.
+    Returns exit code (0 clean, 1 blocking, 2 usage error, a diff too large
+    to send, or an agent that could not finish). An unfinished agent outranks
+    findings, except under --advisory: there it is reported, not raised,
+    unless fewer than half of the agents finished. That is no review at all, and exits 2 regardless.
     LOWs from agents named in required_low_agents are exempt from the
     advisory LOW cap, so triage sees every LOW it requires an answer to.
 
@@ -1393,22 +1481,22 @@ async def run_review(
     only adds the low-confidence tail and a higher number only removes
     advisory noise. verbose implies 1 unless report_votes says otherwise.
     """
-    diff = stdin_diff if stdin_diff is not None else get_git_diff(base, staged)
-    spec = parse_ignore(_load_context_file(IGNORE_FILE)) if diff.strip() else None
-    diff, ignored = filter_diff(diff, spec)
-    if ignored:
-        print(f"Ignored {len(ignored)} file(s) per {IGNORE_FILE}.", file=sys.stderr)
+    diff, spec, ignored = _filtered_diff(stdin_diff, base, staged)
     if not diff.strip():
-        print("No changes to review.")
-        return 0
+        return await _empty_diff(comment=comment, ignored=bool(ignored))
 
     anchors, scope = None, ""
     if comment:
         anchors = right_side_lines(diff)
         diff, scope = await _review_scope(diff, spec, incremental=incremental)
     if not diff.strip():
-        print("No changes to review since the last review.")
-        return 0
+        return await _nothing_to_review(
+            "No changes to review since the last review.", comment=comment
+        )
+    sendable = await _sendable(diff, comment=comment)
+    if sendable is None:
+        return 2
+    diff = sendable
 
     ledger_texts = _ledger_texts()
     ledger = _ledger_entries(ledger_texts[0])
