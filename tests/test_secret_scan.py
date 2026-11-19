@@ -220,6 +220,21 @@ def test_a_unit_hit_names_the_variable(tmp_path):
     assert "::error file=rotv.container,line=1::plaintext secret in PGPASSWORD" in result.stdout
 
 
+def test_each_file_is_classified_on_its_own(tmp_path):
+    result = _scan(
+        tmp_path,
+        {
+            "README.md": 'password: "hunter2"\n',  # gatehouse: allow-secret
+            "src/settings.py": 'password = "hunter2"\n',  # gatehouse: allow-secret
+            "tests/test_x.py": 'password = "hunter2"\n',  # gatehouse: allow-secret
+        },
+    )
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "::warning file=README.md,line=1::" in result.stdout
+    assert "::error file=src/settings.py,line=1::plaintext secret in password" in result.stdout
+    assert "::warning file=tests/test_x.py,line=1::" in result.stdout
+
+
 def test_a_hit_names_the_key_and_line_never_the_value(tmp_path):
     result = _scan(
         tmp_path, {"compose.yaml": "services:\n  db:\n    POSTGRES_PASSWORD: hunter22\n"}

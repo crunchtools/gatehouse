@@ -207,6 +207,9 @@ jobs:
           line=0
           row_no=0
           hdr=0
+          classed=""
+          soft=""
+          conf=""
           while IFS= read -r row; do
             row_no=$((row_no + 1))
             case "$row" in
@@ -234,11 +237,17 @@ jobs:
             read -r want <&3 || want=0
             [ -n "$file" ] || continue
             case "$added" in *'gatehouse: allow-secret'*) continue ;; esac
-            soft=""
-            if printf '%s\n' "$file" | grep -Eq "$tests"; then
-              soft=test
-            elif printf '%s\n' "$file" | grep -Eq "$docs"; then
-              soft=doc
+            # Classify a file once, at its first candidate line.
+            if [ "$file" != "$classed" ]; then
+              classed=$file
+              soft=""
+              if printf '%s\n' "$file" | grep -Eq "$tests"; then
+                soft=test
+              elif printf '%s\n' "$file" | grep -Eq "$docs"; then
+                soft=doc
+              fi
+              conf=""
+              if printf '%s\n' "$file" | grep -Eq "$configs"; then conf=1; fi
             fi
             verdict=""
             if printf '%s\n' "$added" | grep -Eq -e "$shapes"; then
@@ -247,7 +256,7 @@ jobs:
               if [ "$soft" = doc ]; then verdict=warn; else verdict=refuse; fi
             else
               named=$(printf '%s\n' "$added" | grep -oE -e "$assign" || true)
-              if printf '%s\n' "$file" | grep -Eq "$configs"; then
+              if [ -n "$conf" ]; then
                 named="${named}$(printf '\n%s\n' "$added" | grep -oE -e "$envline" || true)"
               fi
               # Strip each key so the placeholder test reads the value alone.
@@ -257,7 +266,8 @@ jobs:
               fi
             fi
             [ -n "$verdict" ] || continue
-            name=$(printf '%s\n' "$added" | sed -n -E "s/^[[:space:]]*(-[[:space:]]+)?${prefix}\"?([A-Za-z_][A-Za-z0-9_.-]*)\"?[[:space:]]*[:=].*/\\4/p")
+            # Strip any prefix first, so the name's group number never moves.
+            name=$(printf '%s\n' "$added" | sed -n -E -e "s/^[[:space:]]*(-[[:space:]]+)?${prefix}//" -e 's/^"?([A-Za-z_][A-Za-z0-9_.-]*)"?[[:space:]]*[:=].*/\1/p')
             if [ "$verdict" = refuse ]; then
               echo "::error file=${file},line=${at}::plaintext secret in ${name:-(unnamed value)}"
               hits=$((hits + 1))
