@@ -207,6 +207,76 @@ async def test_run_review_all_ignored_skips_the_agents(
     assert f"Ignored 1 file(s) per {IGNORE_FILE}." in out.err
 
 
+@pytest.mark.asyncio
+async def test_run_review_all_ignored_posts_a_clean_review_of_the_head(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """#161: triage reads the review of the head, so an all-ignored PR must still leave one."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("GATEHOUSE_HEAD_SHA", "head1234567")
+    (tmp_path / IGNORE_FILE).write_text("data/\n")
+    call_model = AsyncMock(return_value=Completion("[]"))
+    with (
+        patch("gatehouse.review.call_model", call_model),
+        patch("gatehouse.review.post_empty_review", new_callable=AsyncMock) as empty,
+    ):
+        exit_code = await run_review(
+            stdin_diff=MODIFIED.format(p="data/x.fp"),
+            agent_slugs=["bugs"],
+            api_key="k",
+            comment=True,
+        )
+    assert exit_code == 0
+    call_model.assert_not_awaited()
+    empty.assert_awaited_once_with("No changes to review.", "head1234567")
+
+
+@pytest.mark.asyncio
+async def test_run_review_only_ignored_since_the_last_review_posts_a_clean_review(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """#161: a push of only ignored files is reviewed as nothing, and says so on the head."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("GITHUB_REPOSITORY", "crunchtools/gatehouse")
+    monkeypatch.setenv("GITHUB_REF", "refs/pull/7/merge")
+    monkeypatch.setenv("GITHUB_TOKEN", "t")
+    monkeypatch.setenv("GATEHOUSE_HEAD_SHA", "head1234567")
+    (tmp_path / IGNORE_FILE).write_text("data/\n")
+    call_model = AsyncMock(return_value=Completion("[]"))
+    with (
+        patch("gatehouse.review.fetch_last_reviewed_commit", return_value="last7654321"),
+        patch("gatehouse.review.fetch_compare", return_value=(MODIFIED.format(p="data/x.fp"), 1)),
+        patch("gatehouse.review.call_model", call_model),
+        patch("gatehouse.review.post_pr_review", new_callable=AsyncMock) as post,
+        patch("gatehouse.review.post_empty_review", new_callable=AsyncMock) as empty,
+    ):
+        exit_code = await run_review(
+            stdin_diff=MODIFIED.format(p="src/app.py") + MODIFIED.format(p="data/x.fp"),
+            agent_slugs=["bugs"],
+            api_key="k",
+            comment=True,
+            incremental=True,
+        )
+    assert exit_code == 0
+    call_model.assert_not_awaited()
+    post.assert_not_awaited()
+    empty.assert_awaited_once_with("No changes to review since the last review.", "head1234567")
+
+
+@pytest.mark.asyncio
+async def test_run_review_all_ignored_without_comment_posts_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / IGNORE_FILE).write_text("data/\n")
+    with patch("gatehouse.review.post_empty_review", new_callable=AsyncMock) as empty:
+        exit_code = await run_review(
+            stdin_diff=MODIFIED.format(p="data/x.fp"), agent_slugs=["bugs"], api_key="k"
+        )
+    assert exit_code == 0
+    empty.assert_not_awaited()
+
+
 def test_copy_from_path_is_read_whole() -> None:
     copy = (
         "diff --git a/data/a.fp b/data/b.fp\n"

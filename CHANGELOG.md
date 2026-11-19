@@ -29,6 +29,11 @@ All notable changes to this project are documented here, following
   are reviewed concurrently, so it takes the newest review *of the head*: an
   older head's slower review no longer holds a clean one. The pins skip is
   said once per head, not once per PR, so a Dependabot rebase still passes.
+- **A push of only ignored files still leaves a review of the head** (#161).
+  With nothing left to send, `--comment` used to print "No changes to review"
+  and post nothing, so triage, which reads the review of the head, held the
+  PR forever. It now posts a clean review of the head carrying the complete
+  marker.
 - **Triage holds a PR whose review job died before posting anything**
   (#161). `triage.yml` takes `review_result` (pass `needs.review.result`, as
   `examples/gatehouse.yml` now does): with no Gatehouse review on the PR, only

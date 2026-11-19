@@ -499,6 +499,32 @@ async def _post_review(repo: str, pr_number: int, token: str, payload: dict[str,
     return True
 
 
+async def post_empty_review(note: str, commit_id: str = "") -> bool:
+    """Post a clean review of a diff with nothing to send, ending with REVIEW_MARKER.
+
+    For a PR, or the commits since the last review, that touch only files
+    `.gatehouse-ignore` skips: triage reads the review of the head, so
+    without one it would hold forever. ``note`` must be fixed text, never
+    PR-controlled: this body carries the complete marker.
+    Returns True on success, False on failure.
+    """
+    context = detect_pr_context()
+    token = os.environ.get("GITHUB_TOKEN", "")
+    if context is None or not token:
+        print(
+            "Warning: cannot post the review: no PR context or GITHUB_TOKEN.",
+            file=sys.stderr,
+        )
+        return False
+    payload: dict[str, Any] = {
+        "event": "COMMENT",
+        "body": f"Gatehouse found no issues.\n\n{_inert(note)}\n\n{REVIEW_MARKER}",
+    }
+    if commit_id:
+        payload["commit_id"] = commit_id
+    return await _post_review(*context, token, payload)
+
+
 async def post_failed_review(reason: str, commit_id: str = "") -> bool:
     """Post a review saying why none ran, ending with REVIEW_FAILED_MARKER.
 

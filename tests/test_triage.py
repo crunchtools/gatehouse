@@ -7,16 +7,18 @@ cannot drift from what CI actually runs.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import shutil
 import subprocess
 import tempfile
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from gatehouse.github import REVIEW_FAILED_MARKER, REVIEW_MARKER
+from gatehouse.github import REVIEW_FAILED_MARKER, REVIEW_MARKER, post_empty_review
 
 TRIAGE = Path(__file__).parent.parent / ".github" / "workflows" / "triage.yml"
 EXAMPLE = Path(__file__).parent.parent / "examples" / "gatehouse.yml"
@@ -557,3 +559,25 @@ def test_carried_finding_and_its_answer_survive_a_rebase() -> None:
     # Without the carried commits the answer names an orphan and the
     # fresh skip review drops both findings.
     assert _unanswered(pages) == []
+
+
+def test_review_gate_passes_once_an_empty_review_is_posted() -> None:
+    """#161: a push of only ignored files posts a review of the head, which releases the gate."""
+    older = "a" * 40
+    reviews = [_review(1, BOT, CLEAN, sha=older)]
+    assert _failed_review(reviews, result="success") == "https://example.test/r/1"
+    with (
+        patch.dict(
+            "os.environ",
+            {
+                "GITHUB_REPOSITORY": "crunchtools/gatehouse",
+                "GITHUB_REF": "refs/pull/7/merge",
+                "GITHUB_TOKEN": "t",
+            },
+        ),
+        patch("gatehouse.github._post_review", new_callable=AsyncMock) as post,
+    ):
+        asyncio.run(post_empty_review("No changes to review since the last review.", HEAD))
+    payload = post.call_args.args[3]
+    posted = _review(2, BOT, payload["body"], sha=payload["commit_id"])
+    assert _failed_review([*reviews, posted], result="success") == ""

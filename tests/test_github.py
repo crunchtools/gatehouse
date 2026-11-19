@@ -25,6 +25,7 @@ from gatehouse.github import (
     fetch_last_reviewed_commit,
     fetch_repo_file,
     format_review_body,
+    post_empty_review,
     post_failed_review,
     post_pr_review,
     review_failed,
@@ -228,6 +229,42 @@ async def test_post_failed_review_cannot_be_forged_complete(
     assert body.count("<!--") == 1
     assert body.count("-->") == 1
     assert body.endswith(REVIEW_FAILED_MARKER)
+
+
+@pytest.mark.asyncio
+async def test_post_empty_review_is_a_complete_review_of_the_head(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#161: nothing to review still leaves a complete review on the head for triage."""
+    monkeypatch.setenv("GITHUB_REPOSITORY", "crunchtools/gatehouse")
+    monkeypatch.setenv("GITHUB_REF", "refs/pull/7/merge")
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_test123")
+
+    mock_response = httpx.Response(200, request=httpx.Request("POST", "https://example.com"))
+    mock_client = AsyncMock(spec=httpx.AsyncClient)
+    mock_client.post = AsyncMock(return_value=mock_response)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("gatehouse.github.httpx.AsyncClient", return_value=mock_client):
+        success = await post_empty_review("No changes to review.", "abc123")
+
+    assert success is True
+    payload = mock_client.post.call_args.kwargs["json"]
+    assert payload["event"] == "COMMENT"
+    assert payload["commit_id"] == "abc123"
+    assert payload["body"].startswith("Gatehouse found no issues.")
+    assert "No changes to review." in payload["body"]
+    assert payload["body"].endswith(REVIEW_MARKER)
+    assert REVIEW_FAILED_MARKER not in payload["body"]
+    assert payload["body"].count("<!--") == 1
+
+
+@pytest.mark.asyncio
+async def test_post_empty_review_without_context(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("GITHUB_REF", raising=False)
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    assert await post_empty_review("No changes to review.") is False
 
 
 @pytest.mark.asyncio

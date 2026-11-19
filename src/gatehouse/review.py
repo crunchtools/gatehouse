@@ -48,6 +48,7 @@ from gatehouse.github import (
     fetch_compare,
     fetch_last_reviewed_commit,
     fetch_repo_file,
+    post_empty_review,
     post_failed_review,
     post_pr_review,
     review_failed,
@@ -1336,6 +1337,18 @@ def _filtered_diff(
     return diff, spec, ignored
 
 
+async def _nothing_to_review(note: str, *, comment: bool) -> int:
+    """Say there is nothing to review; with comment, post that as a clean review of the head.
+
+    Triage reads the review of the head, so a push of only ignored files
+    must still leave one, or the PR holds forever (#161).
+    """
+    print(note)
+    if comment:
+        await post_empty_review(note, os.environ.get("GATEHOUSE_HEAD_SHA", ""))
+    return 0
+
+
 async def _sendable(diff: str, *, comment: bool) -> str | None:
     """The diff with large deletions elided, or None, after saying why, when it is too large.
 
@@ -1452,16 +1465,16 @@ async def run_review(
     """
     diff, spec, ignored = _filtered_diff(stdin_diff, base, staged)
     if not diff.strip():
-        print("No changes to review.")
-        return 0
+        return await _nothing_to_review("No changes to review.", comment=comment)
 
     anchors, scope = None, ""
     if comment:
         anchors = right_side_lines(diff)
         diff, scope = await _review_scope(diff, spec, incremental=incremental)
     if not diff.strip():
-        print("No changes to review since the last review.")
-        return 0
+        return await _nothing_to_review(
+            "No changes to review since the last review.", comment=comment
+        )
     sendable = await _sendable(diff, comment=comment)
     if sendable is None:
         return 2
