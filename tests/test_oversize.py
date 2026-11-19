@@ -119,8 +119,9 @@ async def test_run_review_sends_large_deletion_elided(
 
 
 @pytest.mark.asyncio
-async def test_run_review_rejects_bad_limit(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv(MAX_DIFF_BYTES_ENV, "lots")
+@pytest.mark.parametrize("value", ["lots", "0", "-5"])
+async def test_run_review_rejects_bad_limit(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+    monkeypatch.setenv(MAX_DIFF_BYTES_ENV, value)
     with patch("gatehouse.review.call_model", new_callable=AsyncMock) as call:
         assert await run_review(stdin_diff=MODIFIED, api_key="k") == 2
     call.assert_not_called()
