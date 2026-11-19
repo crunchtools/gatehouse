@@ -1337,11 +1337,29 @@ def _filtered_diff(
     return diff, spec, ignored
 
 
+async def _empty_diff(*, comment: bool, ignored: bool) -> int:
+    """Handle a diff with nothing left to send, before any incremental scoping.
+
+    Every file ignored is nothing to review. With comment and nothing
+    ignored, no diff arrived at all: review.yml always sends a non-empty
+    diff for a PR that changes anything, so an empty one was lost on the
+    way. That is posted as a review marked failed and exits 2, so triage
+    holds instead of passing on nothing.
+    """
+    if ignored or not comment:
+        return await _nothing_to_review("No changes to review.", comment=comment)
+    print("Error: the PR diff is empty; nothing was reviewed.", file=sys.stderr)
+    await post_failed_review("its diff is empty.", os.environ.get("GATEHOUSE_HEAD_SHA", ""))
+    return 2
+
+
 async def _nothing_to_review(note: str, *, comment: bool) -> int:
     """Say there is nothing to review; with comment, post that as a clean review of the head.
 
-    Triage reads the review of the head, so a push of only ignored files
-    must still leave one, or the PR holds forever (#161).
+    Only for a diff that arrived and left nothing to send: every file
+    ignored, or no change since the last complete review. Triage reads the
+    review of the head, so such a push must still leave one, or the PR
+    holds forever (#161).
     """
     print(note)
     if comment:
@@ -1465,7 +1483,7 @@ async def run_review(
     """
     diff, spec, ignored = _filtered_diff(stdin_diff, base, staged)
     if not diff.strip():
-        return await _nothing_to_review("No changes to review.", comment=comment)
+        return await _empty_diff(comment=comment, ignored=bool(ignored))
 
     anchors, scope = None, ""
     if comment:

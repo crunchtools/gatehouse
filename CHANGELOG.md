@@ -33,7 +33,9 @@ All notable changes to this project are documented here, following
   With nothing left to send, `--comment` used to print "No changes to review"
   and post nothing, so triage, which reads the review of the head, held the
   PR forever. It now posts a clean review of the head carrying the complete
-  marker.
+  marker when every file is ignored or nothing changed since the last review;
+  a PR diff that arrives empty is no diff, and posts a failed review and
+  exits 2.
 - **Triage holds a PR whose review job died before posting anything**
   (#161). `triage.yml` takes `review_result` (pass `needs.review.result`, as
   `examples/gatehouse.yml` now does): with no Gatehouse review on the PR, only

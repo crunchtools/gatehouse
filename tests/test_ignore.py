@@ -264,6 +264,23 @@ async def test_run_review_only_ignored_since_the_last_review_posts_a_clean_revie
 
 
 @pytest.mark.asyncio
+async def test_run_review_empty_pr_diff_is_a_failed_review(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """No diff at all is not nothing to review: it posts the failed marker and exits 2."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("GATEHOUSE_HEAD_SHA", "head1234567")
+    with (
+        patch("gatehouse.review.post_empty_review", new_callable=AsyncMock) as empty,
+        patch("gatehouse.review.post_failed_review", new_callable=AsyncMock) as failed,
+    ):
+        exit_code = await run_review(stdin_diff="", agent_slugs=["bugs"], api_key="k", comment=True)
+    assert exit_code == 2
+    empty.assert_not_awaited()
+    failed.assert_awaited_once_with("its diff is empty.", "head1234567")
+
+
+@pytest.mark.asyncio
 async def test_run_review_all_ignored_without_comment_posts_nothing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -273,6 +290,7 @@ async def test_run_review_all_ignored_without_comment_posts_nothing(
         exit_code = await run_review(
             stdin_diff=MODIFIED.format(p="data/x.fp"), agent_slugs=["bugs"], api_key="k"
         )
+        assert await run_review(stdin_diff="", agent_slugs=["bugs"], api_key="k") == 0
     assert exit_code == 0
     empty.assert_not_awaited()
 
