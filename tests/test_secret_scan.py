@@ -167,6 +167,8 @@ PASSED = {
         "SESSION_SECRET=change-this-to-a-random-string\n",
     ),
     "own name": ("src/consts.py", 'TOKEN = "token"\n'),
+    "quoted placeholder in yaml": ("deploy/app.yml", 'API_TOKEN: "changeme"\n'),
+    "quoted placeholder in env": (".env", 'PGPASSWORD="changeme"\n'),
     "own name, any case": ("src/locales/en.json", '{"password": "Password"}\n'),
     "systemd credential": ("app.container", "Environment=API_TOKEN=%d/api_token\n"),
     "systemd specifier in a unit": ("app.service", "Environment=PGPASSFILE=%h/.pgpass\n"),
@@ -251,6 +253,8 @@ MULTI_REFUSED = {
     "quoted docker run": ("run.sh", 'podman run -e A=x -e "PGPASSWORD=rotv" img\n'),
     "podman args": ("rotv.container", "PodmanArgs=--env A=x --env=PGPASSWORD=rotv\n"),
     "continued run": ("run.sh", "  -e PGPASSWORD=rotv \\\n"),
+    "hash inside a value": ("Containerfile", "ENV A=x#y PGPASSWORD=rotv\n"),
+    "quoted value led by a hash": ("Containerfile", 'ENV A=x PGPASSWORD="#s3cret"\n'),
     "percent outside a unit": ("Containerfile", "ENV A=x API_TOKEN=%d/api_token\n"),
     "percent that is no specifier": (
         "app.container",
@@ -292,6 +296,11 @@ def test_a_later_pair_in_a_test_or_doc_only_warns(tmp_path, name):
     result = _scan(tmp_path, {name: "export A=x SESSION_SECRET=s3cr3t-value\n"})
     assert result.returncode == 0, result.stdout + result.stderr
     assert f"::warning file={name},line=1::" in result.stdout
+
+
+def test_a_later_pair_hit_names_the_key_that_failed(tmp_path):
+    result = _scan(tmp_path, {"Containerfile": "ENV API_TOKEN=changeme PGPASSWORD=rotv\n"})
+    assert "::error file=Containerfile,line=1::plaintext secret in PGPASSWORD" in result.stdout
 
 
 def test_a_later_pair_hit_names_its_own_key(tmp_path):

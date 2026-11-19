@@ -170,16 +170,17 @@ jobs:
           # `PodmanArgs=--env X=x`.
           prefix="(export[[:space:]]+|ENV[[:space:]]+|ARG[[:space:]]+|Environment=${Q}?|([A-Za-z]+=)?--env[[:space:]=]+)?"
           ekey="^[[:space:]]*(-[[:space:]]+)?${prefix}[A-Z0-9_]*${ENV}[[:space:]]*[=:][[:space:]]*"
-          pvalue="${Q}?[^\"'[:space:]\$<{#|>&][^\"'[:space:]]{2,}"
+          pvalue="(${Q}[^\"'[:space:]\$<{|>&]|[^\"'[:space:]\$<{#|>&])[^\"'[:space:]]{2,}"
           envline="${ekey}${pvalue}"
           # Every later pair too, not just the first: `ENV A=x PGPASSWORD=y`,
           # `Environment="A=x" "B=y"`, `export A=x B=y`, and an `-e`/`--env`
           # pair anywhere (`docker run -e A=x -e B=y`). A bare pair counts
-          # only on an ENV, ARG, export or Environment= line, before any `#`.
+          # only on an ENV, ARG, export or Environment= line, before a `#`
+          # that opens a word (a comment), not one inside a value.
           pname="((-e|--env)[[:space:]=]+)?${Q}?[A-Z0-9_]*${ENV}="
           pair="(^|[[:space:]])${pname}${pvalue}"
-          pairs="^[[:space:]]*(export|ENV|ARG|Environment=)[^#]*${pair}"
-          dashe="(^|[[:space:]])(-e|--env)[[:space:]=]+${Q}?[A-Z0-9_]*${ENV}=${pvalue}"
+          pairline="^[[:space:]]*(export|ENV|ARG|Environment=)[^[:space:]]*([[:space:]]+[^#[:space:]][^[:space:]]*)*${pair}"
+          dashpair="(^|[[:space:]])(-e|--env)[[:space:]=]+${Q}?[A-Z0-9_]*${ENV}=${pvalue}"
           # A default that is only a switch or an unset sentinel:
           # `getenv("REQUIRE_PASSPHRASE", "yes")`, `${TOKEN:-unset}`.
           switch="(${Q}|[{][A-Z0-9_]*:?-)(yes|no|true|false|none|null|on|off|unset|not[_-]set|missing)(${Q}|[}])\$"
@@ -212,7 +213,7 @@ jobs:
           # A `+++ ` row is a file header only between `diff --git` and the
           # first `@@`; past that it is an added line that began `++ `.
           sed -e '/^diff --git /,/^@@ /s/^+++ .*//' -e 's/^+//' -e t -e 's/.*//' "$diff_file" \
-            | grep -nE -e "$shapes" -e "$fallback" -e "$assign" -e "$envline" -e "$pairs" -e "$dashe" \
+            | grep -nE -e "$shapes" -e "$fallback" -e "$assign" -e "$envline" -e "$pairline" -e "$dashpair" \
             | cut -d: -f1 > "$cand_file" || true
           if [ ! -s "$cand_file" ]; then
             rm -f "$diff_file" "$cand_file"
@@ -270,31 +271,39 @@ jobs:
               if printf '%s\n' "$file" | grep -Eq "$units"; then held_by=$unitholder; fi
             fi
             verdict=""
+            kept=""
             if printf '%s\n' "$added" | grep -Eq -e "$shapes"; then
               verdict=refuse
             elif printf '%s\n' "$added" | grep -oE -e "$fallback" | grep -vEq "$switch"; then
               if [ "$soft" = doc ]; then verdict=warn; else verdict=refuse; fi
             else
-              named=$(printf '%s\n' "$added" | grep -oE -e "$assign" || true)
-              if [ -n "$conf" ]; then
-                named="${named}$(printf '\n%s\n' "$added" | grep -oE -e "$envline" || true)"
-                if printf '%s\n' "$added" | grep -Eq -e "$pairs"; then
-                  named="${named}$(printf '\n%s\n' "${added%%#*}" | grep -oE -e "$pair" || true)"
-                else
-                  named="${named}$(printf '\n%s\n' "$added" | grep -oE -e "$dashe" || true)"
+              # One segment per line: grep -o output, not its input, carries
+              # the newlines, so the greps run in one group.
+              named=$(
+                printf '%s\n' "$added" | grep -oE -e "$assign" || true
+                if [ -n "$conf" ]; then
+                  printf '%s\n' "$added" | grep -oE -e "$envline" || true
+                  if printf '%s\n' "$added" | grep -Eq -e "$pairline"; then
+                    printf '%s\n' "$added" | sed -E 's/(^|[[:space:]])#.*//' | grep -oE -e "$pair" || true
+                  else
+                    printf '%s\n' "$added" | grep -oE -e "$dashpair" || true
+                  fi
                 fi
-              fi
+              )
               # Strip each key so the placeholder test reads the value alone.
               values=$(printf '%s\n' "$named" | grep -v '^$' | sed -E -e "s/^${akey}//" -e "s/${ekey}//" -e "s/^[[:space:]]*${pname}//" || true)
               if [ -n "$values" ] && printf '%s\n' "$values" | grep -viEq "$held_by"; then
                 # Only a line about to be refused pays for this: drop a value
                 # that only repeats its key, any case (`TOKEN = "token"`,
                 # `"password": "Password"`).
-                values=$(printf '%s\n' "$named" | grep -v '^$' | while IFS= read -r seg; do
+                # Each kept value goes out as `key value`; neither holds a space.
+                kept=$(printf '%s\n' "$named" | grep -v '^$' | while IFS= read -r seg; do
                   v=$(printf '%s\n' "$seg" | sed -E -e "s/^${akey}//" -e "s/${ekey}//" -e "s/^[[:space:]]*${pname}//")
-                  k=$(printf '%s\n' "${seg%"$v"}" | sed -E -e 's/[^A-Za-z0-9_.-]+$//' -e 's/.*[^A-Za-z0-9_.-]//' | tr '[:upper:]' '[:lower:]')
-                  [ "$(printf '%s\n' "$v" | tr -d "\"'" | tr '[:upper:]' '[:lower:]')" = "$k" ] || printf '%s\n' "$v"
+                  k=$(printf '%s\n' "${seg%"$v"}" | sed -E -e 's/[^A-Za-z0-9_.-]+$//' -e 's/.*[^A-Za-z0-9_.-]//')
+                  lk=$(printf '%s\n' "$k" | tr '[:upper:]' '[:lower:]')
+                  [ "$(printf '%s\n' "$v" | tr -d "\"'" | tr '[:upper:]' '[:lower:]')" = "$lk" ] || printf '%s %s\n' "$k" "$v"
                 done || true)
+                values=$(printf '%s\n' "$kept" | sed -n 's/^[^ ]* //p')
               fi
               if [ -n "$values" ] && printf '%s\n' "$values" | grep -viEq "$held_by"; then
                 if [ -n "$soft" ]; then verdict=warn; else verdict=refuse; fi
@@ -303,10 +312,11 @@ jobs:
             [ -n "$verdict" ] || continue
             # Strip any prefix first, so the name's group number never moves.
             name=$(printf '%s\n' "$added" | sed -n -E -e "s/^[[:space:]]*(-[[:space:]]+)?${prefix}//" -e 's/^"?([A-Za-z_][A-Za-z0-9_.-]*)"?[[:space:]]*[:=].*/\1/p')
-            # A hit in a later pair names that pair's key, not the first one.
-            if printf '%s\n' "$added" | grep -Eq -e "$pairs" -e "$dashe" \
-              && ! printf '%s\n' "$name" | grep -Eq "$ENV|$KEY"; then
-              name=$(printf '%s\n' "$added" | grep -oE "[A-Z0-9_]*${ENV}=" | head -n 1 | tr -d =)
+            # A hit in a later pair names the key whose value failed.
+            if [ -n "$kept" ] && printf '%s\n' "$added" | grep -Eq -e "$pairline" -e "$dashpair"; then
+              name=$(printf '%s\n' "$kept" | while read -r k v; do
+                if printf '%s\n' "$v" | grep -viEq "$held_by"; then printf '%s\n' "$k"; break; fi
+              done)
             fi
             if [ "$verdict" = refuse ]; then
               echo "::error file=${file},line=${at}::plaintext secret in ${name:-(unnamed value)}"
