@@ -77,10 +77,18 @@ from gatehouse.ledger import (
 )
 from gatehouse.llm import DEFAULT_MODEL, Completion, call_model
 from gatehouse.output import format_results, print_summary, strip_ansi
+from gatehouse.oversize import (
+    MAX_DIFF_BYTES,
+    MAX_DIFF_BYTES_ENV,
+    elide_deletions,
+    oversize_message,
+)
 from gatehouse.refs import cited_refs, ref_exists
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    import pathspec
 
     from gatehouse.refs import Resolver
 
@@ -1315,6 +1323,45 @@ def _collect(runs: list[AgentRun]) -> list[AgentOutcome]:
     return outcomes
 
 
+def _filtered_diff(
+    stdin_diff: str | None, base: str | None, staged: bool
+) -> tuple[str, pathspec.GitIgnoreSpec | None, list[str]]:
+    """The diff to review, without the files .gatehouse-ignore names; the spec; what it dropped."""
+    diff = stdin_diff if stdin_diff is not None else get_git_diff(base, staged)
+    spec = parse_ignore(_load_context_file(IGNORE_FILE)) if diff.strip() else None
+    diff, ignored = filter_diff(diff, spec)
+    if ignored:
+        print(f"Ignored {len(ignored)} file(s) per {IGNORE_FILE}.", file=sys.stderr)
+    return diff, spec, ignored
+
+
+def _sendable(diff: str) -> str | None:
+    """The diff with large deletions elided, or None, after saying why, when it is too large.
+
+    Runs before any model is called: an oversize diff is refused here instead
+    of being sent to every agent sample and failing upstream.
+    """
+    try:
+        limit = int_from_env(os.environ.get(MAX_DIFF_BYTES_ENV), MAX_DIFF_BYTES_ENV)
+    except ConfigError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return None
+    if limit is not None and limit <= 0:
+        print(f"Error: {MAX_DIFF_BYTES_ENV} must be positive, got {limit}", file=sys.stderr)
+        return None
+    diff, elided = elide_deletions(diff)
+    if elided:
+        print(
+            f"Elided {len(elided)} large deleted file(s): {', '.join(elided)}.",
+            file=sys.stderr,
+        )
+    refusal = oversize_message(diff, MAX_DIFF_BYTES if limit is None else limit)
+    if refusal:
+        print(f"Error: {refusal}", file=sys.stderr)
+        return None
+    return diff
+
+
 def _agent_prompts(
     agents: list[Agent],
     user_prompt: str,
@@ -1364,10 +1411,10 @@ async def run_review(
     """Run the full review pipeline.
 
     When comment=True, posts findings as a GitHub PR review after printing.
-    Returns exit code (0 clean, 1 blocking, 2 usage error or an agent that
-    could not finish). An unfinished agent outranks findings, except under
-    --advisory: there it is reported, not raised, unless fewer than half of
-    the agents finished. That is no review at all, and exits 2 regardless.
+    Returns exit code (0 clean, 1 blocking, 2 usage error, a diff too large
+    to send, or an agent that could not finish). An unfinished agent outranks
+    findings, except under --advisory: there it is reported, not raised,
+    unless fewer than half of the agents finished. That is no review at all, and exits 2 regardless.
     LOWs from agents named in required_low_agents are exempt from the
     advisory LOW cap, so triage sees every LOW it requires an answer to.
 
@@ -1393,11 +1440,7 @@ async def run_review(
     only adds the low-confidence tail and a higher number only removes
     advisory noise. verbose implies 1 unless report_votes says otherwise.
     """
-    diff = stdin_diff if stdin_diff is not None else get_git_diff(base, staged)
-    spec = parse_ignore(_load_context_file(IGNORE_FILE)) if diff.strip() else None
-    diff, ignored = filter_diff(diff, spec)
-    if ignored:
-        print(f"Ignored {len(ignored)} file(s) per {IGNORE_FILE}.", file=sys.stderr)
+    diff, spec, ignored = _filtered_diff(stdin_diff, base, staged)
     if not diff.strip():
         print("No changes to review.")
         return 0
@@ -1409,6 +1452,10 @@ async def run_review(
     if not diff.strip():
         print("No changes to review since the last review.")
         return 0
+    sendable = _sendable(diff)
+    if sendable is None:
+        return 2
+    diff = sendable
 
     ledger_texts = _ledger_texts()
     ledger = _ledger_entries(ledger_texts[0])

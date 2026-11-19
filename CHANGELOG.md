@@ -5,6 +5,14 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+### Fixed
+- **An oversize diff fails before any model is called, and says why** (#160).
+  A deleted file over 64 KiB is sent as its header and a line count, not its
+  content, so deleting a 71 MB dump costs one small review; anything still
+  over 1 MiB (`GATEHOUSE_MAX_DIFF_BYTES`) exits 2 naming the limit and the
+  largest files, instead of sending the whole diff to every agent sample and
+  failing on HTTP 400s.
+
 ### Changed
 - **`Refuse plaintext secrets` also reads secret-named keys** (a475). Besides
   vendor key shapes, the Gourmand job now refuses an added line that gives a
