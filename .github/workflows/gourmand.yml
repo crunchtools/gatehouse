@@ -261,14 +261,18 @@ jobs:
               if [ -n "$conf" ]; then
                 named="${named}$(printf '\n%s\n' "$added" | grep -oE -e "$envline" || true)"
               fi
-              # Strip each key so the placeholder test reads the value alone,
-              # and drop a value that only repeats its key, any case
-              # (`TOKEN = "token"`, `"password": "Password"`).
-              values=$(printf '%s\n' "$named" | grep -v '^$' | while IFS= read -r seg; do
-                v=$(printf '%s\n' "$seg" | sed -E -e "s/^${akey}//" -e "s/${ekey}//")
-                k=$(printf '%s\n' "${seg%"$v"}" | sed -E -e 's/[^A-Za-z0-9_.-]+$//' -e 's/.*[^A-Za-z0-9_.-]//' | tr '[:upper:]' '[:lower:]')
-                [ "$(printf '%s\n' "$v" | tr -d "\"'" | tr '[:upper:]' '[:lower:]')" = "$k" ] || printf '%s\n' "$v"
-              done || true)
+              # Strip each key so the placeholder test reads the value alone.
+              values=$(printf '%s\n' "$named" | grep -v '^$' | sed -E -e "s/^${akey}//" -e "s/${ekey}//" || true)
+              if [ -n "$values" ] && printf '%s\n' "$values" | grep -viEq "$placeholder"; then
+                # Only a line about to be refused pays for this: drop a value
+                # that only repeats its key, any case (`TOKEN = "token"`,
+                # `"password": "Password"`).
+                values=$(printf '%s\n' "$named" | grep -v '^$' | while IFS= read -r seg; do
+                  v=$(printf '%s\n' "$seg" | sed -E -e "s/^${akey}//" -e "s/${ekey}//")
+                  k=$(printf '%s\n' "${seg%"$v"}" | sed -E -e 's/[^A-Za-z0-9_.-]+$//' -e 's/.*[^A-Za-z0-9_.-]//' | tr '[:upper:]' '[:lower:]')
+                  [ "$(printf '%s\n' "$v" | tr -d "\"'" | tr '[:upper:]' '[:lower:]')" = "$k" ] || printf '%s\n' "$v"
+                done || true)
+              fi
               if [ -n "$values" ] && printf '%s\n' "$values" | grep -viEq "$placeholder"; then
                 if [ -n "$soft" ]; then verdict=warn; else verdict=refuse; fi
               fi
