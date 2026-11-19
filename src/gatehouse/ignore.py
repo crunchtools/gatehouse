@@ -72,18 +72,18 @@ def _header_path(header: str) -> str | None:
     return None
 
 
-def _not_hunk(line: str) -> bool:
+def not_hunk(line: str) -> bool:
     return not line.startswith("@@")
 
 
-def _segment_paths(lines: list[str]) -> set[str]:
+def segment_paths(lines: list[str]) -> set[str]:
     """Every path a file section touches: old, new, rename and copy sides.
 
     Only the header counts: inside a hunk, a removed line "-- a/x" reads
     "--- a/x".
     """
     paths: set[str] = set()
-    header = [line.rstrip("\n") for line in itertools.takewhile(_not_hunk, lines)]
+    header = [line.rstrip("\n") for line in itertools.takewhile(not_hunk, lines)]
     for line in header:
         for prefix, prefixed in _PATH_LINES:
             if not line.startswith(prefix):
@@ -108,7 +108,7 @@ def _is_ignored(paths: set[str], spec: pathspec.GitIgnoreSpec) -> bool:
     return all(spec.match_file(path) for path in paths)
 
 
-def _sections(diff: str) -> Iterator[list[str]]:
+def diff_sections(diff: str) -> Iterator[list[str]]:
     """Yield the diff one section at a time: preamble, mail headers, files."""
     section: list[str] = []
     for line in diff.splitlines(keepends=True):
@@ -133,9 +133,9 @@ def filter_diff(diff: str, spec: pathspec.GitIgnoreSpec | None) -> tuple[str, li
     kept: list[str] = []
     ignored: list[str] = []
     files_kept = 0
-    for section in _sections(diff):
+    for section in diff_sections(diff):
         if section[0].startswith("diff --git "):
-            paths = _segment_paths(section)
+            paths = segment_paths(section)
             if _is_ignored(paths, spec):
                 ignored.append(" -> ".join(sorted(paths)))
                 continue
@@ -159,9 +159,9 @@ def diff_paths(diff: str) -> set[str]:
     """Every path any file section of a diff touches."""
     return {
         path
-        for section in _sections(diff)
+        for section in diff_sections(diff)
         if section[0].startswith("diff --git ")
-        for path in _segment_paths(section)
+        for path in segment_paths(section)
     }
 
 
@@ -172,9 +172,9 @@ def restrict_diff(diff: str, paths: set[str]) -> str:
     """
     kept: list[str] = []
     files_kept = 0
-    for section in _sections(diff):
+    for section in diff_sections(diff):
         if section[0].startswith("diff --git "):
-            if not _segment_paths(section) & paths:
+            if not segment_paths(section) & paths:
                 continue
             files_kept += 1
         kept.extend(section)

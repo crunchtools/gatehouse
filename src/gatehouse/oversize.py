@@ -12,7 +12,7 @@ from __future__ import annotations
 import itertools
 
 from gatehouse.diffview import OMITTED_PREFIX
-from gatehouse.ignore import _not_hunk, _sections, _segment_paths
+from gatehouse.ignore import diff_sections, not_hunk, segment_paths
 
 MAX_DIFF_BYTES = 1024 * 1024
 MAX_DIFF_BYTES_ENV = "GATEHOUSE_MAX_DIFF_BYTES"
@@ -21,18 +21,24 @@ DELETED_FILE_BYTES = 64 * 1024
 LARGEST_SHOWN = 5
 
 
+def section_bytes(section: list[str]) -> int:
+    """Bytes in a section, measured line by line rather than by joining a copy of it."""
+    return sum(len(line.encode()) for line in section)
+
+
 def _name(section: list[str]) -> str:
-    return " -> ".join(sorted(_segment_paths(section))) or section[0].rstrip("\n")
+    return " -> ".join(sorted(segment_paths(section))) or section[0].rstrip("\n")
 
 
 def _elided(section: list[str], limit: int) -> list[str] | None:
     """A deleted file's section over ``limit`` bytes as its header and a note; else None."""
     if not section[0].startswith("diff --git "):
         return None
-    header = list(itertools.takewhile(_not_hunk, section))
-    deleted = any(line.startswith(("deleted file mode", "+++ /dev/null")) for line in header)
-    size = len("".join(section).encode())
-    if not deleted or size <= limit:
+    header = list(itertools.takewhile(not_hunk, section))
+    if not any(line.startswith(("deleted file mode", "+++ /dev/null")) for line in header):
+        return None
+    size = section_bytes(section)
+    if size <= limit:
         return None
     removed = sum(1 for line in section[len(header) :] if line.startswith("-"))
     return [*header, f"{OMITTED_PREFIX}{removed} deleted line(s), {size} bytes\n"]
@@ -45,7 +51,7 @@ def elide_deletions(diff: str, limit: int = DELETED_FILE_BYTES) -> tuple[str, li
     still reads as deleted, and the note replaces the hunks, so the result is
     small enough that eliding it again changes nothing.
     """
-    sections = [(section, _elided(section, limit)) for section in _sections(diff)]
+    sections = [(section, _elided(section, limit)) for section in diff_sections(diff)]
     text = "".join(line for section, short in sections for line in short or section)
     return text, [_name(section) for section, short in sections if short is not None]
 
@@ -57,8 +63,8 @@ def oversize_message(diff: str, limit: int = MAX_DIFF_BYTES) -> str | None:
         return None
     files = sorted(
         (
-            (len("".join(section).encode()), _name(section))
-            for section in _sections(diff)
+            (section_bytes(section), _name(section))
+            for section in diff_sections(diff)
             if section[0].startswith("diff --git ")
         ),
         reverse=True,
