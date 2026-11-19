@@ -180,10 +180,10 @@ jobs:
           # (`STATIC_TOKEN = "static_token"`).
           held="(.*[_-])?(example|placeholder|dummy|fake)([_-].*)?|(change|replace)[_-]?(me|this)([_-].*)?|redacted|x{3,}|(your|test)[_-].*|.*[_-]for[_-]ci|.*<[^>]*>.*|[\$].*|.*([\$][{(]|[{][{]|%[(]).*|.*[*][*][*].*|.*(•)(•).*|.*[.][.][.].*|[a-z]+_[a-z_]*(pass(word|wd|phrase)|secret|token|key)|yes|no|true|false|none|null|on|off"
           placeholder="^${Q}?(${held})${Q}?\$"
-          # In a systemd unit, quadlet or drop-in, a value led by a specifier
-          # (`%d/x`, `%h/.pgpass`) is a reference too. Elsewhere `%K...` is
-          # just a literal that starts with a percent sign.
-          unitholder="^${Q}?(%[A-Za-z].*|${held})${Q}?\$"
+          # In a systemd unit, quadlet or drop-in, a specifier alone or
+          # leading a path (`%d/x`, `%h/.pgpass`) is a reference too. Anything
+          # else, and `%d/x` outside a unit, is a literal with a percent sign.
+          unitholder="^${Q}?(%[aAbBCdEfgGhHiIjJlLmMnNopPqsStTuUvVwWyY](/.*)?|${held})${Q}?\$"
           units='[.](service|socket|timer|path|mount|target|container|pod|volume|network|kube|build|image)$|[.](service|socket|timer|path|mount|container|pod|volume|network|kube|build|image)[.]d/[^/]*[.]conf$|(^|/)systemd/.*[.]conf$'
           tests='(^|/)(tests?|__tests__|spec|fixtures?|testdata)/|(^|/)test_[^/]*$|_test[.][a-z]+$|[.](test|spec)[.][jt]sx?$|(^|/)conftest[.]py$'
           configs='(^|/)([.]env[^/]*|[^/]*[.](env|ya?ml|conf|cfg|ini|properties|container|service|sh|[Cc]ontainerfile|[Dd]ockerfile)|Containerfile[^/]*|Dockerfile[^/]*|docker-compose[^/]*|compose[^/]*)$'

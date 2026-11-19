@@ -182,9 +182,11 @@ PASSED = {
     [
         ("src/settings.py", 'password = "%Kq9vLm2Xz8"\n'),  # gatehouse: allow-secret
         (".env", "PGPASSWORD=%Kq9vLm2Xz8\n"),  # gatehouse: allow-secret
+        ("app.container", "Environment=API_TOKEN=%Kq9vLm2Xz8\n"),  # gatehouse: allow-secret
+        ("app.service", "Environment=API_TOKEN=%dq9vLm2Xz8\n"),  # gatehouse: allow-secret
     ],
 )
-def test_a_percent_literal_outside_a_unit_is_refused(tmp_path, name, text):
+def test_a_percent_literal_that_is_no_specifier_is_refused(tmp_path, name, text):
     result = _scan(tmp_path, {name: text})
     assert result.returncode == 1, result.stdout + result.stderr
     assert f"::error file={name},line=1::" in result.stdout
