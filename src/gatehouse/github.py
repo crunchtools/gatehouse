@@ -83,6 +83,18 @@ def fetch_repo_file(repo: str, ref: str, path: str, token: str) -> str | None:
     return None
 
 
+def _inert(text: str) -> str:
+    """``text`` with no HTML comment opener or closer, so it cannot plant a hidden marker.
+
+    Every Gatehouse marker is an HTML comment matched as a substring, so any
+    PR-controlled string written into a review (a filename, a finding quoting
+    the diff) passes through here first. A zero-width space splits each
+    delimiter: it renders the same, in prose and in a code block, but no
+    longer matches.
+    """
+    return text.replace("<!--", "<!\u200b--").replace("-->", "-\u200b->")
+
+
 # The first line of every finding comment; triage.yml parses the same prefix.
 FINDING_HEADER_RE = re.compile(r"^\*\*(CRITICAL|HIGH|MEDIUM|LOW)\*\* \(([^)]+)\):")
 
@@ -90,15 +102,16 @@ FINDING_HEADER_RE = re.compile(r"^\*\*(CRITICAL|HIGH|MEDIUM|LOW)\*\* \(([^)]+)\)
 def _format_comment_body(agent: Agent, finding: dict[str, Any]) -> str:
     """Format a single finding as a PR review comment body.
 
-    ANSI escape sequences are stripped from the finding's description,
-    suggestion, and evidence before they are embedded in the comment. A
+    ANSI escape sequences and HTML comment delimiters are stripped from the
+    finding's description, suggestion, and evidence before they are embedded
+    in the comment. A
     hidden marker records the agent slug and confidence, so replies can be
     joined back to confidence when tuning the threshold.
     """
     severity = finding.get("severity", "low").upper()
-    description = strip_ansi(finding.get("description", ""))
-    suggestion = strip_ansi(finding.get("suggestion", ""))
-    evidence = strip_ansi(finding.get("evidence", ""))
+    description = _inert(strip_ansi(finding.get("description", "")))
+    suggestion = _inert(strip_ansi(finding.get("suggestion", "")))
+    evidence = _inert(strip_ansi(finding.get("evidence", "")))
 
     parts = [f"**{severity}** ({agent.name}): {description}"]
     if suggestion:
@@ -215,16 +228,18 @@ def fetch_last_reviewed_commit() -> str | None:
     """Return the commit of the newest complete Gatehouse review on this PR.
 
     A Gatehouse review is one posted by a bot account whose body carries
-    REVIEW_MARKER; requiring a bot keeps a PR participant from planting a
-    base that would skip their commits. Outside a PR context, with no such
-    review, or on any API error, returns None (with a warning on error):
-    the caller then reviews the whole PR.
+    REVIEW_MARKER and not REVIEW_FAILED_MARKER; requiring a bot keeps a PR
+    participant from planting a base that would skip their commits, and
+    excluding a failed review keeps a forged marker in it from making one.
+    Outside a PR context, with no such review, or on any API error, returns
+    None (with a warning on error): the caller then reviews the whole PR.
     """
     commits = [
         r["commit_id"]
         for r in _fetch_pr_list("reviews", "earlier reviews")
         if (r.get("user") or {}).get("type") == "Bot"
         and REVIEW_MARKER in (r.get("body") or "")
+        and REVIEW_FAILED_MARKER not in (r.get("body") or "")
         and r.get("commit_id")
     ]
     return commits[-1] if commits else None
@@ -501,7 +516,7 @@ async def post_failed_review(reason: str, commit_id: str = "") -> bool:
         return False
     payload: dict[str, Any] = {
         "event": "COMMENT",
-        "body": f"Gatehouse could not review this PR: {reason}\n\n{REVIEW_FAILED_MARKER}",
+        "body": f"Gatehouse could not review this PR: {_inert(reason)}\n\n{REVIEW_FAILED_MARKER}",
     }
     if commit_id:
         payload["commit_id"] = commit_id

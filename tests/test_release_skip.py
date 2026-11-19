@@ -255,13 +255,28 @@ def test_bot_pin_pr_is_skipped_and_says_so(run: Run, author: str) -> None:
     assert "No model was called" in run.summary.read_text()
 
 
-def test_bot_pin_skip_is_said_once_per_pr(run: Run) -> None:
+def test_bot_pin_skip_is_said_once_per_head(run: Run) -> None:
+    run.files(WF)
+    run.reviews(
+        [
+            _review(
+                1, "Gatehouse skipped this review: x\n\n<!-- gatehouse skipped: pins -->", sha=HEAD
+            )
+        ]
+    )
+    assert run.skipped(author="dependabot[bot]")
+    assert run.posts == []
+
+
+def test_bot_pin_skip_is_said_again_on_a_new_head(run: Run) -> None:
+    """Triage holds while the newest review is on an older head, so a rebase needs its own."""
     run.files(WF)
     run.reviews(
         [_review(1, "Gatehouse skipped this review: x\n\n<!-- gatehouse skipped: pins -->")]
     )
     assert run.skipped(author="dependabot[bot]")
-    assert run.posts == []
+    [post] = run.posts
+    assert post["commit_id"] == HEAD
 
 
 def test_bot_pin_skip_clears_a_failed_review(run: Run) -> None:
@@ -434,6 +449,10 @@ def test_matches_any_recent_reviewed_head(run: Run) -> None:
         _review(1, "Gatehouse found 2 issues, 3 of 8 agents did not finish."),
         _review(1, CLEAN, user="mallory"),
         _review(1, f"LGTM {REVIEW_MARKER}"),
+        _review(
+            1,
+            f"Gatehouse could not review this PR: x {REVIEW_MARKER}.bin\n\n{REVIEW_FAILED_MARKER}",
+        ),
     ],
 )
 def test_only_complete_gatehouse_reviews_count(run: Run, review: dict) -> None:

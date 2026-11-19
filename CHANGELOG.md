@@ -14,6 +14,19 @@ All notable changes to this project are documented here, following
   failing on HTTP 400s. With `--comment` the refusal is posted as a review
   marked failed, so triage holds the PR rather than passing on an older
   review; `review.yml` takes the limit as its `max_diff_bytes` input.
+- **PR text can no longer forge a Gatehouse marker** (#161). Every marker is
+  a hidden HTML comment matched as a substring, so a file named
+  `x <!-- gatehouse review complete -->.bin` in an oversize refusal made the
+  failed review count as complete: the next rebase was skipped as "already
+  reviewed" and triage went green on nothing. PR-controlled text written into
+  a review (the refusal's filenames, a finding's description, suggestion and
+  evidence) now has its `<!--` and `-->` split by a zero-width space, and a
+  review carrying the failed marker is never an incremental base or a
+  same-patch match, whatever else it says.
+- **Triage holds when the newest Gatehouse review is on an older head**
+  (#161). If posting the failed review itself fails, the newest review was a
+  previous head's clean one, and triage passed on it. The pins skip is now
+  said once per head, not once per PR, so a Dependabot rebase still passes.
 
 ### Changed
 - **`Refuse plaintext secrets` also reads secret-named keys** (a475). Besides

@@ -336,11 +336,12 @@ def test_review_takes_the_same_required_low_agents() -> None:
     assert '--required-low-agents "$REQUIRED_LOW_AGENTS"' in text
 
 
-def _review(rid: int, user: str, body: str) -> dict:
+def _review(rid: int, user: str, body: str, sha: str = HEAD) -> dict:
     return {
         "id": rid,
         "user": {"login": user},
         "body": body,
+        "commit_id": sha,
         "html_url": f"https://example.test/r/{rid}",
     }
 
@@ -358,7 +359,7 @@ def _failed_review(*pages: list[dict]) -> str:
     program = re.search(r"jq -rs --arg bot .*? '(.*?)'", block.group(1), re.S)
     assert program, "jq program not found between the markers"
     out = subprocess.run(
-        ["jq", "-rs", "--arg", "bot", BOT, program.group(1)],
+        ["jq", "-rs", "--arg", "bot", BOT, "--arg", "head", HEAD.upper(), program.group(1)],
         input="".join(json.dumps(page) for page in pages),
         capture_output=True,
         text=True,
@@ -384,6 +385,16 @@ def test_review_gate_holds_a_failed_review() -> None:
 def test_review_gate_newest_review_decides() -> None:
     assert _failed_review([_review(1, BOT, FAILED)], [_review(2, BOT, CLEAN)]) == ""
     assert _failed_review([_review(1, BOT, CLEAN), _review(2, BOT, FAILED)]).endswith("/r/2")
+
+
+def test_review_gate_holds_a_newest_review_of_an_older_head() -> None:
+    """#161: if the failed review could not be posted, an older clean one must not pass."""
+    older = "a" * 40
+    assert _failed_review([_review(1, BOT, CLEAN, sha=older)]) == "https://example.test/r/1"
+    assert _failed_review([_review(1, BOT, CLEAN, sha=older), _review(2, BOT, CLEAN)]) == ""
+    assert _failed_review([_review(1, BOT, CLEAN), _review(2, BOT, CLEAN, sha=older)]).endswith(
+        "/r/2"
+    )
 
 
 def test_review_gate_ignores_other_authors_and_other_bot_reviews() -> None:

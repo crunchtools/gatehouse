@@ -226,10 +226,12 @@ jobs:
                     test("^[-+]\\s*(-\\s+)?uses:\\s*[^\\s]+@[^\\s]+(\\s+#.*)?$"))
                   and actions("+") == actions("-"))
               ' "$pin_files" > /dev/null; then
-            # One review says so per PR, not one per Dependabot rebase.
-            if jq -se --arg bot "$REVIEWER" '
+            # One review says so per head, not one per re-run: triage holds
+            # while the newest review is on an older head.
+            if jq -se --arg bot "$REVIEWER" --arg head "$HEAD_SHA" '
                 [ (add // [])[] | select(.user.login == $bot and ((.body // "") | startswith("Gatehouse"))) ]
-                | last | (.body // "") | contains("<!-- gatehouse skipped: pins -->")
+                | last | ((.body // "") | contains("<!-- gatehouse skipped: pins -->"))
+                  and ((.commit_id // "") | ascii_downcase) == ($head | ascii_downcase)
               ' "$skip_reviews" > /dev/null; then
               echo "Bot PR moving only action refs; not reviewed. No model was called." \
                 | tee -a "$GITHUB_STEP_SUMMARY"
@@ -260,7 +262,8 @@ jobs:
             jq -rs --arg bot "$REVIEWER" '
               [ (add // [])[]
                 | select(.user.login == $bot and ((.body // "") | startswith("Gatehouse"))
-                    and ((.body // "") | contains("<!-- gatehouse review complete -->")))
+                    and ((.body // "") | contains("<!-- gatehouse review complete -->"))
+                    and ((.body // "") | contains("<!-- gatehouse review failed -->") | not))
                 | {sha: (.commit_id // ""), url: (.html_url // "")}
                 | select(.sha | test("^[0-9a-f]{40}$")) ]
               | reverse

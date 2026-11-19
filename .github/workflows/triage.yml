@@ -105,16 +105,20 @@ jobs:
 
           # A review that did not happen has no findings to answer, and is not
           # a clean one (#77). The newest Gatehouse review decides, so
-          # re-running the review job is what clears it.
+          # re-running the review job is what clears it. It must also be on
+          # the head: when the failed review itself could not be posted, the
+          # newest is an older head's, and its clean result says nothing of
+          # this one (#161).
           gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/reviews?per_page=100" \
             > reviews.json
 
           # --- review gate (tests/test_triage.py runs this against fixtures) ---
-          jq -rs --arg bot "$REVIEWER" '
+          jq -rs --arg bot "$REVIEWER" --arg head "$HEAD_SHA" '
             [ (add // [])[]
               | select(.user.login == $bot and ((.body // "") | startswith("Gatehouse"))) ]
             | last
-            | select(. != null and (.body | contains("<!-- gatehouse review failed -->")))
+            | select(. != null and ((.body | contains("<!-- gatehouse review failed -->"))
+                or ((.commit_id // "") | ascii_downcase) != ($head | ascii_downcase)))
             | .html_url
           ' reviews.json > failed_review.txt
           # The commit the newest Gatehouse review looked at. An orphaned
@@ -133,11 +137,11 @@ jobs:
             {
               echo "## The last Gatehouse review did not finish"
               echo
-              echo "Nothing was reviewed: $(cat failed_review.txt)"
+              echo "Nothing reviewed ${HEAD_SHA:0:7}: $(cat failed_review.txt)"
               echo
-              echo "Fix the cause it names, then re-run the review job."
+              echo "Fix the cause it names, if any, then re-run the review job."
             } >> "$GITHUB_STEP_SUMMARY"
-            echo "::error::The last Gatehouse review did not finish: $(cat failed_review.txt)"
+            echo "::error::The last Gatehouse review did not finish on ${HEAD_SHA:0:7}: $(cat failed_review.txt)"
             exit 1
           fi
 
