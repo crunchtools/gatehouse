@@ -125,3 +125,20 @@ async def test_run_review_rejects_bad_limit(monkeypatch: pytest.MonkeyPatch, val
     with patch("gatehouse.review.call_model", new_callable=AsyncMock) as call:
         assert await run_review(stdin_diff=MODIFIED, api_key="k") == 2
     call.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_run_review_refuses_when_still_oversize_after_elision(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Deletions are elided first; what remains is still measured and refused."""
+    monkeypatch.setenv(MAX_DIFF_BYTES_ENV, "2000")
+    big = MODIFIED + "".join(f"+line {i}\n" for i in range(500))
+    diff = _deleted("backup/dump.sql", 20000) + big
+    with patch("gatehouse.review.call_model", new_callable=AsyncMock) as call:
+        exit_code = await run_review(stdin_diff=diff, agent_slugs=["bugs"], api_key="k")
+    assert exit_code == 2
+    call.assert_not_called()
+    err = capsys.readouterr().err
+    assert "Elided 1 large deleted file(s): backup/dump.sql." in err
+    assert "2000-byte limit" in err

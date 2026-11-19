@@ -73,6 +73,7 @@ def _header_path(header: str) -> str | None:
 
 
 def not_hunk(line: str) -> bool:
+    """True for a line before a file section's first hunk: its header."""
     return not line.startswith("@@")
 
 
