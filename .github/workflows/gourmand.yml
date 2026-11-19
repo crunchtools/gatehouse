@@ -25,10 +25,11 @@
 # key a literal (a475): a fallback on a secret env read (`|| 'x'`, `?? 'x'`,
 # `${X:-x}`, `getenv("X", "x")`), a quoted value (`password: 'x'`), or an
 # unquoted one in env, compose, yaml, conf and unit files and Containerfiles
-# (`PGPASSWORD=x`, `ENV X=x`, `Environment=X=x`). A named literal in a test
-# path is a warning, not a refusal, because fixtures are full of fake tokens;
-# a fallback is refused there too, since that is how a dev password reaches
-# production. In docs both only warn, since prose describes secrets. A value
+# (`PGPASSWORD=x`, `ENV X=x`, `Environment=X=x`), in any pair of a
+# multi-variable line (`ENV A=x B=y`, `docker run -e A=x -e B=y`). A named
+# literal in a test path is a warning, not a refusal, because fixtures are
+# full of fake tokens; a fallback is refused there too, since that is how a
+# dev password reaches production. In docs both only warn, since prose describes secrets. A value
 # that is wholly a placeholder (`changeme`, `<...>`, `${...}`, `example`) or
 # a switch (`yes`, `${X:-unset}`) passes. A vendor key shape is refused
 # everywhere. A fixture marks its line `gatehouse: allow-secret`.
@@ -169,7 +170,16 @@ jobs:
           # `PodmanArgs=--env X=x`.
           prefix="(export[[:space:]]+|ENV[[:space:]]+|ARG[[:space:]]+|Environment=${Q}?|([A-Za-z]+=)?--env[[:space:]=]+)?"
           ekey="^[[:space:]]*(-[[:space:]]+)?${prefix}[A-Z0-9_]*${ENV}[[:space:]]*[=:][[:space:]]*"
-          envline="${ekey}${Q}?[^\"'[:space:]\$<{#|>&][^\"'[:space:]]{2,}"
+          pvalue="${Q}?[^\"'[:space:]\$<{#|>&][^\"'[:space:]]{2,}"
+          envline="${ekey}${pvalue}"
+          # Every later pair too, not just the first: `ENV A=x PGPASSWORD=y`,
+          # `Environment="A=x" "B=y"`, `export A=x B=y`, and an `-e`/`--env`
+          # pair anywhere (`docker run -e A=x -e B=y`). A bare pair counts
+          # only on an ENV, ARG, export or Environment= line, before any `#`.
+          pname="((-e|--env)[[:space:]=]+)?${Q}?[A-Z0-9_]*${ENV}="
+          pair="(^|[[:space:]])${pname}${pvalue}"
+          pairs="^[[:space:]]*(export|ENV|ARG|Environment=)[^#]*${pair}"
+          dashe="(^|[[:space:]])(-e|--env)[[:space:]=]+${Q}?[A-Z0-9_]*${ENV}=${pvalue}"
           # A default that is only a switch or an unset sentinel:
           # `getenv("REQUIRE_PASSPHRASE", "yes")`, `${TOKEN:-unset}`.
           switch="(${Q}|[{][A-Z0-9_]*:?-)(yes|no|true|false|none|null|on|off|unset|not[_-]set|missing)(${Q}|[}])\$"
@@ -202,7 +212,7 @@ jobs:
           # A `+++ ` row is a file header only between `diff --git` and the
           # first `@@`; past that it is an added line that began `++ `.
           sed -e '/^diff --git /,/^@@ /s/^+++ .*//' -e 's/^+//' -e t -e 's/.*//' "$diff_file" \
-            | grep -nE -e "$shapes" -e "$fallback" -e "$assign" -e "$envline" \
+            | grep -nE -e "$shapes" -e "$fallback" -e "$assign" -e "$envline" -e "$pairs" -e "$dashe" \
             | cut -d: -f1 > "$cand_file" || true
           if [ ! -s "$cand_file" ]; then
             rm -f "$diff_file" "$cand_file"
@@ -268,15 +278,20 @@ jobs:
               named=$(printf '%s\n' "$added" | grep -oE -e "$assign" || true)
               if [ -n "$conf" ]; then
                 named="${named}$(printf '\n%s\n' "$added" | grep -oE -e "$envline" || true)"
+                if printf '%s\n' "$added" | grep -Eq -e "$pairs"; then
+                  named="${named}$(printf '\n%s\n' "${added%%#*}" | grep -oE -e "$pair" || true)"
+                else
+                  named="${named}$(printf '\n%s\n' "$added" | grep -oE -e "$dashe" || true)"
+                fi
               fi
               # Strip each key so the placeholder test reads the value alone.
-              values=$(printf '%s\n' "$named" | grep -v '^$' | sed -E -e "s/^${akey}//" -e "s/${ekey}//" || true)
+              values=$(printf '%s\n' "$named" | grep -v '^$' | sed -E -e "s/^${akey}//" -e "s/${ekey}//" -e "s/^[[:space:]]*${pname}//" || true)
               if [ -n "$values" ] && printf '%s\n' "$values" | grep -viEq "$held_by"; then
                 # Only a line about to be refused pays for this: drop a value
                 # that only repeats its key, any case (`TOKEN = "token"`,
                 # `"password": "Password"`).
                 values=$(printf '%s\n' "$named" | grep -v '^$' | while IFS= read -r seg; do
-                  v=$(printf '%s\n' "$seg" | sed -E -e "s/^${akey}//" -e "s/${ekey}//")
+                  v=$(printf '%s\n' "$seg" | sed -E -e "s/^${akey}//" -e "s/${ekey}//" -e "s/^[[:space:]]*${pname}//")
                   k=$(printf '%s\n' "${seg%"$v"}" | sed -E -e 's/[^A-Za-z0-9_.-]+$//' -e 's/.*[^A-Za-z0-9_.-]//' | tr '[:upper:]' '[:lower:]')
                   [ "$(printf '%s\n' "$v" | tr -d "\"'" | tr '[:upper:]' '[:lower:]')" = "$k" ] || printf '%s\n' "$v"
                 done || true)
@@ -288,6 +303,11 @@ jobs:
             [ -n "$verdict" ] || continue
             # Strip any prefix first, so the name's group number never moves.
             name=$(printf '%s\n' "$added" | sed -n -E -e "s/^[[:space:]]*(-[[:space:]]+)?${prefix}//" -e 's/^"?([A-Za-z_][A-Za-z0-9_.-]*)"?[[:space:]]*[:=].*/\1/p')
+            # A hit in a later pair names that pair's key, not the first one.
+            if printf '%s\n' "$added" | grep -Eq -e "$pairs" -e "$dashe" \
+              && ! printf '%s\n' "$name" | grep -Eq "$ENV|$KEY"; then
+              name=$(printf '%s\n' "$added" | grep -oE "[A-Z0-9_]*${ENV}=" | head -n 1 | tr -d =)
+            fi
             if [ "$verdict" = refuse ]; then
               echo "::error file=${file},line=${at}::plaintext secret in ${name:-(unnamed value)}"
               hits=$((hits + 1))
