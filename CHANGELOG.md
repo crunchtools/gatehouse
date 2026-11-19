@@ -30,6 +30,17 @@ All notable changes to this project are documented here, following
   passes the secret scan in systemd units, quadlets and their drop-ins, but
   no longer anywhere else, and `%Kq9...` passes nowhere, so
   `password = "%Kq9vLm2Xz8"` in a `.py` or `.env` file is refused again.
+- **The secret scan reads every pair on a multi-variable line** (a539). A
+  secret after the first pair went unflagged: `ENV A=x PGPASSWORD=y`,
+  `Environment="A=x" "PGPASSWORD=y"`, `export A=x B=y`, and
+  `docker run -e A=x -e B=y` (an `-e`/`--env` pair counts anywhere on the
+  line, so a continued `-e PGPASSWORD=y \` is read too). Each pair gets the
+  placeholder, reference, test/doc-warn and unit-only specifier rules the
+  first one already had, and the hit names the key whose value failed. A
+  `#` ends the scan of a line only where it opens a word, and a quoted value
+  may start with `#`. A quoted placeholder in a conf file
+  (`PGPASSWORD="changeme"`) is no longer refused: two matches on one line
+  were read as one value.
 - The container release runs constitution v1.51.0's `container-release.yml`
   (was v1.46.0) and grants it `issues: write`, so a failed scheduled rebuild
   opens an issue instead of only warning. A `v*` promote now also refuses an

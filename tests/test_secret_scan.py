@@ -167,6 +167,8 @@ PASSED = {
         "SESSION_SECRET=change-this-to-a-random-string\n",
     ),
     "own name": ("src/consts.py", 'TOKEN = "token"\n'),
+    "quoted placeholder in yaml": ("deploy/app.yml", 'API_TOKEN: "changeme"\n'),
+    "quoted placeholder in env": (".env", 'PGPASSWORD="changeme"\n'),
     "own name, any case": ("src/locales/en.json", '{"password": "Password"}\n'),
     "systemd credential": ("app.container", "Environment=API_TOKEN=%d/api_token\n"),
     "systemd specifier in a unit": ("app.service", "Environment=PGPASSFILE=%h/.pgpass\n"),
@@ -240,6 +242,70 @@ def test_prose_about_a_secret_only_warns(tmp_path, name, text):
     assert result.returncode == 0, result.stdout + result.stderr
     assert f"::warning file={name},line=1::" in result.stdout
     assert "::error" not in result.stdout
+
+
+MULTI_REFUSED = {
+    "containerfile env": ("Containerfile", "ENV A=x PGPASSWORD=rotv\n"),
+    "quoted unit pairs": ("rotv.service", 'Environment="A=x" "PGPASSWORD=rotv"\n'),
+    "unit pairs": ("rotv.container", "Environment=A=x PGPASSWORD=rotv\n"),
+    "shell export": ("run.sh", "export A=x PGPASSWORD=rotv\n"),
+    "docker run": ("run.sh", "docker run -e A=x -e PGPASSWORD=rotv img\n"),
+    "quoted docker run": ("run.sh", 'podman run -e A=x -e "PGPASSWORD=rotv" img\n'),
+    "podman args": ("rotv.container", "PodmanArgs=--env A=x --env=PGPASSWORD=rotv\n"),
+    "continued run": ("run.sh", "  -e PGPASSWORD=rotv \\\n"),
+    "hash inside a value": ("Containerfile", "ENV A=x#y PGPASSWORD=rotv\n"),
+    "quoted value led by a hash": ("Containerfile", 'ENV A=x PGPASSWORD="#s3cret"\n'),
+    "percent outside a unit": ("Containerfile", "ENV A=x API_TOKEN=%d/api_token\n"),
+    "percent that is no specifier": (
+        "app.container",
+        "Environment=A=x API_TOKEN=%Kq9vLm2Xz8\n",  # gatehouse: allow-secret
+    ),
+}
+
+MULTI_PASSED = {
+    "placeholder": ("Containerfile", "ENV A=x PGPASSWORD=changeme\n"),
+    "reference": ("run.sh", 'export A=x TOKEN="$T"\n'),
+    "docker reference": ("run.sh", 'docker run -e A=x -e GITHUB_TOKEN="$GH_TOKEN" img\n'),
+    "own name": ("Containerfile", "ENV A=x TOKEN=token\n"),
+    "systemd credential": ("app.container", "Environment=A=x API_TOKEN=%d/api_token\n"),
+    "file path key": ("Containerfile", "ENV A=x TOKEN_FILE=/run/secrets/token\n"),
+    "comment": ("run.sh", "export A=x  # then set PGPASSWORD=rotv by hand\n"),
+}
+
+
+@pytest.mark.parametrize("case", MULTI_REFUSED)
+def test_a_later_pair_on_a_line_is_refused(tmp_path, case):
+    name, text = MULTI_REFUSED[case]
+    result = _scan(tmp_path, {name: text})
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert f"::error file={name},line=1::plaintext secret in " in result.stdout
+    assert "plaintext secret in A\n" not in result.stdout
+
+
+@pytest.mark.parametrize("case", MULTI_PASSED)
+def test_a_later_pair_holding_no_secret_passes(tmp_path, case):
+    name, text = MULTI_PASSED[case]
+    result = _scan(tmp_path, {name: text})
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "::error" not in result.stdout
+    assert "::warning" not in result.stdout
+
+
+@pytest.mark.parametrize("name", ["tests/run.sh", ".env.example"])
+def test_a_later_pair_in_a_test_or_doc_only_warns(tmp_path, name):
+    result = _scan(tmp_path, {name: "export A=x SESSION_SECRET=s3cr3t-value\n"})
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"::warning file={name},line=1::" in result.stdout
+
+
+def test_a_later_pair_hit_names_the_key_that_failed(tmp_path):
+    result = _scan(tmp_path, {"Containerfile": "ENV API_TOKEN=changeme PGPASSWORD=rotv\n"})
+    assert "::error file=Containerfile,line=1::plaintext secret in PGPASSWORD" in result.stdout
+
+
+def test_a_later_pair_hit_names_its_own_key(tmp_path):
+    result = _scan(tmp_path, {"Containerfile": "ENV A=x PGPASSWORD=rotv\n"})
+    assert "::error file=Containerfile,line=1::plaintext secret in PGPASSWORD" in result.stdout
 
 
 def test_an_added_line_that_looks_like_a_header_is_read(tmp_path):
