@@ -82,3 +82,5 @@ jobs:
     permissions:
       pull-requests: read
     uses: ./.github/workflows/triage.yml
+    with:
+      review_result: ${{ needs.review.result }}

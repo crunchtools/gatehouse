@@ -23,11 +23,18 @@ All notable changes to this project are documented here, following
   evidence) now has its `<!--` and `-->` split by a zero-width space, and a
   review carrying the failed marker is never an incremental base or a
   same-patch match, whatever else it says.
-- **Triage holds when the newest Gatehouse review is on an older head**
-  (#161). If posting the failed review itself fails, the newest review was a
-  previous head's clean one, and triage passed on it. The pins skip is now
+- **Triage reads the review of the head** (#161). If posting the failed
+  review itself failed, the newest review was a previous head's clean one,
+  and triage passed on it; it now holds when no review is of the head. Pushes
+  are reviewed concurrently, so it takes the newest review *of the head*: an
+  older head's slower review no longer holds a clean one. The pins skip is
   said once per head, not once per PR, so a Dependabot rebase still passes.
-  Constitution 1.10.0 states both rules.
+- **Triage holds a PR whose review job died before posting anything**
+  (#161). `triage.yml` takes `review_result` (pass `needs.review.result`, as
+  `examples/gatehouse.yml` now does): with no Gatehouse review on the PR, only
+  a review job that succeeded, such as the Ashigaru release skip, passes.
+  Callers that do not pass it keep the old behaviour. Constitution 1.10.0
+  states these rules.
 
 ### Changed
 - **`Refuse plaintext secrets` also reads secret-named keys** (a475). Besides
