@@ -27,6 +27,7 @@ All notable changes to this project are documented here, following
   (#161). If posting the failed review itself fails, the newest review was a
   previous head's clean one, and triage passed on it. The pins skip is now
   said once per head, not once per PR, so a Dependabot rebase still passes.
+  Constitution 1.10.0 states both rules.
 
 ### Changed
 - **`Refuse plaintext secrets` also reads secret-named keys** (a475). Besides
