@@ -158,6 +158,17 @@ PASSED = {
     "unset sentinel": ("run.sh", 'TOKEN="${TOKEN:-unset}"\n'),
     "missing sentinel": ("run.sh", ': "${VAULT_TOKEN:-missing}"\n'),
     "not set sentinel": ("src/config.py", 'pw = os.environ.get("PGPASSWORD", "not-set")\n'),
+    "placeholder word": (
+        ".github/workflows/ci.yml",
+        "      boot-env: |\n        EXAMPLE_API_KEY=gate-dummy\n",
+    ),
+    "change this, with a suffix": (
+        "deploy/app.env",
+        "SESSION_SECRET=change-this-to-a-random-string\n",
+    ),
+    "own name": ("src/consts.py", 'TOKEN = "token"\n'),
+    "own name, any case": ("src/locales/en.json", '{"password": "Password"}\n'),
+    "systemd credential": ("app.container", "Environment=API_TOKEN=%d/api_token\n"),
 }
 
 
@@ -200,6 +211,8 @@ def test_named_literal_in_a_test_only_warns(tmp_path, name):
     [
         ("README.md", 'password: "hunter2"\n'),  # gatehouse: allow-secret
         ("docs/setup.txt", "pw = process.env.PGPASSWORD || 'rotv'\n"),  # gatehouse: allow-secret
+        (".env.example", "SESSION_SECRET=s3cr3t-value\n"),  # gatehouse: allow-secret
+        ("config.yml.sample", 'api_token: "abc123def"\n'),  # gatehouse: allow-secret
     ],
 )
 def test_prose_about_a_secret_only_warns(tmp_path, name, text):

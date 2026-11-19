@@ -174,14 +174,16 @@ jobs:
           # `getenv("REQUIRE_PASSPHRASE", "yes")`, `${TOKEN:-unset}`.
           switch="(${Q}|[{][A-Z0-9_]*:?-)(yes|no|true|false|none|null|on|off|unset|not[_-]set|missing)(${Q}|[}])\$"
           # Values that hold no secret, matched against the whole value:
-          # placeholders, references (`"$X"`, `a${X}`), CI fakes
-          # (`test_token_for_ci`), masks, and a field's own name
-          # (`STATIC_TOKEN = "static_token"`).
-          placeholder="^${Q}?(change[_-]?(me|this)|replace[_-]?me|example|placeholder|dummy|fake|redacted|x{3,}|(your|test|dummy|fake)[_-].*|.*[_-]for[_-]ci|.*<[^>]*>.*|[\$].*|.*([\$][{(]|[{][{]|%[(]).*|.*[*][*][*].*|.*(•)(•).*|.*[.][.][.].*|[a-z]+_[a-z_]*(pass(word|wd|phrase)|secret|token|key)|yes|no|true|false|none|null|on|off)${Q}?\$"
+          # placeholders, alone or as a -/_ word (`gate-dummy`, not
+          # `myexample-key`), references (`"$X"`, `a${X}`, systemd's
+          # `%d/x`), CI fakes (`test_token_for_ci`), masks, and a field's own
+          # name (`STATIC_TOKEN = "static_token"`).
+          placeholder="^${Q}?((.*[_-])?(example|placeholder|dummy|fake)([_-].*)?|(change|replace)[_-]?(me|this)([_-].*)?|redacted|x{3,}|(your|test)[_-].*|.*[_-]for[_-]ci|%[A-Za-z].*|.*<[^>]*>.*|[\$].*|.*([\$][{(]|[{][{]|%[(]).*|.*[*][*][*].*|.*(•)(•).*|.*[.][.][.].*|[a-z]+_[a-z_]*(pass(word|wd|phrase)|secret|token|key)|yes|no|true|false|none|null|on|off)${Q}?\$"
           tests='(^|/)(tests?|__tests__|spec|fixtures?|testdata)/|(^|/)test_[^/]*$|_test[.][a-z]+$|[.](test|spec)[.][jt]sx?$|(^|/)conftest[.]py$'
           configs='(^|/)([.]env[^/]*|[^/]*[.](env|ya?ml|conf|cfg|ini|properties|container|service|sh|[Cc]ontainerfile|[Dd]ockerfile)|Containerfile[^/]*|Dockerfile[^/]*|docker-compose[^/]*|compose[^/]*)$'
-          # Prose describes secrets: a named literal or a fallback there warns.
-          docs='[.](md|markdown|rst|adoc)$|(^|/)docs?/'
+          # Prose and sample files describe secrets: a named literal or a
+          # fallback there warns.
+          docs='[.](md|markdown|rst|adoc|example|sample)$|(^|/)docs?/'
           diff_file=$(mktemp)
           cand_file=$(mktemp)
           git diff --unified=0 --no-color --no-ext-diff "$BASE" "$TARGET" > "$diff_file"
@@ -259,8 +261,14 @@ jobs:
               if [ -n "$conf" ]; then
                 named="${named}$(printf '\n%s\n' "$added" | grep -oE -e "$envline" || true)"
               fi
-              # Strip each key so the placeholder test reads the value alone.
-              values=$(printf '%s\n' "$named" | grep -v '^$' | sed -E -e "s/^${akey}//" -e "s/${ekey}//" || true)
+              # Strip each key so the placeholder test reads the value alone,
+              # and drop a value that only repeats its key, any case
+              # (`TOKEN = "token"`, `"password": "Password"`).
+              values=$(printf '%s\n' "$named" | grep -v '^$' | while IFS= read -r seg; do
+                v=$(printf '%s\n' "$seg" | sed -E -e "s/^${akey}//" -e "s/${ekey}//")
+                k=$(printf '%s\n' "${seg%"$v"}" | sed -E -e 's/[^A-Za-z0-9_.-]+$//' -e 's/.*[^A-Za-z0-9_.-]//' | tr '[:upper:]' '[:lower:]')
+                [ "$(printf '%s\n' "$v" | tr -d "\"'" | tr '[:upper:]' '[:lower:]')" = "$k" ] || printf '%s\n' "$v"
+              done || true)
               if [ -n "$values" ] && printf '%s\n' "$values" | grep -viEq "$placeholder"; then
                 if [ -n "$soft" ]; then verdict=warn; else verdict=refuse; fi
               fi
