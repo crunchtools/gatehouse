@@ -5,6 +5,8 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+## [0.32.0] - 2026-11-19
+
 ### Fixed
 - **An oversize diff fails before any model is called, and says why** (#160).
   A deleted file over 64 KiB is sent as its header and a line count, not its
