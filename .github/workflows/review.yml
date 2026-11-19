@@ -75,6 +75,14 @@ on:
         type: boolean
         required: false
         default: false
+      max_diff_bytes:
+        # Passed to the reviewer as GATEHOUSE_MAX_DIFF_BYTES. A diff still over
+        # it once large deletions are elided is refused before any model call,
+        # with a review marked failed. Empty keeps the 1 MiB default.
+        description: "Largest diff, in bytes, sent for review (default: 1 MiB)."
+        type: string
+        required: false
+        default: ""
       image:
         # Empty means quay.io/crunchtools/gatehouse:latest: crunchtools tool
         # images float at the tag each release moves (constitution XV rule 5),
@@ -126,6 +134,7 @@ jobs:
           AGENTS: ${{ inputs.agents }}
           BLOCKING: ${{ inputs.blocking }}
           REQUIRED_LOW_AGENTS: ${{ inputs.required_low_agents }}
+          MAX_DIFF_BYTES: ${{ inputs.max_diff_bytes }}
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
           # Which repository the head belongs to: the same as GITHUB_REPOSITORY
           # for a branch here, a fork's own full name otherwise. Used to skip
@@ -375,6 +384,7 @@ jobs:
             -e GATEHOUSE_CONTEXT_REF="$BASE_REF" \
             -e GATEHOUSE_HEAD_SHA="$HEAD_SHA" \
             -e GATEHOUSE_HEAD_REPO="$HEAD_REPO" \
+            -e GATEHOUSE_MAX_DIFF_BYTES="$MAX_DIFF_BYTES" \
             -v "$out_dir:/out" \
             -e GITHUB_STEP_SUMMARY=/out/step-summary.md \
             "$IMAGE" \

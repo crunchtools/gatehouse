@@ -25,6 +25,7 @@ from gatehouse.github import (
     fetch_last_reviewed_commit,
     fetch_repo_file,
     format_review_body,
+    post_failed_review,
     post_pr_review,
     review_failed,
 )
@@ -161,6 +162,42 @@ async def test_post_pr_review_constructs_payload(
     assert len(payload["comments"]) == 1
     assert payload["comments"][0]["path"] == "src/app.py"
     assert payload["comments"][0]["line"] == 10
+
+
+@pytest.mark.asyncio
+async def test_post_failed_review_carries_reason_and_marker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#161: a refusal before any agent runs still posts a review triage reads as failed."""
+    monkeypatch.setenv("GITHUB_REPOSITORY", "crunchtools/gatehouse")
+    monkeypatch.setenv("GITHUB_REF", "refs/pull/7/merge")
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_test123")
+
+    mock_response = httpx.Response(200, request=httpx.Request("POST", "https://example.com"))
+    mock_client = AsyncMock(spec=httpx.AsyncClient)
+    mock_client.post = AsyncMock(return_value=mock_response)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("gatehouse.github.httpx.AsyncClient", return_value=mock_client):
+        success = await post_failed_review("diff is too big", "abc123")
+
+    assert success is True
+    assert mock_client.post.call_args.args[0].endswith(
+        "/repos/crunchtools/gatehouse/pulls/7/reviews"
+    )
+    payload = mock_client.post.call_args.kwargs["json"]
+    assert payload["event"] == "COMMENT"
+    assert payload["commit_id"] == "abc123"
+    assert payload["body"].startswith("Gatehouse could not review this PR: diff is too big")
+    assert payload["body"].endswith(REVIEW_FAILED_MARKER)
+
+
+@pytest.mark.asyncio
+async def test_post_failed_review_without_context(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("GITHUB_REF", raising=False)
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    assert await post_failed_review("diff is too big") is False
 
 
 @pytest.mark.asyncio

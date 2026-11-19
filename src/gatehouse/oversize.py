@@ -71,7 +71,8 @@ def oversize_message(diff: str, limit: int = MAX_DIFF_BYTES) -> str | None:
     )[:LARGEST_SHOWN]
     largest = "".join(f"\n  {bytes_:>12} bytes  {name}" for bytes_, name in files)
     return (
-        f"diff is {size} bytes, over the {limit}-byte limit ({MAX_DIFF_BYTES_ENV}); "
+        f"diff is {size} bytes, over the {limit}-byte limit ({MAX_DIFF_BYTES_ENV}, "
+        f"or the review workflow's max_diff_bytes input); "
         f"no model was called. Add generated or data files to .gatehouse-ignore, "
         f"or split the change. Largest files:{largest}"
     )

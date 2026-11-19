@@ -11,7 +11,9 @@ All notable changes to this project are documented here, following
   content, so deleting a 71 MB dump costs one small review; anything still
   over 1 MiB (`GATEHOUSE_MAX_DIFF_BYTES`) exits 2 naming the limit and the
   largest files, instead of sending the whole diff to every agent sample and
-  failing on HTTP 400s.
+  failing on HTTP 400s. With `--comment` the refusal is posted as a review
+  marked failed, so triage holds the PR rather than passing on an older
+  review; `review.yml` takes the limit as its `max_diff_bytes` input.
 
 ### Changed
 - **`Refuse plaintext secrets` also reads secret-named keys** (a475). Besides

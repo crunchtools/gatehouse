@@ -69,6 +69,7 @@ def test_elided_deletion_renders_as_deleted_with_a_note() -> None:
     assert "### dump.sql (deleted)" in view
     assert "5000 deleted line(s)" in view
     assert "too large to send for review" in view
+    assert "Flag any security controls" in view
 
 
 def test_oversize_message_names_limit_and_largest_file() -> None:
@@ -93,6 +94,28 @@ async def test_run_review_refuses_oversize_diff_without_calling_a_model(
     assert exit_code == 2
     call.assert_not_called()
     assert "200-byte limit" in capsys.readouterr().err
+
+
+@pytest.mark.asyncio
+async def test_run_review_posts_failed_review_on_oversize(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#161: with --comment, a refusal posts the failed marker, so triage cannot pass on it."""
+    monkeypatch.setenv(MAX_DIFF_BYTES_ENV, "200")
+    monkeypatch.setenv("GATEHOUSE_HEAD_SHA", "abc123")
+    big = MODIFIED + "".join(f"+line {i}\n" for i in range(500))
+    with (
+        patch("gatehouse.review.call_model", new_callable=AsyncMock) as call,
+        patch("gatehouse.review.post_pr_review", new_callable=AsyncMock) as review,
+        patch("gatehouse.review.post_failed_review", new_callable=AsyncMock) as failed,
+    ):
+        exit_code = await run_review(
+            stdin_diff=big, agent_slugs=["bugs"], api_key="k", comment=True
+        )
+    assert exit_code == 2
+    call.assert_not_called()
+    review.assert_not_called()
+    reason, sha = failed.await_args.args
+    assert "200-byte limit" in reason
+    assert sha == "abc123"
 
 
 @pytest.mark.asyncio

@@ -231,7 +231,7 @@ In CI the file is read from the base branch, like the styleguide and constitutio
 
 ### Oversize diffs
 
-Before any model is called, a deleted file whose diff is over 64 KiB is cut down to its header and a note of how many lines it removed, since none of them reach the new tree; a smaller deletion is still sent whole, so a removed protection stays visible. If the diff is still over 1 MiB (`GATEHOUSE_MAX_DIFF_BYTES` to change it), gatehouse names the largest files, calls nothing and exits 2. Every agent sample would carry the whole diff, so a diff no model can take is refused rather than paid for and rejected upstream.
+Before any model is called, a deleted file whose diff is over 64 KiB is cut down to its header and a note of how many lines it removed, since none of them reach the new tree; a smaller deletion is still sent whole, so a removed protection stays visible. If the diff is still over 1 MiB (`GATEHOUSE_MAX_DIFF_BYTES`, or `review.yml`'s `max_diff_bytes` input, to change it), gatehouse names the largest files, calls nothing and exits 2; under `--comment` it posts that as a review marked failed, so triage holds the PR. Every agent sample would carry the whole diff, so a diff no model can take is refused rather than paid for and rejected upstream.
 
 ### Model
 

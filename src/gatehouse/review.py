@@ -48,6 +48,7 @@ from gatehouse.github import (
     fetch_compare,
     fetch_last_reviewed_commit,
     fetch_repo_file,
+    post_failed_review,
     post_pr_review,
     review_failed,
 )
@@ -1335,8 +1336,23 @@ def _filtered_diff(
     return diff, spec, ignored
 
 
-def _sendable(diff: str) -> str | None:
+async def _sendable(diff: str, *, comment: bool) -> str | None:
     """The diff with large deletions elided, or None, after saying why, when it is too large.
+
+    With comment, the refusal is posted as a review marked failed, so triage
+    holds the PR instead of passing on an older review, or on none.
+    """
+    diff, refusal = _measured(diff)
+    if not refusal:
+        return diff
+    print(f"Error: {refusal}", file=sys.stderr)
+    if comment:
+        await post_failed_review(refusal, os.environ.get("GATEHOUSE_HEAD_SHA", ""))
+    return None
+
+
+def _measured(diff: str) -> tuple[str, str]:
+    """The diff with large deletions elided, and why it cannot be sent, or "" when it can.
 
     Runs before any model is called: an oversize diff is refused here instead
     of being sent to every agent sample and failing upstream.
@@ -1344,22 +1360,16 @@ def _sendable(diff: str) -> str | None:
     try:
         limit = int_from_env(os.environ.get(MAX_DIFF_BYTES_ENV), MAX_DIFF_BYTES_ENV)
     except ConfigError as exc:
-        print(f"Error: {exc}", file=sys.stderr)
-        return None
+        return diff, str(exc)
     if limit is not None and limit <= 0:
-        print(f"Error: {MAX_DIFF_BYTES_ENV} must be positive, got {limit}", file=sys.stderr)
-        return None
+        return diff, f"{MAX_DIFF_BYTES_ENV} must be positive, got {limit}"
     diff, elided = elide_deletions(diff)
     if elided:
         print(
             f"Elided {len(elided)} large deleted file(s): {', '.join(elided)}.",
             file=sys.stderr,
         )
-    refusal = oversize_message(diff, MAX_DIFF_BYTES if limit is None else limit)
-    if refusal:
-        print(f"Error: {refusal}", file=sys.stderr)
-        return None
-    return diff
+    return diff, oversize_message(diff, MAX_DIFF_BYTES if limit is None else limit) or ""
 
 
 def _agent_prompts(
@@ -1452,7 +1462,7 @@ async def run_review(
     if not diff.strip():
         print("No changes to review since the last review.")
         return 0
-    sendable = _sendable(diff)
+    sendable = await _sendable(diff, comment=comment)
     if sendable is None:
         return 2
     diff = sendable

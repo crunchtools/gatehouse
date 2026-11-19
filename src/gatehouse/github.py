@@ -463,17 +463,15 @@ async def post_pr_review(
     if commit_id:
         payload["commit_id"] = commit_id
 
-    url = f"{GITHUB_API_URL}/repos/{repo}/pulls/{pr_number}/reviews"
-    headers = _headers(token)
+    return await _post_review(repo, pr_number, token, payload)
 
+
+async def _post_review(repo: str, pr_number: int, token: str, payload: dict[str, Any]) -> bool:
+    """POST one PR review. Returns True on success, False after warning why not."""
+    url = f"{GITHUB_API_URL}/repos/{repo}/pulls/{pr_number}/reviews"
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.post(
-                url,
-                headers=headers,
-                json=payload,
-                timeout=30.0,
-            )
+            response = await client.post(url, headers=_headers(token), json=payload, timeout=30.0)
         if response.status_code >= 400:
             print(
                 f"Warning: GitHub API returned {response.status_code}: {response.text[:200]}",
@@ -481,10 +479,30 @@ async def post_pr_review(
             )
             return False
     except httpx.HTTPError as exc:
+        print(f"Warning: Failed to post PR review: {exc}", file=sys.stderr)
+        return False
+    return True
+
+
+async def post_failed_review(reason: str, commit_id: str = "") -> bool:
+    """Post a review saying why none ran, ending with REVIEW_FAILED_MARKER.
+
+    For a refusal before any agent is called (an oversize diff, a bad
+    limit): without it, triage would pass on the previous review, or on none.
+    Returns True on success, False on failure.
+    """
+    context = detect_pr_context()
+    token = os.environ.get("GITHUB_TOKEN", "")
+    if context is None or not token:
         print(
-            f"Warning: Failed to post PR review: {exc}",
+            "Warning: cannot post the failed review: no PR context or GITHUB_TOKEN.",
             file=sys.stderr,
         )
         return False
-
-    return True
+    payload: dict[str, Any] = {
+        "event": "COMMENT",
+        "body": f"Gatehouse could not review this PR: {reason}\n\n{REVIEW_FAILED_MARKER}",
+    }
+    if commit_id:
+        payload["commit_id"] = commit_id
+    return await _post_review(*context, token, payload)
