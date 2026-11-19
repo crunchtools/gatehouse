@@ -169,7 +169,25 @@ PASSED = {
     "own name": ("src/consts.py", 'TOKEN = "token"\n'),
     "own name, any case": ("src/locales/en.json", '{"password": "Password"}\n'),
     "systemd credential": ("app.container", "Environment=API_TOKEN=%d/api_token\n"),
+    "systemd specifier in a unit": ("app.service", "Environment=PGPASSFILE=%h/.pgpass\n"),
+    "systemd specifier in a drop-in": (
+        "app.service.d/override.conf",
+        "Environment=API_TOKEN=%d/api_token\n",
+    ),
 }
+
+
+@pytest.mark.parametrize(
+    ("name", "text"),
+    [
+        ("src/settings.py", 'password = "%Kq9vLm2Xz8"\n'),  # gatehouse: allow-secret
+        (".env", "PGPASSWORD=%Kq9vLm2Xz8\n"),  # gatehouse: allow-secret
+    ],
+)
+def test_a_percent_literal_outside_a_unit_is_refused(tmp_path, name, text):
+    result = _scan(tmp_path, {name: text})
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert f"::error file={name},line=1::" in result.stdout
 
 
 @pytest.mark.parametrize("case", REFUSED)

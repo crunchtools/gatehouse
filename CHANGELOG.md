@@ -25,6 +25,10 @@ All notable changes to this project are documented here, following
   large change no longer costs a few processes per line. An added line that
   starts with `++ ` is read as content, not as a file header. Prompted by
   rotv#918.
+- **A systemd specifier counts as a reference only in a unit** (a526). A
+  value led by `%X` (`%d/api_token`) passes the secret scan in systemd units,
+  quadlets and their drop-ins, but no longer anywhere else, so
+  `password = "%Kq9vLm2Xz8"` in a `.py` or `.env` file is refused again.
 - The container release runs constitution v1.51.0's `container-release.yml`
   (was v1.46.0) and grants it `issues: write`, so a failed scheduled rebuild
   opens an issue instead of only warning. A `v*` promote now also refuses an
