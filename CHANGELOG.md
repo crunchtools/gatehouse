@@ -5,6 +5,15 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+### Security
+- **The example callers audit clean under zizmor** (a860). Constitution
+  1.58.0 runs zizmor in every repo, and the `pull_request_target` trigger in
+  `examples/gatehouse.yml` and the `workflow_run` trigger in
+  `examples/gatehouse-retriage.yml` were its dangerous-triggers highs in every
+  repo that copied them. Each now carries an inline
+  `zizmor: ignore[dangerous-triggers]` with the reason it is safe: nothing from
+  the PR is checked out or run. This repo's own callers carry the same.
+
 ## [0.32.0] - 2026-11-19
 
 ### Fixed

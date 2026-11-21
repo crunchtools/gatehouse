@@ -8,7 +8,9 @@
 name: Gatehouse
 
 on:
-  pull_request_target:
+  # Nothing from the PR is checked out or run: the guard reads the file list
+  # and the reviewer reads the diff, which is what makes this trigger safe here.
+  pull_request_target:  # zizmor: ignore[dangerous-triggers]
     branches: [master]
     types: [opened, synchronize, reopened]
   # A reply rings the doorbell; gatehouse-retriage.yml re-runs triage in the
