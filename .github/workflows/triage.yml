@@ -15,7 +15,8 @@
 #                  not itself a reply (findings without a file/line are posted
 #                  only in the review summary and are not counted here)
 #   • an answer  = a reply in that thread by someone other than the reviewer
-#                  whose first line is one of (case-insensitive):
+#                  or the Ashigaru App (an AI fix must not answer its own
+#                  finding, a1073), whose first line is one of (case-insensitive):
 #                    fixed in <sha>        — 7-40 hex, a commit on this PR
 #                    not a bug: <reason>   — reason of 20+ characters
 #                    deferred: <issue URL> — a GitHub issue that is open
@@ -28,10 +29,13 @@
 #   • a review that did not finish = the newest review by the reviewer account
 #                  of the head is marked failed (fewer than half its agents
 #                  finished, or the reviewer could not run), or there is none
-#                  of the head while an older head has one, or there is none
-#                  at all and the review job did not succeed. That fails this
-#                  job too: no findings because nothing was looked at is not
-#                  a pass (#77).
+#                  of the head at all. That fails this job too: no findings
+#                  because nothing was looked at is not a pass (#77). Only an
+#                  Ashigaru release PR, which review.yml skips without posting,
+#                  passes with no review of its head. This job checks the same
+#                  three conditions itself rather than trusting the review
+#                  job's result: a review whose post failed also exits 0
+#                  (a1073).
 # A finding written against a commit no longer on the pull request does not
 # count: Ashigaru force-pushes a conflicted branch onto the new default branch,
 # which orphans both the reviewed code and every answer naming it. Added
@@ -69,10 +73,8 @@ on:
         required: false
         default: "Bug Hunter,Security Scan"
       review_result:
-        # needs.review.result. With no Gatehouse review on the PR at all, only
-        # a review job that succeeded (the Ashigaru release skip posts
-        # nothing) lets triage pass; one that died before posting does not.
-        # Unset keeps the old behaviour, where no review at all passes.
+        # needs.review.result. Named when the head has no review; it decides
+        # nothing, since a review whose post failed also succeeds (a1073).
         description: "The review job's result, as needs.review.result."
         type: string
         required: false
@@ -109,6 +111,11 @@ jobs:
           REQUIRED_LOW_AGENTS: ${{ inputs.required_low_agents }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           REVIEW_RESULT: ${{ inputs.review_result }}
+          # review.yml's release skip reads the same three; see it there.
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          APP: "ashigaru-crunchtools[bot]"
         run: |
           set -euo pipefail
           if [ -z "${PR_NUMBER:-}" ]; then
@@ -121,23 +128,31 @@ jobs:
           # decides, so re-running the review job is what clears it. Not the
           # newest of all: pushes are reviewed concurrently, and an older
           # head's slower review can post after the head's (#161). With none
-          # of the head, an older head's review holds (posting the failed
-          # review itself failed, so its clean result says nothing of this
-          # one); with none at all, the review job's own result decides.
+          # of the head, triage fails: a review that timed out, crashed or
+          # could not post looked at nothing, and an older head's review says
+          # nothing of this one (a1073). The one exception is the Ashigaru
+          # release PR, which review.yml skips without posting.
+          release=""
+          if [[ "$HEAD_REF" == ashigaru/release-* ]] \
+              && [ "$HEAD_REPO" = "$GITHUB_REPOSITORY" ] \
+              && [ "$PR_AUTHOR" = "$APP" ]; then
+            release=true
+          fi
           gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/reviews?per_page=100" \
             > reviews.json
 
           # --- review gate (tests/test_triage.py runs this against fixtures) ---
-          jq -rs --arg bot "$REVIEWER" --arg head "$HEAD_SHA" --arg result "$REVIEW_RESULT" '
+          jq -rs --arg bot "$REVIEWER" --arg head "$HEAD_SHA" --arg result "$REVIEW_RESULT" \
+            --arg release "$release" '
             [ (add // [])[]
               | select(.user.login == $bot and ((.body // "") | startswith("Gatehouse"))) ]
             | . as $all
             | [ .[] | select(((.commit_id // "") | ascii_downcase) == ($head | ascii_downcase)) ]
             | if length > 0 then
                 last | select(.body | contains("<!-- gatehouse review failed -->")) | .html_url
+              elif $release == "true" then empty
               elif ($all | length) > 0 then $all | last | .html_url
-              elif $result == "" or $result == "success" then empty
-              else "no review was posted (the review job: \($result))"
+              else "no review of it was posted (the review job: \(if $result == "" then "unknown" else $result end))"
               end
           ' reviews.json > failed_review.txt
           # The head, if a finished Gatehouse review looked at it. An orphaned
@@ -155,13 +170,13 @@ jobs:
 
           if [ -s failed_review.txt ]; then
             {
-              echo "## The last Gatehouse review did not finish"
+              echo "## No finished Gatehouse review of the head"
               echo
               echo "Nothing reviewed ${HEAD_SHA:0:7}: $(cat failed_review.txt)"
               echo
               echo "Fix the cause it names, if any, then re-run the review job."
             } >> "$GITHUB_STEP_SUMMARY"
-            echo "::error::The last Gatehouse review did not finish on ${HEAD_SHA:0:7}: $(cat failed_review.txt)"
+            echo "::error::No finished Gatehouse review of ${HEAD_SHA:0:7}: $(cat failed_review.txt)"
             exit 1
           fi
 
@@ -191,9 +206,9 @@ jobs:
           gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/commits?per_page=100" \
             --jq '.[].sha' > pr_shas.txt
           cat pr_shas.txt carried_shas.txt | jq -R . | jq -s . > shas.json
-          jq -rs --arg bot "$REVIEWER" '
+          jq -rs --arg bot "$REVIEWER" --arg app "$APP" '
             (add // [])[]
-            | select(.in_reply_to_id != null and .user.login != $bot)
+            | select(.in_reply_to_id != null and .user.login != $bot and .user.login != $app)
             | (.body // "") | sub("^\\s+"; "")
             | capture("^deferred:\\s*https://github\\.com/(?<o>[A-Za-z0-9_.-]+)/(?<r>[A-Za-z0-9_.-]+)/issues/(?<n>[0-9]+)"; "i")?
             | "\(.o)/\(.r)/issues/\(.n)"
@@ -209,7 +224,7 @@ jobs:
           jq -R . open_issues.txt | jq -s . > open_issues.json
 
           # --- triage filter (tests/test_triage.py runs this against fixtures) ---
-          jq -s --arg bot "$REVIEWER" --arg required_low "$REQUIRED_LOW_AGENTS" \
+          jq -s --arg bot "$REVIEWER" --arg app "$APP" --arg required_low "$REQUIRED_LOW_AGENTS" \
             --arg reviewed "$(cat reviewed_sha.txt)" --arg head "$HEAD_SHA" \
             --slurpfile shas shas.json --slurpfile open_issues open_issues.json '
             (add // []) as $all
@@ -228,7 +243,9 @@ jobs:
                      and (($b | sub("^not a bug:\\s*"; ""; "i") | gsub("\\s+"; " ")
                            | rtrimstr(" ") | length) >= 20))
                   or ($issue != null and any($open[]; . == $issue));
-              (reduce ($all[] | select(.in_reply_to_id != null and .user.login != $bot)
+              # Neither the reviewer nor the Ashigaru App answers a finding:
+              # an AI fix does not get to sign off on itself (a1073).
+              (reduce ($all[] | select(.in_reply_to_id != null and .user.login != $bot and .user.login != $app)
                 | select(answers) | .in_reply_to_id) as $r ({}; .[$r | tostring] = true)) as $answered
             | [ $all[]
                 | select(.user.login == $bot and .in_reply_to_id == null)

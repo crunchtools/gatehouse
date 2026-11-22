@@ -6,6 +6,17 @@ All notable changes to this project are documented here, following
 ## [Unreleased]
 
 ### Fixed
+- **Triage fails closed without a review of the head** (a1073). With no
+  Gatehouse review on the PR, triage passed whenever the review job reported
+  success or the caller passed no `review_result`, and a review whose post
+  failed exits 0, so a crashed, skipped or unposted review gave a green
+  required check. Triage now fails unless a finished review of the current
+  head exists. The one exception is an Ashigaru release PR, which review.yml
+  skips without posting; triage recognises it from the same three event
+  fields, not from the review job's result.
+- **The Ashigaru App's replies no longer answer findings** (a1073). An AI fix
+  must not sign off on its own finding, so a `fixed in`, `not a bug` or
+  `deferred` reply from `ashigaru-crunchtools[bot]` counts for nothing.
 - **A missing or unreadable `OPENROUTER_API_KEY_FILE` exits 2, not 1** (a968).
   A key file that vanished after the gate started raised an uncaught
   `FileNotFoundError`, which read as a review that failed rather than one that
