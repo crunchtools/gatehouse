@@ -5,6 +5,12 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+### Fixed
+- **A missing or unreadable `OPENROUTER_API_KEY_FILE` exits 2, not 1** (a968).
+  A key file that vanished after the gate started raised an uncaught
+  `FileNotFoundError`, which read as a review that failed rather than one that
+  could not run. It now names the file and exits 2.
+
 ### Security
 - **The example callers audit clean under zizmor** (a860). Constitution
   1.58.0 runs zizmor in every repo, and the `pull_request_target` trigger in
