@@ -797,6 +797,22 @@ def test_cli_missing_api_key(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
     assert exc_info.value.code == 2
 
 
+def test_cli_missing_key_file_exits_2(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A key file that is gone is a gate that could not run (2), not a traceback (1)."""
+    from gatehouse import cli
+
+    missing = tmp_path / "gone"
+    monkeypatch.setenv("OPENROUTER_API_KEY_FILE", str(missing))
+    monkeypatch.setattr(cli, "ENV_FILE", tmp_path / "nonexistent.env")
+    monkeypatch.setattr("sys.argv", ["gatehouse"])
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main()
+    assert exc_info.value.code == 2
+    assert str(missing) in capsys.readouterr().err
+
+
 def test_llm_url_default(monkeypatch: pytest.MonkeyPatch) -> None:
     from gatehouse.llm import OPENROUTER_API_URL, llm_url
 

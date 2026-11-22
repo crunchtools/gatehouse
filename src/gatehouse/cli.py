@@ -161,7 +161,16 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    api_key = load_api_key()
+    try:
+        api_key = load_api_key()
+    except OSError as exc:
+        # A key file that vanished or is unreadable is a gate that could not
+        # run, not a crash: exit 2 like a missing key.
+        print(
+            f"Error: cannot read OPENROUTER_API_KEY_FILE ({exc.strerror}): {exc.filename}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
     if not api_key:
         print(
             "Error: OPENROUTER_API_KEY not set",
