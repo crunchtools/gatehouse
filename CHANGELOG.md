@@ -6,6 +6,12 @@ All notable changes to this project are documented here, following
 ## [Unreleased]
 
 ### Fixed
+- **A review that could not be posted exits 2** (a1077, #170). Under
+  `--comment`, a failed post of the review (an API error such as 422 or 403,
+  a timeout, no token or PR context) only printed a warning, and under
+  `--advisory` the job exited 0 with no review on the PR. It now exits 2.
+  `--advisory` still keeps findings from failing the job; it no longer keeps
+  a failure to post from failing it.
 - **Triage fails closed without a review of the head** (a1073). With no
   Gatehouse review on the PR, triage passed whenever the review job reported
   success or the caller passed no `review_result`, and a review whose post

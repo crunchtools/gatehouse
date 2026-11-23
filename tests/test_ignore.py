@@ -192,6 +192,7 @@ async def test_run_review_all_ignored_skips_the_agents(
     with (
         patch("gatehouse.review.call_model", call_model),
         patch("gatehouse.review.post_pr_review", new_callable=AsyncMock) as post,
+        patch("gatehouse.review.post_empty_review", new_callable=AsyncMock, return_value=True),
     ):
         exit_code = await run_review(
             stdin_diff=MODIFIED.format(p="data/x.fp"),
@@ -360,3 +361,23 @@ def test_constitution_has_no_local_fallback_under_a_trusted_base(
     monkeypatch.setenv("GATEHOUSE_CONTEXT_REF", "basesha")
     with patch("gatehouse.review.fetch_repo_file", return_value=None):
         assert load_constitution() is None
+
+
+@pytest.mark.asyncio
+async def test_run_review_all_ignored_exits_2_when_the_clean_review_cannot_be_posted(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """#170: nothing to review still owes the head a review; failing to post it fails the job."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / IGNORE_FILE).write_text("data/\n")
+    with patch(
+        "gatehouse.review.post_empty_review", new_callable=AsyncMock, return_value=False
+    ) as empty:
+        exit_code = await run_review(
+            stdin_diff=MODIFIED.format(p="data/x.fp"),
+            agent_slugs=["bugs"],
+            api_key="k",
+            comment=True,
+        )
+    assert exit_code == 2
+    empty.assert_awaited_once()

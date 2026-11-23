@@ -1359,12 +1359,22 @@ async def _nothing_to_review(note: str, *, comment: bool) -> int:
     Only for a diff that arrived and left nothing to send: every file
     ignored, or no change since the last complete review. Triage reads the
     review of the head, so such a push must still leave one, or the PR
-    holds forever (#161).
+    holds forever (#161). A post that fails exits 2.
     """
     print(note)
-    if comment:
-        await post_empty_review(note, os.environ.get("GATEHOUSE_HEAD_SHA", ""))
+    if comment and not await post_empty_review(note, os.environ.get("GATEHOUSE_HEAD_SHA", "")):
+        return _unposted()
     return 0
+
+
+def _unposted() -> int:
+    """Say the review could not be posted, and return 2.
+
+    With --comment, posting is the job: a review job that posted nothing
+    must not show green, --advisory or not (#170).
+    """
+    print("Error: the review could not be posted to the PR.", file=sys.stderr)
+    return 2
 
 
 async def _sendable(diff: str, *, comment: bool) -> str | None:
@@ -1456,6 +1466,7 @@ async def run_review(
     to send, or an agent that could not finish). An unfinished agent outranks
     findings, except under --advisory: there it is reported, not raised,
     unless fewer than half of the agents finished. That is no review at all, and exits 2 regardless.
+    With comment, a review that could not be posted also exits 2, --advisory or not.
     LOWs from agents named in required_low_agents are exempt from the
     advisory LOW cap, so triage sees every LOW it requires an answer to.
 
@@ -1563,18 +1574,18 @@ async def run_review(
             exit_code = 2
     print_summary(all_results, exit_code)
 
-    if comment:
-        await post_pr_review(
-            all_results,
-            request_changes,
-            failed,
-            len(ignored),
-            **dropped,
-            scope=scope,
-            fallbacks=fallbacks,
-            agent_count=len(outcomes),
-            commit_id=os.environ.get("GATEHOUSE_HEAD_SHA", ""),
-        )
+    if comment and not await post_pr_review(
+        all_results,
+        request_changes,
+        failed,
+        len(ignored),
+        **dropped,
+        scope=scope,
+        fallbacks=fallbacks,
+        agent_count=len(outcomes),
+        commit_id=os.environ.get("GATEHOUSE_HEAD_SHA", ""),
+    ):
+        exit_code = _unposted()
     _save_usage(usage, usage_json)
     _save_consensus(all_results, config, dropped, consensus_json)
 
