@@ -2200,3 +2200,57 @@ async def test_a_bad_repo_config_exits_two_before_any_model_call(
     assert exit_code == 2
     assert model.await_count == 0
     assert "never be reached" in capsys.readouterr().err
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("advisory", [True, False])
+async def test_run_review_exits_2_when_the_review_cannot_be_posted(
+    advisory: bool, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """#170: a post that fails is no review on the PR, so the job fails, --advisory or not."""
+    with (
+        patch("gatehouse.review.get_git_diff", return_value=MOCK_DIFF),
+        patch("gatehouse.review.get_file_listing", return_value=None),
+        patch("gatehouse.review.load_styleguide", return_value=None),
+        patch(
+            "gatehouse.review.call_model",
+            new_callable=AsyncMock,
+            return_value=Completion(MOCK_BLOCKING_FINDINGS),
+        ),
+        patch(
+            "gatehouse.review.post_pr_review",
+            new_callable=AsyncMock,
+            return_value=False,
+        ) as mock_post,
+    ):
+        exit_code = await run_review(
+            base="main",
+            agent_slugs=["bugs"],
+            model="openai/gpt-6-luna",
+            advisory=advisory,
+            api_key="test-key",
+            comment=True,
+        )
+    assert exit_code == 2
+    mock_post.assert_awaited_once()
+    assert "could not be posted" in capsys.readouterr().err
+
+
+@pytest.mark.asyncio
+async def test_run_review_clean_review_that_cannot_be_posted_exits_2() -> None:
+    """A clean result is still no review on the PR when the post fails."""
+    with (
+        patch("gatehouse.review.get_git_diff", return_value=MOCK_DIFF),
+        patch("gatehouse.review.get_file_listing", return_value=None),
+        patch("gatehouse.review.load_styleguide", return_value=None),
+        patch(
+            "gatehouse.review.call_model",
+            new_callable=AsyncMock,
+            return_value=Completion("[]"),
+        ),
+        patch("gatehouse.review.post_pr_review", new_callable=AsyncMock, return_value=False),
+    ):
+        exit_code = await run_review(
+            base="main", agent_slugs=["bugs"], advisory=True, api_key="test-key", comment=True
+        )
+    assert exit_code == 2

@@ -118,7 +118,7 @@ What that means in practice: a tree that fails keeps failing and a tree that pas
 |------|---------|
 | 0 | No issues or advisory-only findings |
 | 1 | Blocking findings detected (critical/high) |
-| 2 | Usage error (missing API key, bad arguments), or an agent could not finish. Under `--advisory` a minority of unfinished agents is reported and exits 0; fewer than half finishing is no review, and exits 2 |
+| 2 | Usage error (missing API key, bad arguments), or an agent could not finish. Under `--advisory` a minority of unfinished agents is reported and exits 0; fewer than half finishing is no review, and exits 2. With `--comment`, a review that could not be posted (an API error, a timeout, no token or PR context) exits 2, `--advisory` or not |
 
 ## GitHub Actions
 
