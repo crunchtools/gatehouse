@@ -23,6 +23,7 @@ from gatehouse.github import REVIEW_FAILED_MARKER, REVIEW_MARKER, post_empty_rev
 TRIAGE = Path(__file__).parent.parent / ".github" / "workflows" / "triage.yml"
 EXAMPLE = Path(__file__).parent.parent / "examples" / "gatehouse.yml"
 BOT = "github-actions[bot]"
+APP = "ashigaru-crunchtools[bot]"
 SHA = "0123456789abcdef0123456789abcdef01234567"
 ISSUE = "https://github.com/crunchtools/gatehouse/issues/90"
 HEAD = "f" * 40  # the pull request head, and what the newest review looked at
@@ -88,6 +89,9 @@ def _unanswered(
                 "--arg",
                 "bot",
                 BOT,
+                "--arg",
+                "app",
+                APP,
                 "--arg",
                 "required_low",
                 required_low,
@@ -208,6 +212,41 @@ def test_one_contract_reply_among_chatter_answers() -> None:
 
 def test_reviewer_replying_to_itself_does_not_count() -> None:
     assert len(_unanswered([_comment(1, BOT), _comment(2, BOT, reply_to=1)])) == 1
+
+
+@pytest.mark.parametrize(
+    "body", [f"fixed in {SHA}", f"deferred: {ISSUE}", "not a bug: " + "x" * 30]
+)
+def test_the_ashigaru_app_cannot_answer_a_finding(body: str) -> None:
+    """a1073: an AI fix pushed by the app does not get to sign off on its own finding."""
+    assert _unanswered([_comment(1, BOT), _comment(2, APP, 1, body=body)]) != []
+    pages = [_comment(1, BOT), _comment(2, APP, 1, body=body), _comment(3, "maintainer", 1)]
+    assert _unanswered(pages) == []
+
+
+def test_the_ashigaru_app_login_matches_review_yml() -> None:
+    """The login triage ignores is the one review.yml's release skip trusts."""
+    assert f'APP: "{APP}"' in TRIAGE.read_text()
+    assert f'"$PR_AUTHOR" = "{APP}"' in (TRIAGE.parent / "review.yml").read_text()
+
+
+def test_deferred_lookups_skip_the_ashigaru_apps_replies() -> None:
+    block = re.search(
+        r"""jq -rs --arg bot "\$REVIEWER" --arg app "\$APP" '(.*?)'""", TRIAGE.read_text(), re.S
+    )
+    assert block, "deferred lookup program not found"
+    pages = [
+        _comment(2, APP, 1, body=f"deferred: {ISSUE}"),
+        _comment(3, "maintainer", 1, body=f"deferred: {ISSUE[:-2]}91"),
+    ]
+    out = subprocess.run(
+        ["jq", "-rs", "--arg", "bot", BOT, "--arg", "app", APP, block.group(1)],
+        input=json.dumps(pages),
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert out.stdout.split() == ["crunchtools/gatehouse/issues/91"]
 
 
 def test_reply_on_another_page_counts() -> None:
@@ -352,7 +391,7 @@ CLEAN = f"Gatehouse found no issues.\n\n{REVIEW_MARKER}"
 FAILED = f"Gatehouse could not review this PR: 0 of 8 agents finished.\n\n{REVIEW_FAILED_MARKER}"
 
 
-def _failed_review(*pages: list[dict], result: str = "success") -> str:
+def _failed_review(*pages: list[dict], result: str = "success", release: bool = False) -> str:
     """Run triage.yml's review gate; what holds the PR (a review's URL), or ""."""
     block = re.search(
         r"# --- review gate.*?\n(.*?)# --- end review gate ---", TRIAGE.read_text(), re.S
@@ -373,6 +412,9 @@ def _failed_review(*pages: list[dict], result: str = "success") -> str:
             "--arg",
             "result",
             result,
+            "--arg",
+            "release",
+            "true" if release else "",
             program.group(1),
         ],
         input="".join(json.dumps(page) for page in pages),
@@ -383,9 +425,10 @@ def _failed_review(*pages: list[dict], result: str = "success") -> str:
     return out.stdout.strip()
 
 
-def test_review_gate_passes_with_no_reviews() -> None:
-    assert _failed_review([]) == ""
-    assert _failed_review() == ""
+def test_review_gate_holds_with_no_reviews() -> None:
+    """a1073: no review of the head means nothing was looked at, whatever the job says."""
+    assert _failed_review([]) != ""
+    assert _failed_review() != ""
 
 
 def test_review_gate_passes_on_a_clean_review() -> None:
@@ -433,14 +476,44 @@ def test_review_gate_holds_no_review_when_the_review_job_did_not_succeed(result:
     assert _failed_review(result=result) != ""
 
 
-def test_review_gate_passes_no_review_when_the_review_job_succeeded() -> None:
-    """The Ashigaru release skip exits 0 and posts nothing; that still passes."""
-    assert _failed_review([], result="success") == ""
+def test_review_gate_holds_no_review_when_the_review_job_succeeded() -> None:
+    """a1073: a review whose post failed exits 0; success alone proves nothing."""
+    assert "the review job: success" in _failed_review([], result="success")
 
 
-def test_review_gate_passes_no_review_when_the_caller_passes_no_result() -> None:
-    """A caller that has not passed review_result keeps the old behaviour."""
-    assert _failed_review([], result="") == ""
+def test_review_gate_holds_no_review_when_the_caller_passes_no_result() -> None:
+    """a1073: a caller that passes no review_result no longer passes on no review."""
+    assert "the review job: unknown" in _failed_review([], result="")
+
+
+def test_review_gate_passes_an_ashigaru_release_pr_with_no_review() -> None:
+    """review.yml skips the app's release PRs without posting; triage lets them through."""
+    assert _failed_review([], release=True) == ""
+    assert _failed_review([], result="", release=True) == ""
+    older = "a" * 40
+    assert _failed_review([_review(1, BOT, CLEAN, sha=older)], release=True) == ""
+
+
+def test_review_gate_holds_a_failed_review_of_an_ashigaru_release_pr() -> None:
+    assert _failed_review([_review(1, BOT, FAILED)], release=True).endswith("/r/1")
+
+
+def test_review_gate_holds_a_stale_review_whatever_the_job_says() -> None:
+    """a1073: a clean review of an older head does not pass the head."""
+    older = "a" * 40
+    for result in ("success", "", "failure"):
+        assert _failed_review([_review(1, BOT, CLEAN, sha=older)], result=result).endswith("/r/1")
+
+
+def test_triage_detects_the_release_pr_as_review_yml_skips_it() -> None:
+    """Both workflows read the same three conditions, from the event, not the review job."""
+    triage, review = TRIAGE.read_text(), (TRIAGE.parent / "review.yml").read_text()
+    for cond in ('"$HEAD_REF" == ashigaru/release-*', '"$HEAD_REPO" = "$GITHUB_REPOSITORY"'):
+        assert cond in triage, cond
+        assert cond in review, cond
+    for name in ("HEAD_REF", "HEAD_REPO", "PR_AUTHOR"):
+        line = next(ln.strip() for ln in review.splitlines() if ln.strip().startswith(f"{name}:"))
+        assert line in triage, line
 
 
 def test_review_gate_holds_an_older_head_review_even_after_a_successful_job() -> None:
