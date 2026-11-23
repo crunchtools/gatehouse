@@ -5,13 +5,14 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
-### Fixed
-- **A review that could not be posted exits 2** (a1077, #170). Under
-  `--comment`, a failed post of the review (an API error such as 422 or 403,
-  a timeout, no token or PR context) only printed a warning, and under
-  `--advisory` the job exited 0 with no review on the PR. It now exits 2.
-  `--advisory` still keeps findings from failing the job; it no longer keeps
-  a failure to post from failing it.
+## [0.33.0] - 2026-11-23
+
+### Changed
+Fleet-visible: once `@v0` moves to this release, `Gatehouse triage` holds
+any PR without a finished Gatehouse review of its head, and replies from the
+Ashigaru App no longer answer findings. A PR whose review never posted goes
+red until the review job is re-run.
+
 - **Triage fails closed without a review of the head** (a1073). With no
   Gatehouse review on the PR, triage passed whenever the review job reported
   success or the caller passed no `review_result`, and a review whose post
@@ -23,6 +24,14 @@ All notable changes to this project are documented here, following
 - **The Ashigaru App's replies no longer answer findings** (a1073). An AI fix
   must not sign off on its own finding, so a `fixed in`, `not a bug` or
   `deferred` reply from `ashigaru-crunchtools[bot]` counts for nothing.
+
+### Fixed
+- **A review that could not be posted exits 2** (a1077, #170). Under
+  `--comment`, a failed post of the review (an API error such as 422 or 403,
+  a timeout, no token or PR context) only printed a warning, and under
+  `--advisory` the job exited 0 with no review on the PR. It now exits 2.
+  `--advisory` still keeps findings from failing the job; it no longer keeps
+  a failure to post from failing it.
 - **A missing or unreadable `OPENROUTER_API_KEY_FILE` exits 2, not 1** (a968).
   A key file that vanished after the gate started raised an uncaught
   `FileNotFoundError`, which read as a review that failed rather than one that
