@@ -91,3 +91,6 @@ checks = ["image"]
 
 [tool.sdlc.ci.image]
 kind = "image-build"
+
+[tool.sdlc]
+repo-kinds = ["cli-tool"]
