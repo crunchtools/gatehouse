@@ -93,4 +93,14 @@ checks = ["image"]
 kind = "image-build"
 
 [tool.sdlc]
+# Written by crunchtools/sdlc's scripts/convert_repo.py: moved from the workflows.
+publish = "pypi"
 repo-kinds = ["cli-tool"]
+# The release image is built by the `image` job, which plans the container build.
+stacks = ["container"]
+
+[tool.sdlc.image]
+# Written by crunchtools/sdlc's scripts/convert_repo.py: moved from the workflows.
+image = "quay.io/crunchtools/gatehouse"
+boot = "command"
+boot-command = "podman run --rm \"$IMAGE\" --help"
