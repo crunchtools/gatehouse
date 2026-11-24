@@ -5,6 +5,8 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+## [0.34.0] - 2026-11-24
+
 ### Changed
 - **The stability eval fails when a verdict flips** (RT #1666).
   `scripts/stability_eval.py` printed FLIPPED and exited 0, so the one thing
