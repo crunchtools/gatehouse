@@ -1,0 +1,103 @@
+diff --git a/src/ashigaru/desk/forges/base.py b/src/ashigaru/desk/forges/base.py
+index 94db96f..ab2f143 100644
+--- a/src/ashigaru/desk/forges/base.py
++++ b/src/ashigaru/desk/forges/base.py
+@@ -92,10 +92,12 @@ class Found:
+ @dataclass(frozen=True)
+ class Search:
+     """A sweep search's hits, oldest change first, and whether it read them all: False when the
+-    forge's cap cut it short, so the caller reads on from the last hit."""
++    forge's cap cut it short, so the caller reads on from `reached`, the change time it read up to
++    (the earliest of its cut searches', when it ran several), or else from the last hit."""
+ 
+     hits: list[Found]
+     complete: bool
++    reached: str | None = None
+ 
+ 
+ @dataclass(frozen=True)
+diff --git a/src/ashigaru/desk/forges/github.py b/src/ashigaru/desk/forges/github.py
+index 77f08b1..e48e305 100644
+--- a/src/ashigaru/desk/forges/github.py
++++ b/src/ashigaru/desk/forges/github.py
+@@ -50,6 +50,8 @@
+ PAGE = 100
+ SEARCH_PAGES = 10
+ """Search returns at most 1000 results: ten pages of PAGE."""
++SEARCHED = ("issue", "pr")
++"""The `is:` qualifiers a sweep searches by, one search each: GitHub refuses a search with neither."""
+ SWEEP_TIMEOUT = 10
+ LOG = logging.getLogger(__name__)
+ 
+@@ -461,27 +463,37 @@ def subject(self, repo: str, number: int, token: str) -> IntakeItem:
+         return _item(pull, repo, Kind.STORY, "pull_request", merged_in=pull)
+ 
+     def updated(self, org: str, since: str, token: str) -> Search:
+-        """Every issue and PR in `org` changed at or after `since`, oldest change first, by search;
+-        not `complete` when the search's cap of SEARCH_PAGES full pages cut it short. A hit whose
+-        repository is not owner/name is skipped. Read-only."""
++        """Every issue and PR in `org` changed at or after `since`, oldest change first, by search.
++        GitHub's search refuses (422) a query that does not say `is:issue` or `is:pull-request`, so
++        it runs once for each and merges the hits. Not `complete` when the cap of SEARCH_PAGES full
++        pages cut either short; `reached` is then the earliest change time a cut search read up to,
++        so the caller reads on from there and loses nothing from either. A hit whose repository is
++        not owner/name is skipped. Read-only."""
+         if not (token and ACCOUNT.match(org)):
+             raise ValueError("an org login and a token are needed")
+         found: list[Found] = []
+-        for page in range(1, SEARCH_PAGES + 1):
+-            query = urllib.parse.urlencode(
+-                {
+-                    "q": f"org:{org} updated:>={since}",
+-                    "sort": "updated",
+-                    "order": "asc",
+-                    "per_page": PAGE,
+-                    "page": page,
+-                }
+-            )
+-            hits = _items(_get(f"{API}/search/issues?{query}", token, SWEEP_TIMEOUT), "items")
+-            found += [hit for thing in hits if (hit := _hit(thing)) is not None]
+-            if len(hits) < PAGE:
+-                return Search(found, complete=True)
+-        return Search(found, complete=False)
++        cut: list[str] = []
++        for kind in SEARCHED:
++            read: list[Found] = []
++            for page in range(1, SEARCH_PAGES + 1):
++                query = urllib.parse.urlencode(
++                    {
++                        "q": f"org:{org} is:{kind} updated:>={since}",
++                        "sort": "updated",
++                        "order": "asc",
++                        "per_page": PAGE,
++                        "page": page,
++                    }
++                )
++                hits = _items(_get(f"{API}/search/issues?{query}", token, SWEEP_TIMEOUT), "items")
++                read += [hit for thing in hits if (hit := _hit(thing)) is not None]
++                if len(hits) < PAGE:
++                    break
++            else:
++                cut.append(read[-1].item.updated_at or since if read else since)
++            found += read
++        found.sort(key=lambda hit: hit.item.updated_at or "")
++        return Search(found, complete=not cut, reached=min(cut) if cut else None)
+ 
+     def required(self, repo: str, sha: str, branch: str | None, token: str) -> tuple[str, dict[str, Verdict]]:
+         """The branch and each required check's verdict on `sha`; one nobody has reported is pending.
+diff --git a/src/ashigaru/desk/sweep.py b/src/ashigaru/desk/sweep.py
+index 1a4ceb9..c00b2aa 100644
+--- a/src/ashigaru/desk/sweep.py
++++ b/src/ashigaru/desk/sweep.py
+@@ -365,7 +365,10 @@ def _search(
+         except UNREADABLE as failed:
+             counts.errors.append(f"{hit.item.subject_key}: {_why(failed)}")
+             deferred.append(hit.item.updated_at or "")
+-    reached = _stamp(started) if search.complete or not search.hits else search.hits[-1].item.updated_at
++    if search.complete or not search.hits:
++        reached: str | None = _stamp(started)
++    else:
++        reached = search.reached or search.hits[-1].item.updated_at
+     if not search.complete:
+         counts.errors.insert(0, "search: cut at the forge's cap; the next run reads on")
+     oldest = _stamp(started - DEFERRED_FOR)

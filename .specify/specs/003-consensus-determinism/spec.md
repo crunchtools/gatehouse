@@ -181,8 +181,11 @@ worth:
    Measured 0.25 to 0.40. This tier is the agreement boundary itself, so it churns by
    construction.
 
-A weekly workflow runs it and prints the table. It is never a required status check: a
-live-model eval cannot gate a merge, and a floor is a warning to investigate, not a verdict.
+It exits 0 when every verdict agreed, 1 when any diff's verdict flipped, and 2 when it could not
+run. A weekly workflow runs it, prints the table and fails on a flip. It is never a required
+status check on a pull request: a live-model eval cannot gate a merge, and a set-score floor is a
+warning to investigate, not a verdict. The corpus holds at least 20 diffs, mostly real merged
+pull requests, some carrying bugs a later PR fixed.
 
 ## Scope
 

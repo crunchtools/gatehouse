@@ -5,6 +5,20 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+### Changed
+- **The stability eval fails when a verdict flips** (RT #1666).
+  `scripts/stability_eval.py` printed FLIPPED and exited 0, so the one thing
+  spec 003 promises (an unchanged tree gets the same pass-or-fail every run)
+  could break without anything going red. It now exits 1 when any diff's
+  verdict flips, 0 when all agreed, and 2 when it cannot run. The weekly
+  `Stability` workflow still writes its step summary and then fails on a flip.
+  It remains off the required checks.
+- **The stability corpus is 24 diffs, up from 3.** The 21 new ones are file
+  sections of real merged pull requests from public Crunchtools repos, in
+  Python, shell, JavaScript/JSX, HTML, Containerfile, YAML, TOML and Markdown.
+  Several carry a bug a later PR fixed, so the corpus has diffs that should
+  block as well as ones that should pass.
+
 ## [0.33.0] - 2026-11-23
 
 ### Changed

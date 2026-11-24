@@ -308,3 +308,78 @@ async def test_review_once_handles_a_review_that_wrote_nothing(
     review = await evaluator.review_once("diff", "key", None)
 
     assert review == evaluator.Review(set(), set())
+
+
+def _run_main_against(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, answers: dict[str, list[set[str]]]
+) -> None:
+    """Point main() at a corpus of these diffs, each run answering the next blocking set."""
+    for name in answers:
+        (tmp_path / name).write_text(f"diff --git a/{name} b/{name}\n")
+    queues = {name: list(runs) for name, runs in answers.items()}
+
+    async def fake_review(diff: str, _key: str, _samples: int | None):
+        name = diff.split()[2].removeprefix("a/")
+        blocking = queues[name].pop(0)
+        return evaluator.Review(reported=set(blocking) | {"seen"}, blocking=blocking)
+
+    monkeypatch.setattr(evaluator, "review_once", fake_review)
+    monkeypatch.setattr(evaluator, "load_env_file", lambda _path: None)
+    monkeypatch.setattr(evaluator, "load_api_key", lambda: "key")
+    monkeypatch.setattr(sys, "argv", ["stability_eval", "--corpus", str(tmp_path)])
+
+
+@pytest.mark.asyncio
+async def test_main_exits_1_when_any_verdict_flips(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The promise is the verdict, so a flip on one diff fails the whole eval."""
+    _run_main_against(
+        tmp_path,
+        monkeypatch,
+        {
+            "steady.diff": [{"x"}, {"x"}, {"x"}],
+            "flips.diff": [{"x"}, set(), {"x"}],
+        },
+    )
+    assert await evaluator.main() == 1
+    out = capsys.readouterr().out
+    assert "FLIPPED on flips.diff" in out
+
+
+@pytest.mark.asyncio
+async def test_main_exits_0_when_every_verdict_agreed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Findings may churn; as long as pass-or-fail held on every diff, it passes."""
+    _run_main_against(
+        tmp_path,
+        monkeypatch,
+        {
+            "always-fails.diff": [{"x"}, {"y"}, {"x", "y"}],
+            "always-passes.diff": [set(), set(), set()],
+        },
+    )
+    assert await evaluator.main() == 0
+
+
+@pytest.mark.asyncio
+async def test_main_still_writes_the_json_when_a_verdict_flips(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed eval is when the per-run detail matters most, so it is not lost."""
+    out = tmp_path / "results.json"
+    _run_main_against(tmp_path, monkeypatch, {"flips.diff": [{"x"}, set(), set()]})
+    monkeypatch.setattr(
+        sys, "argv", ["stability_eval", "--corpus", str(tmp_path), "--json", str(out)]
+    )
+    assert await evaluator.main() == 1
+    assert json.loads(out.read_text())[0]["verdict_agreed"] is False
+
+
+def test_the_shipped_corpus_has_at_least_twenty_diffs() -> None:
+    """A repeatability claim over a handful of diffs is an anecdote, not a measurement."""
+    corpus = sorted(evaluator.DEFAULT_CORPUS.glob("*.diff"))
+    assert len(corpus) >= 20
+    for path in corpus:
+        assert path.read_text().startswith("diff --git "), path.name

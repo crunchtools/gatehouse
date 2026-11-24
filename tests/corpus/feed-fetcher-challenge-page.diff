@@ -1,0 +1,158 @@
+diff --git a/src/mcp_feed_reader_crunchtools/fetcher.py b/src/mcp_feed_reader_crunchtools/fetcher.py
+index ba511df..793e74a 100644
+--- a/src/mcp_feed_reader_crunchtools/fetcher.py
++++ b/src/mcp_feed_reader_crunchtools/fetcher.py
+@@ -16,6 +16,10 @@
+ 
+ FETCH_TIMEOUT = 30
+ MAX_RESPONSE_SIZE = 10 * 1024 * 1024
++
++# How much of a body to quote back in an error. Enough to recognise a WAF page,
++# a parked-domain holder or a proxy error; short enough to stay readable.
++BODY_SNIPPET_CHARS = 200
+ USER_AGENT = (
+     f"mcp-feed-reader-crunchtools/{__version__} (+https://github.com/crunchtools/mcp-feed-reader)"
+ )
+@@ -39,13 +43,32 @@ async def fetch_feed(
+     Returns None if the feed has not been modified (304).
+     Raises FetchError on failure.
+     """
+-    response = await _download(url, etag, last_modified)
+-    if response is None:
++    downloaded = await _download(url, etag, last_modified)
++    if downloaded is None:
+         return None
+-
+-    parsed = feedparser.parse(response.text)
++    response, body = downloaded
++
++    # The bytes rather than a decoded string: feedparser reads the XML
++    # declaration and the charset for itself, and it is the only thing here that
++    # knows what a feed claims its encoding is.
++    parsed = feedparser.parse(body)
++
++    # `version` is the format feedparser recognised -- `rss20`, `atom10` and so
++    # on -- and it is empty for anything that is not a feed at all. It is the
++    # only reliable signal here, because an HTML page comes back `bozo=False`
++    # with zero entries, which is indistinguishable from a feed that happens to
++    # be empty. A Cloudflare "Just a moment..." challenge is such a page, so
++    # until this check existed a feed behind bot protection was recorded as a
++    # feed with no entries and lost silently -- the RT #1596 failure, in the one
++    # server that reaches arbitrary sites.
++    if not parsed.version:
++        raise FetchError(url, f"{_where(response)} is not a feed: {_body_snippet(body)}")
+     if parsed.bozo and not parsed.entries:
+-        raise FetchError(url, f"Parse error: {parsed.bozo_exception}")
++        raise FetchError(
++            url,
++            f"{_where(response)} did not parse as a feed "
++            f"({parsed.bozo_exception}): {_body_snippet(body)}",
++        )
+ 
+     title = parsed.feed.get("title", "").strip()
+     if not title:
+@@ -60,7 +83,63 @@ async def fetch_feed(
+     )
+ 
+ 
+-async def _download(url: str, etag: str | None, last_modified: str | None) -> httpx.Response | None:
++def _body_snippet(body: bytes) -> str:
++    """A short, single-line excerpt of a response body, for an error message."""
++    # Slice the bytes, then decode only that: a WAF page can be megabytes, and
++    # decoding all of it to keep 200 characters copies it twice for nothing.
++    prefix = body[: BODY_SNIPPET_CHARS * 4]
++    collapsed = " ".join(prefix.decode("utf-8", errors="replace").split())
++    if not collapsed:
++        return "<empty body>"
++    if len(collapsed) > BODY_SNIPPET_CHARS or len(body) > len(prefix):
++        return collapsed[:BODY_SNIPPET_CHARS] + "..."
++    return collapsed
++
++
++def _where(response: httpx.Response) -> str:
++    """Which request a response answered, for an error message.
++
++    The requested URL rather than the feed URL that was asked for: redirects are
++    followed here, so the two differ exactly when it matters -- a feed that now
++    answers from a parked domain or a login page.
++    """
++    return (
++        f"GET {response.request.url} (HTTP {response.status_code}, "
++        f"{response.headers.get('content-type', 'no content-type')})"
++    )
++
++
++async def _read_capped(response: httpx.Response, url: str) -> bytes:
++    """Read the body, aborting as soon as it passes MAX_RESPONSE_SIZE.
++
++    The cap is enforced while reading. Checking `len(response.content)` after
++    the fact is not a ceiling: by then the whole body is in memory, which is
++    what the limit exists to prevent. `content-length` alone is not one either,
++    because the header is optional and a chunked reply carries none.
++    """
++    declared = response.headers.get("content-length")
++    if declared and declared.isdigit() and int(declared) > MAX_RESPONSE_SIZE:
++        raise FetchError(
++            url,
++            f"{_where(response)} declared {declared} bytes, over the "
++            f"{MAX_RESPONSE_SIZE} byte limit",
++        )
++    # One growing buffer, not a list of chunks plus a full-size join: near the
++    # ceiling the join holds both copies at once, which doubles the peak this
++    # limit exists to bound.
++    body = bytearray()
++    async for chunk in response.aiter_bytes():
++        body += chunk
++        if len(body) > MAX_RESPONSE_SIZE:
++            raise FetchError(
++                url, f"{_where(response)} sent over the {MAX_RESPONSE_SIZE} byte limit"
++            )
++    return bytes(body)
++
++
++async def _download(
++    url: str, etag: str | None, last_modified: str | None
++) -> tuple[httpx.Response, bytes] | None:
+     """Download a feed URL, returning None on 304.
+ 
+     A transient answer (connection error, rate limit, gateway 5xx) is retried
+@@ -86,21 +165,32 @@ async def _download(url: str, etag: str | None, last_modified: str | None) -> ht
+                 follow_redirects=True,
+                 max_redirects=5,
+             ) as client:
+-                response = await client.get(url, headers=headers)
++                request = client.build_request("GET", url, headers=headers)
++                response = await client.send(request, stream=True)
++                try:
++                    # The status decides whether the body is read at all. A
++                    # transient answer is going to be retried, so its body is
++                    # bandwidth spent on a message the next attempt replaces --
++                    # and reading it first would let an oversized 503 page raise
++                    # FetchError out of the retry loop, which `except
++                    # httpx.HTTPError` below does not catch. That would turn a
++                    # rate limit into a permanent failure.
++                    transient = response.status_code in TRANSIENT_STATUSES
++                    body = b"" if transient else await _read_capped(response, url)
++                finally:
++                    await response.aclose()
+         except httpx.HTTPError as exc:
+             last_error, last_exc = str(exc) or type(exc).__name__, exc
+             continue
+ 
+-        if response.status_code in TRANSIENT_STATUSES:
+-            last_error = f"HTTP {response.status_code}"
++        if transient:
++            last_error = _where(response)
+             continue
+         if response.status_code == 304:
+             return None
+         if response.status_code != 200:
+-            raise FetchError(url, f"HTTP {response.status_code}")
+-        if len(response.content) > MAX_RESPONSE_SIZE:
+-            raise FetchError(url, "Response exceeds 10MB limit")
+-        return response
++            raise FetchError(url, f"{_where(response)} returned {_body_snippet(body)}")
++        return response, body
+ 
+     # from last_exc keeps the underlying transport error in the traceback; a
+     # run of rate limits has no such cause, and None says so honestly.

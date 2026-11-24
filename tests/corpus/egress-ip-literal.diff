@@ -1,0 +1,147 @@
+diff --git a/src/trentina/config.py b/src/trentina/config.py
+index 61ee6ea3..b32031fe 100644
+--- a/src/trentina/config.py
++++ b/src/trentina/config.py
+@@ -7,6 +7,7 @@
+ import json
+ import logging
+ import os
++import socket
+ from fnmatch import fnmatch
+ from pathlib import Path
+ from urllib.parse import urlparse, urlsplit
+@@ -203,6 +204,20 @@ def _split_name_port(item: str) -> tuple[str, str] | None:
+     return (host, port_text) if host else None
+ 
+ 
++def is_address_literal(host: str) -> bool:
++    """True when ``host`` is an IP address in any spelling the resolver takes.
++
++    Asked of ``getaddrinfo`` with ``AI_NUMERICHOST``, which never touches the
++    network and accepts what a fetch would dial as an address: ``::1``,
++    ``127.1``, ``2130706433``, ``0x7f.1``, ``0x7f000001``.
++    """
++    try:
++        socket.getaddrinfo(host, None, flags=socket.AI_NUMERICHOST)
++    except (OSError, UnicodeError, ValueError):
++        return False
++    return True
++
++
+ def _is_ipv6(text: str) -> bool:
+     try:
+         ipaddress.IPv6Address(text)
+@@ -219,7 +234,8 @@ def insecure_name_ports(name: str, warning: str) -> dict[str, frozenset[int] | N
+     maps to the extra ports it was given (empty for none, None for all). An
+     entry that is not a name, or whose port is not one, is dropped with a
+     warning: a typo must not widen the hatch, and a dropped name is refused,
+-    which is fail-closed. The entry itself is not logged.
++    which is fail-closed. So is an IP address, bracketed or not (a1067). The
++    entry itself is not logged.
+     """
+     entries: dict[str, frozenset[int] | None] = {}
+     for item in os.environ.get(name, "").replace(",", " ").split():
+@@ -228,6 +244,11 @@ def insecure_name_ports(name: str, warning: str) -> dict[str, frozenset[int] | N
+             logger.warning("config: %s has an entry that is not a name; dropped", name)
+             continue
+         host, port_text = split
++        # The hatch decides on a name: a listed `::1` or `127.1` would lift
++        # the address rule for the very address it exists to keep (a1067).
++        if is_address_literal(host):
++            logger.warning("config: %s has an entry that is an IP address; dropped", name)
++            continue
+         ports: frozenset[int] | None
+         if port_text == ANY_PORT:
+             ports = None
+diff --git a/src/trentina/reach/egress.py b/src/trentina/reach/egress.py
+index b152a2ee..325bcabb 100644
+--- a/src/trentina/reach/egress.py
++++ b/src/trentina/reach/egress.py
+@@ -38,7 +38,7 @@
+ import httpcore
+ import httpx
+ 
+-from ..config import get_config
++from ..config import get_config, is_address_literal
+ from ..errors import EgressRefusedError
+ from ..seal import UNSEALED, Seal, require
+ 
+@@ -221,9 +221,12 @@ async def check_url(url: str | httpx.URL) -> ResolvedTarget:
+     # A name on TRENTINA_FETCH_PRIVATE_NAMES may answer privately, but keeps
+     # the port rule unless its entry names the port (`name:8000`, `name:*`):
+     # a fixture's name is not a licence to walk that host's services (a1063).
++    # Never for an address literal: raw_host is the spelling, and a listed
++    # `::1` would lift the rules for the address itself (a1067).
+     config = get_config()
+-    private_name = host.lower() in config.fetch_private_names
+-    if port not in ALLOWED_PORTS and not config.private_name_port(host.lower(), port):
++    literal = is_address_literal(host)
++    private_name = not literal and host.lower() in config.fetch_private_names
++    if port not in ALLOWED_PORTS and (literal or not config.private_name_port(host.lower(), port)):
+         raise EgressRefusedError("port")
+     if not host:
+         raise EgressRefusedError("unresolvable")
+diff --git a/tests/test_egress.py b/tests/test_egress.py
+index 4acf15c5..72724e79 100644
+--- a/tests/test_egress.py
++++ b/tests/test_egress.py
+@@ -547,10 +547,9 @@ def test_entries_parse(
+         assert config.fetch_private_ports == {
+             "lab": frozenset({8000}),
+             "fix.test": None,
+-            "::1": frozenset(),
+-            "fd00::9": frozenset({8000}),
+         }
+-        assert config.fetch_private_names == frozenset({"lab", "fix.test", "::1", "fd00::9"})
++        assert config.fetch_private_names == frozenset({"lab", "fix.test"})
++        assert caplog.text.count("is an IP address; dropped") == 2
+         assert config.private_name_port("lab", 8000)
+         assert not config.private_name_port("lab", 8001)
+         assert config.private_name_port("fix.test", 1)
+@@ -560,6 +559,46 @@ def test_entries_parse(
+         assert "a.test:http" not in caplog.text
+         assert "e.test" not in caplog.text
+ 
++    def test_names_with_ports_survive_and_addresses_do_not(
++        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
++    ) -> None:
++        """a1067: an address in any spelling is dropped, with or without a port."""
++        monkeypatch.setenv(
++            "TRENTINA_FETCH_PRIVATE_NAMES",
++            "mcp-gw-personal:8000 lab:* [::1]:8000 ::1 127.0.0.1:80 127.1 "
++            "2130706433:* 0x7f.1 0x7f000001",
++        )
++        config = config_mod.Config()
++        assert config.fetch_private_ports == {
++            "mcp-gw-personal": frozenset({8000}),
++            "lab": None,
++        }
++        assert caplog.text.count("is an IP address; dropped") == 7
++        assert "127.1" not in caplog.text
++
++    @pytest.mark.parametrize(
++        ("url", "reason"),
++        [
++            ("http://[::1]/", "non_global_address"),
++            ("http://[::1]:8019/", "port"),
++            ("http://127.0.0.1/", "non_global_address"),
++            ("http://127.1:8019/", "port"),
++            ("http://2130706433/", "non_global_address"),
++            ("http://0x7f.1/", "non_global_address"),
++            ("http://0x7f000001:8019/", "port"),
++        ],
++    )
++    async def test_check_url_lifts_nothing_for_a_literal(
++        self, monkeypatch: pytest.MonkeyPatch, url: str, reason: str
++    ) -> None:
++        """Even with a literal on the set by some other road, check_url holds both rules."""
++        listed = ("::1", "127.0.0.1", "127.1", "2130706433", "0x7f.1", "0x7f000001")
++        monkeypatch.setattr(config_mod.get_config(), "fetch_private_ports", dict.fromkeys(listed))
++        monkeypatch.setattr(egress, "_lookup", lambda _h, _p: ["127.0.0.1"])
++        with pytest.raises(EgressRefusedError) as exc:
++            await egress.check_url(url)
++        assert exc.value.reason == reason
++
+     async def test_a_redirect_to_another_port_on_the_name_is_refused(
+         self, monkeypatch: pytest.MonkeyPatch
+     ) -> None:

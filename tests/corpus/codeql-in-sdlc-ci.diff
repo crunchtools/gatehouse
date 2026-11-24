@@ -1,0 +1,36 @@
+diff --git a/.sdlc/codeql-baseline.json b/.sdlc/codeql-baseline.json
+new file mode 100644
+index 0000000..160e712
+--- /dev/null
++++ b/.sdlc/codeql-baseline.json
+@@ -0,0 +1,17 @@
++[
++  {
++    "rule": "py/incomplete-url-substring-sanitization",
++    "path": "tests/test_tools.py",
++    "fingerprint": "a3f3f88a7c4b728b:1"
++  },
++  {
++    "rule": "py/incomplete-url-substring-sanitization",
++    "path": "tests/test_tools.py",
++    "fingerprint": "d650102ba87553c2:1"
++  },
++  {
++    "rule": "py/incomplete-url-substring-sanitization",
++    "path": "tests/test_tools.py",
++    "fingerprint": "f33d310659f0c54:1"
++  }
++]
+diff --git a/pyproject.toml b/pyproject.toml
+index 461e477..862ab06 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -97,8 +97,3 @@ testpaths = ["tests"]
+ # rather than scanning nothing and calling it a pass.
+ skip = ["semgrep"]
+ 
+-[tool.sdlc.ci]
+-# The CodeQL Action job uploads to the Security tab and annotates new
+-# alerts on the pull request, so CI does not analyse a second time.
+-# The push tier still gates on it.
+-skip = ["codeql"]

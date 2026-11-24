@@ -1,0 +1,148 @@
+diff --git a/src/mcp_podman_crunchtools/tools/containers.py b/src/mcp_podman_crunchtools/tools/containers.py
+index f9dfb5a..0dac880 100644
+--- a/src/mcp_podman_crunchtools/tools/containers.py
++++ b/src/mcp_podman_crunchtools/tools/containers.py
+@@ -2,6 +2,7 @@
+ 
+ import json
+ from typing import Any
++from urllib.parse import quote
+ 
+ from pydantic import ValidationError
+ 
+@@ -12,6 +13,59 @@
+ # "host:container[:options]" — a mount spec with an options segment has 3 parts.
+ VOLUME_SPEC_WITH_OPTIONS_PARTS = 2
+ 
++REDACTED = "<redacted>"
++ENV_FLAGS = ("-e", "--env")
++ENV_FLAG_PREFIXES = ("--env=", "-e")
++
++
++def _redact_assignment(assignment: str) -> str:
++    """Turn ``NAME=value`` into ``NAME=<redacted>``; a bare ``NAME`` has no value to hide."""
++    name, separator, _ = assignment.partition("=")
++    return f"{name}={REDACTED}" if separator else assignment
++
++
++def _redact_create_command(command: list[Any]) -> list[str]:
++    """Redact the values ``podman run`` was given with ``-e`` / ``--env``."""
++    redacted: list[str] = []
++    value_follows = False
++    for raw in command:
++        arg = str(raw)
++        if value_follows:
++            redacted.append(_redact_assignment(arg))
++            value_follows = False
++            continue
++        if arg in ENV_FLAGS:
++            value_follows = True
++        elif not arg.startswith("--env-"):
++            for prefix in ENV_FLAG_PREFIXES:
++                if arg.startswith(prefix) and "=" in arg[len(prefix) :]:
++                    arg = prefix + _redact_assignment(arg[len(prefix) :])
++                    break
++        redacted.append(arg)
++    return redacted
++
++
++def _redact_environment(detail: dict[str, Any]) -> dict[str, Any]:
++    """Remove environment values from an inspect document, keeping the names.
++
++    libpod returns every variable with its value in ``Config.Env``, and the
++    full ``podman run`` command, inline ``-e NAME=value`` included, in
++    ``Config.CreateCommand``. A container's environment is where its
++    credentials live, and the caller of this tool is a model. Every value is
++    redacted rather than the secret-looking ones: ``DATABASE_URL`` does not
++    look like a secret by name.
++    """
++    config = detail.get("Config")
++    if not isinstance(config, dict):
++        return detail
++    env = config.get("Env")
++    if isinstance(env, list):
++        config["Env"] = [_redact_assignment(str(entry)) for entry in env]
++    command = config.get("CreateCommand")
++    if isinstance(command, list):
++        config["CreateCommand"] = _redact_create_command(command)
++    return detail
++
+ 
+ async def container_list(
+     all_containers: bool = False,
+@@ -31,33 +85,33 @@ async def container_list(
+ 
+ 
+ async def container_inspect(name: str) -> dict[str, Any]:
+-    """Get detailed information about a container."""
++    """Get detailed information about a container, with environment values redacted."""
+     client = get_client()
+-    return await client.get(f"/containers/{name}/json")
++    return _redact_environment(await client.get(f"/containers/{quote(name, safe='')}/json"))
+ 
+ 
+ async def container_start(name: str) -> dict[str, Any]:
+     """Start a stopped container."""
+     client = get_client()
+-    return await client.post(f"/containers/{name}/start")
++    return await client.post(f"/containers/{quote(name, safe='')}/start")
+ 
+ 
+ async def container_stop(name: str, timeout: int = 10) -> dict[str, Any]:
+     """Stop a running container."""
+     client = get_client()
+-    return await client.post(f"/containers/{name}/stop", params={"t": timeout})
++    return await client.post(f"/containers/{quote(name, safe='')}/stop", params={"t": timeout})
+ 
+ 
+ async def container_restart(name: str, timeout: int = 10) -> dict[str, Any]:
+     """Restart a container."""
+     client = get_client()
+-    return await client.post(f"/containers/{name}/restart", params={"t": timeout})
++    return await client.post(f"/containers/{quote(name, safe='')}/restart", params={"t": timeout})
+ 
+ 
+ async def container_kill(name: str, signal: str = "SIGTERM") -> dict[str, Any]:
+     """Send a signal to a container."""
+     client = get_client()
+-    return await client.post(f"/containers/{name}/kill", params={"signal": signal})
++    return await client.post(f"/containers/{quote(name, safe='')}/kill", params={"signal": signal})
+ 
+ 
+ async def container_rm(name: str, force: bool = False, volumes: bool = False) -> dict[str, Any]:
+@@ -68,7 +122,7 @@ async def container_rm(name: str, force: bool = False, volumes: bool = False) ->
+         params["force"] = "true"
+     if volumes:
+         params["v"] = "true"
+-    return await client.delete(f"/containers/{name}", params=params)
++    return await client.delete(f"/containers/{quote(name, safe='')}", params=params)
+ 
+ 
+ async def container_logs(
+@@ -86,7 +140,7 @@ async def container_logs(
+         params["since"] = since
+     if timestamps:
+         params["timestamps"] = "true"
+-    text = await client.get_text(f"/containers/{name}/logs", params=params)
++    text = await client.get_text(f"/containers/{quote(name, safe='')}/logs", params=params)
+     return {"logs": text}
+ 
+ 
+@@ -96,13 +150,15 @@ async def container_top(name: str, ps_args: str | None = None) -> dict[str, Any]
+     params: dict[str, Any] = {}
+     if ps_args:
+         params["ps_args"] = ps_args
+-    return await client.get(f"/containers/{name}/top", params=params)
++    return await client.get(f"/containers/{quote(name, safe='')}/top", params=params)
+ 
+ 
+ async def container_stats(name: str, stream: bool = False) -> dict[str, Any]:
+     """Get container resource usage statistics."""
+     client = get_client()
+-    return await client.get(f"/containers/{name}/stats", params={"stream": str(stream).lower()})
++    return await client.get(
++        f"/containers/{quote(name, safe='')}/stats", params={"stream": str(stream).lower()}
++    )
+ 
+ 
+ async def container_create(

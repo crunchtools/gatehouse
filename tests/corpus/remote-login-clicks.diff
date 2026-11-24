@@ -1,0 +1,57 @@
+diff --git a/frontend/src/components/RemoteLoginModal.jsx b/frontend/src/components/RemoteLoginModal.jsx
+index 243542e1..ed8c0373 100644
+--- a/frontend/src/components/RemoteLoginModal.jsx
++++ b/frontend/src/components/RemoteLoginModal.jsx
+@@ -220,8 +220,10 @@ function RemoteLoginModal({ provider, label, onClose, onSaved }) {
+   };
+ 
+   const handleClick = async (e) => {
++    // Fix: map the point before awaiting; React nulls e.currentTarget once dispatch ends, so every real click threw
++    const point = toViewportPoint(e, e.currentTarget.getBoundingClientRect(), viewport);
+     await flushTyping();
+-    await sendInput({ type: 'click', ...toViewportPoint(e, e.currentTarget.getBoundingClientRect(), viewport) });
++    await sendInput({ type: 'click', ...point });
+   };
+ 
+   const handleWheel = (e) => { sendInput({ type: 'scroll', dy: e.deltaY }); };
+@@ -239,7 +241,8 @@ function RemoteLoginModal({ provider, label, onClose, onSaved }) {
+   };
+ 
+   return (
+-    <div className="modal-overlay" onClick={onClose}>
++    // Above the site header (z-index 10000), which otherwise covers the modal's title bar and close button
++    <div className="modal-overlay" onClick={onClose} style={{ zIndex: 10001 }}>
+       <div className="remote-login-modal" onClick={e => e.stopPropagation()}
+         style={{ background: 'var(--bg-primary, #fff)', borderRadius: '8px', maxWidth: '560px', width: '95vw', maxHeight: '95vh', display: 'flex', flexDirection: 'column' }}>
+         <div className="modal-header">
+diff --git a/frontend/src/components/RemoteLoginModal.test.jsx b/frontend/src/components/RemoteLoginModal.test.jsx
+index b141c60a..5ea39274 100644
+--- a/frontend/src/components/RemoteLoginModal.test.jsx
++++ b/frontend/src/components/RemoteLoginModal.test.jsx
+@@ -91,6 +91,26 @@ describe('RemoteLoginModal', () => {
+     expect(inputs).toEqual([{ type: 'type', text: 'abc' }]);
+   });
+ 
++  // Fix: a real click's React event loses currentTarget after dispatch, so the point must be read synchronously
++  it('reads the click position synchronously and relays it in viewport pixels', async () => {
++    render(<RemoteLoginModal provider="facebook" label="Facebook" onClose={() => {}} onSaved={() => {}} />);
++    await flush();
++    const img = screen.getByAltText('Facebook login screen');
++    const rect = vi.spyOn(img, 'getBoundingClientRect').mockReturnValue({ left: 0, top: 0, width: VIEWPORT.width / 2, height: VIEWPORT.height / 2 });
++    fireEvent.click(img, { clientX: VIEWPORT.width / 4, clientY: VIEWPORT.height / 4 });
++    expect(rect).toHaveBeenCalledTimes(1);
++    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
++    const inputs = calls('/input').map(([, init]) => JSON.parse(init.body));
++    expect(inputs).toEqual([{ type: 'click', x: VIEWPORT.width / 2, y: VIEWPORT.height / 2 }]);
++  });
++
++  // Fix: the site header is z-index 10000 and covered the modal's title bar and close button (PR #669 review)
++  it('stacks the overlay above the site header', async () => {
++    const { container } = render(<RemoteLoginModal provider="facebook" label="Facebook" onClose={() => {}} onSaved={() => {}} />);
++    await flush();
++    expect(Number(container.querySelector('.modal-overlay').style.zIndex)).toBeGreaterThan(10000);
++  });
++
+   it('cancels the remote session on unmount when not saved', async () => {
+     const { unmount } = render(<RemoteLoginModal provider="facebook" label="Facebook" onClose={() => {}} onSaved={() => {}} />);
+     await flush();
