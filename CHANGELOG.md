@@ -6,6 +6,13 @@ All notable changes to this project are documented here, following
 ## [Unreleased]
 
 ### Changed
+- **CI is the fleet's one ci.yml** (sdlc 0.15). The Python 3.11 and 3.12 test
+  runs that `requires-python` promises are `command` checks in
+  `[tool.sdlc.ci]`, in pinned uv images, so `sdlc ci` runs them on a laptop
+  too. The container smoke test runs `--help`, as the old boot check did. The
+  workflow tests now pin `examples/gatehouse.yml` alone, since this repo's own
+  guard and triage come from ci.yml, and require the major tag to wait for a
+  completed CI run on master, which is when the image is promoted.
 - **The stability eval fails when a verdict flips** (RT #1666).
   `scripts/stability_eval.py` printed FLIPPED and exited 0, so the one thing
   spec 003 promises (an unchanged tree gets the same pass-or-fail every run)

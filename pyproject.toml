@@ -87,10 +87,31 @@ skip = ["semgrep"]
 #
 # The image is built here, as ci.yml's build job did.
 [tool.sdlc.ci]
-checks = ["image"]
+checks = ["image", "py311", "py312"]
 
 [tool.sdlc.ci.image]
 kind = "image-build"
+
+# The entrypoint is a CLI, not a server: --help proves the venv, the entrypoint
+# and every import load, with no API key and no repo mounted.
+[tool.sdlc.ci.container-smoke]
+args = ["--help"]
+
+# pytest runs on the gate image's Python (3.14); requires-python and the
+# classifiers promise 3.11 and 3.12, so each gets its own run.
+[tool.sdlc.ci.py311]
+kind = "command"
+image = "ghcr.io/astral-sh/uv:0.13.7-python3.11-trixie"
+argv = ["uv", "run", "--locked", "--all-extras", "pytest", "-q", "-p", "no:cacheprovider"]
+env = { UV_PROJECT_ENVIRONMENT = "/tmp/venv", UV_PYTHON_DOWNLOADS = "never" }
+network = true
+
+[tool.sdlc.ci.py312]
+kind = "command"
+image = "ghcr.io/astral-sh/uv:0.13.7-python3.12-trixie"
+argv = ["uv", "run", "--locked", "--all-extras", "pytest", "-q", "-p", "no:cacheprovider"]
+env = { UV_PROJECT_ENVIRONMENT = "/tmp/venv", UV_PYTHON_DOWNLOADS = "never" }
+network = true
 
 [tool.sdlc]
 # Written by crunchtools/sdlc's scripts/convert_repo.py: moved from the workflows.

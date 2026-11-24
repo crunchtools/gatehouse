@@ -100,3 +100,9 @@ path = ".pre-commit-config.yaml"
 pattern = "ruff-check"
 justification = "ruff runs inside the sdlc-commit hook from python-sdlc (constitution XII v1.30.0), configured by [tool.ruff] in pyproject.toml; Gourmand looks for a literal ruff hook id"
 classification = "by_design"
+
+[[exceptions]]
+check = "CH001-absolute_paths"
+path = "pyproject.toml"
+justification = "UV_PROJECT_ENVIRONMENT names a path inside the sdlc command check container, on the tmpfs sdlc mounts as its only writable place; no host path"
+classification = "by_design"

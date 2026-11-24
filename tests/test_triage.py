@@ -557,8 +557,7 @@ def test_reviewed_head_ignores_an_older_heads_later_review() -> None:
 def test_triage_receives_the_review_result() -> None:
     text = TRIAGE.read_text()
     assert "REVIEW_RESULT: ${{ inputs.review_result }}" in text
-    for caller in (EXAMPLE, TRIAGE.parent / "gatehouse.yml"):
-        assert "review_result: ${{ needs.review.result }}" in caller.read_text(), caller
+    assert "review_result: ${{ needs.review.result }}" in EXAMPLE.read_text()
 
 
 def test_review_gate_ignores_other_authors_and_other_bot_reviews() -> None:

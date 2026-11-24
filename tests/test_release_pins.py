@@ -17,7 +17,7 @@ from pathlib import Path
 from gatehouse import __version__
 
 REVIEW_WORKFLOW = Path(__file__).parent.parent / ".github" / "workflows" / "review.yml"
-CONTAINER_WORKFLOW = REVIEW_WORKFLOW.with_name("container.yml")
+MAJOR_TAG_WORKFLOW = REVIEW_WORKFLOW.with_name("major-tag.yml")
 CONTAINERFILE = Path(__file__).parent.parent / "Containerfile"
 
 
@@ -124,8 +124,17 @@ def test_examples_call_the_major_tag():
 
 
 def test_the_major_tag_moves_only_after_the_image_is_promoted():
-    """`@v0` callers run review.yml's default image, so the tag must not get there first."""
-    job = CONTAINER_WORKFLOW.read_text().split("\n  major-tag:\n")[1]
-    assert "    needs: [container]\n" in job
-    assert "    if: github.ref_type == 'tag'\n" in job
+    """`@v0` callers run review.yml's default image, so the tag must not get there first.
+
+    ci.yml's write job pushes the release tag before its promote job moves
+    `:latest`, so the major tag waits for the whole CI run, not the tag push.
+    """
+    text = MAJOR_TAG_WORKFLOW.read_text()
+    on = text.split("\non:\n")[1].split("\npermissions:")[0]
+    assert "workflow_run:" in on
+    assert "workflows: [CI]" in on
+    assert "tags:" not in on
+    job = text.split("\n  major-tag:\n")[1]
+    assert "github.event.workflow_run.conclusion == 'success'" in job
+    assert "github.event.workflow_run.head_branch == 'master'" in job
     assert "    permissions:\n      contents: write\n" in job
