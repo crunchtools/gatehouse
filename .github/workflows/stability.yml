@@ -1,9 +1,10 @@
 # Measures how repeatable the reviewer is: every diff in tests/corpus is
 # reviewed three times and the finding sets are compared.
 #
-# This calls a live model, so it costs money and its result is a measurement,
-# not a verdict. It MUST NOT be a required status check: a number that moves
-# with model sampling cannot gate a merge.
+# This calls a live model, so it costs money and is slow. It MUST NOT be a
+# required status check on pull requests. It does fail this run when any
+# diff's pass-or-fail verdict flips between runs (exit 1), because that verdict
+# is the promise; the finding-set scores are printed and never fail it.
 name: Stability
 
 on:
@@ -24,7 +25,7 @@ permissions:
 jobs:
   stability:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
@@ -41,7 +42,9 @@ jobs:
             exit 0
           fi
           uv sync --extra dev
-          uv run python scripts/stability_eval.py --runs "$RUNS" | tee summary.txt
+          status=0
+          uv run python scripts/stability_eval.py --runs "$RUNS" > summary.txt || status=$?
+          cat summary.txt
           {
             echo '## Reviewer stability'
             echo
@@ -49,3 +52,7 @@ jobs:
             cat summary.txt
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$status" -eq 1 ]; then
+            echo "::error::A verdict flipped between runs on an unchanged diff."
+          fi
+          exit "$status"

@@ -108,7 +108,7 @@ It prints three numbers, in order of what they are worth:
 | blocking set | which findings reached unanimity | 0.56 and 1.00 on two rounds; wobbles, floor 0.50 |
 | reported set | everything shown, majority tier included | 0.25-0.40, against 0.22 before consensus; floor 0.20 |
 
-The sets are compared by Jaccard index keyed on agent, category, file and quoted code, so prose and line numbers do not affect it. A weekly `Stability` workflow prints the table into its step summary, and it is never a required check: a number that moves with model sampling must not gate a merge.
+The sets are compared by Jaccard index keyed on agent, category, file and quoted code, so prose and line numbers do not affect it. The eval exits 0 when every diff's runs agreed on pass-or-fail, 1 when any verdict flipped, and 2 when it could not run (no corpus, fewer than two runs, no API key). Only the verdict decides the exit; the set scores are measured against their floors and never fail it. The corpus in `tests/corpus` is 24 diffs, most of them real merged pull requests from public Crunchtools repos, some carrying bugs that a later PR fixed. A weekly `Stability` workflow prints the table into its step summary and goes red on a flip. It is never a required check on a pull request: it calls a live model, which is too slow and costly to gate a merge.
 
 What that means in practice: a tree that fails keeps failing and a tree that passes keeps passing, which is the part that costs you a build. *Which* findings a run shows you varies, and the ledger is what makes the ones you have judged stay judged.
 

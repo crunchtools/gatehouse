@@ -17,9 +17,18 @@ same findings reached unanimity, which is informative and does wobble. The
 REPORTED set includes the majority tier, which is the agreement boundary
 itself and churns by construction.
 
-It calls a live model, so it costs money and its result is a measurement, not a
-verdict. It cannot be a required check: a number that moves with model sampling
-must not gate a merge.
+Exit codes:
+
+    0  every diff's runs agreed on pass-or-fail
+    1  at least one diff's verdict FLIPPED between runs: the promise is broken
+    2  it could not run: no corpus, fewer than two runs, or no API key
+
+Only the verdict decides the exit. The finding-set floors are warnings to
+investigate, not failures, because those sets churn by construction.
+
+It calls a live model, so it costs money and is slow. It is not a required
+status check on pull requests: it runs weekly, and a 1 there is a broken
+promise to investigate, not a merge to block.
 """
 
 from __future__ import annotations
@@ -191,7 +200,10 @@ def parse_args() -> argparse.Namespace:
 
 
 async def main() -> int:
-    """Measure the corpus and print the table; 2 on a usage error."""
+    """Measure the corpus and print the table.
+
+    0 when every verdict agreed, 1 when any flipped, 2 when it could not run.
+    """
     args = parse_args()
     diffs = sorted(Path(args.corpus).glob("*.diff"))
     if not diffs:
@@ -219,7 +231,7 @@ async def main() -> int:
         Path(args.json).write_text(
             json.dumps([asdict(result) for result in results], indent=2) + "\n"
         )
-    return 0
+    return 0 if all(result.verdict_agreed for result in results) else 1
 
 
 if __name__ == "__main__":
