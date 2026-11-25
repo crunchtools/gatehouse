@@ -203,6 +203,35 @@ async def test_post_pr_review_refused_comments_post_again_in_the_body(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        httpx.Response(502, request=httpx.Request("POST", "https://example.com")),
+        httpx.ConnectError("connection reset"),
+    ],
+    ids=["server-error", "transport-error"],
+)
+async def test_post_pr_review_other_failures_are_not_retried(
+    monkeypatch: pytest.MonkeyPatch, outcome: httpx.Response | Exception
+) -> None:
+    """Only a 422 is GitHub refusing the review. A 5xx or a dropped connection
+    may have posted it, so the review is not sent a second time."""
+    monkeypatch.setenv("GITHUB_REPOSITORY", "crunchtools/gatehouse")
+    monkeypatch.setenv("GITHUB_REF", "refs/pull/7/merge")
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_test123")
+    mock_client = AsyncMock(spec=httpx.AsyncClient)
+    mock_client.post = AsyncMock(side_effect=[outcome])
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("gatehouse.github.httpx.AsyncClient", return_value=mock_client):
+        success = await post_pr_review([(BUG_HUNTER, [SAMPLE_FINDING])], request_changes=False)
+
+    assert success is False
+    assert mock_client.post.await_count == 1
+
+
+@pytest.mark.asyncio
 async def test_post_pr_review_without_comments_is_not_retried(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

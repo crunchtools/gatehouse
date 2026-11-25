@@ -657,12 +657,17 @@ def _drop_offdiff(results: Results, anchors: dict[str, set[int]] | None) -> tupl
                 return True
         return False
 
-    kept, _ = _keep_where(results, anchored)
-    placed = {id(f) for _, findings in kept for f in findings}
-    aside: Results = [
-        (agent, [f for f in findings if id(f) not in placed]) for agent, findings in results
-    ]
-    return kept, [(agent, findings) for agent, findings in aside if findings]
+    kept: Results = []
+    aside: Results = []
+    for agent, findings in results:
+        placed: list[dict[str, Any]] = []
+        unplaced: list[dict[str, Any]] = []
+        for finding in findings:
+            (placed if anchored(agent, finding) else unplaced).append(finding)
+        kept.append((agent, placed))
+        if unplaced:
+            aside.append((agent, unplaced))
+    return kept, aside
 
 
 def _filter_findings(

@@ -6,6 +6,8 @@ import json
 import os
 import re
 import sys
+from dataclasses import dataclass
+from http import HTTPStatus
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -460,10 +462,10 @@ async def post_pr_review(
     format_review_body). ``commit_id`` pins the review to the commit that
     was reviewed, not whatever head is current when it posts.
 
-    GitHub refuses a whole review if any one inline comment names a path or
-    line it cannot resolve in the PR. So a review with inline comments that
-    fails to post is posted once more with none, its findings listed in the
-    body: one unplaceable finding never costs the review. Returns True on
+    GitHub refuses a whole review (422) if any one inline comment names a
+    path or line it cannot resolve in the PR. So a review with inline
+    comments that GitHub refuses is posted once more with none, its findings
+    listed in the body: one unplaceable finding never costs the review. Returns True on
     success, False on failure.
     """
     context = detect_pr_context()
@@ -515,7 +517,9 @@ async def post_pr_review(
 
     if await _post_review(repo, pr_number, token, payload(None)):
         return True
-    if not comments:
+    # Only a 422 is GitHub refusing the review's content. Any other failure,
+    # a 5xx or a dropped connection, may have posted it, so it is not re-sent.
+    if not comments or _LAST_POST.refusal != HTTPStatus.UNPROCESSABLE_ENTITY:
         return False
     print(
         "Warning: posting the review again with its inline comments in the body.",
@@ -550,13 +554,28 @@ def _inline_comments(
     return comments, inline
 
 
+@dataclass
+class _LastPost:
+    """The HTTP status GitHub refused the last review post with, or None when
+    it succeeded or got no answer. A side channel rather than a return value:
+    sdlc records reviews by replacing _post_review, so its signature cannot
+    change (sdlc_jobs/_gatehouse_shim.py)."""
+
+    refusal: int | None = None
+
+
+_LAST_POST = _LastPost()
+
+
 async def _post_review(repo: str, pr_number: int, token: str, payload: dict[str, Any]) -> bool:
     """POST one PR review. Returns True on success, False after warning why not."""
+    _LAST_POST.refusal = None
     url = f"{GITHUB_API_URL}/repos/{repo}/pulls/{pr_number}/reviews"
     try:
         async with httpx.AsyncClient() as client:
             response = await client.post(url, headers=_headers(token), json=payload, timeout=30.0)
         if response.status_code >= 400:
+            _LAST_POST.refusal = response.status_code
             print(
                 f"Warning: GitHub API returned {response.status_code}: {response.text[:200]}",
                 file=sys.stderr,
