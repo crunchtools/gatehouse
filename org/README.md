@@ -14,9 +14,9 @@ included, goes through a PR. Break-glass is to add a bypass actor by API,
 make the change, and remove it again.
 
 Only the `pull_request_target` run's checks count toward these rules; a run
-started by a reply to a finding does not. Every repo that carries the
-Gatehouse workflow needs `examples/gatehouse-retriage.yml` too, or a reply
-leaves triage red until someone re-runs it by hand.
+started by a reply to a finding does not. The fleet `ci.yml`'s `gate` job
+re-runs itself inside the `pull_request_target` run on a reply, which is what
+the retired `examples/gatehouse-retriage.yml` did.
 
 Apply changes with:
 

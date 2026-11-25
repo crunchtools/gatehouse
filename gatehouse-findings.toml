@@ -17,18 +17,3 @@
 # status = "not-a-bug"
 # reason = "count is validated non-zero by the only caller, see guard above"
 
-[[findings]]
-agent = "security"
-category = "security"
-file = ".github/workflows/triage.yml"
-evidence = "| .body | scan(\"<!-- gatehouse carried ([0-9a-f ]*) -->\") | .[0]"
-status = "not-a-bug"
-reason = "An answer only closes its own thread. A bug reintroduced by a later change is raised as a new finding by that change's review, which no old answer touches; the same holds on a PR that was never rebased."
-
-[[findings]]
-agent = "constitution"
-category = "constitution"
-file = ".github/workflows/triage.yml"
-evidence = "cat pr_shas.txt carried_shas.txt | jq -R . | jq -s . > shas.json"
-status = "deferred"
-reason = "Carrying a skipped rebase's commits is the a155 design; constitution XII's orphan rule needs the amendment in https://github.com/crunchtools/constitution/issues/143"

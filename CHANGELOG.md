@@ -5,6 +5,14 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+### Removed
+- **The reusable `review.yml`, `triage.yml`, `retriage.yml`, `gourmand.yml` and
+  `major-tag.yml` workflows, and the examples that called them** (#185). The
+  fleet `ci.yml` from sdlc runs the review (`ai`) and triage (`gate`) in their
+  place, so `@v0` no longer moves. Their tests and the two ledger entries on
+  `triage.yml` went with them; the README points at sdlc. The `Refuse
+  plaintext secrets` step had no port, tracked in crunchtools/sdlc#213.
+
 ## [0.34.0] - 2026-11-25
 
 ### Fixed
