@@ -5,6 +5,8 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+## [0.34.0] - 2026-11-25
+
 ### Fixed
 - **A finding GitHub cannot anchor no longer sinks the whole review** (#173).
   GitHub refuses a review outright (422 "Path could not be resolved", or
