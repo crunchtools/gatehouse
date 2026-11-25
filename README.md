@@ -201,7 +201,7 @@ tests/fixtures/
 *.fp
 ```
 
-In CI the file is read from the base branch, like the styleguide and constitution: a pull request cannot widen it to hide its own changes. The posted review says how many files were skipped; when every changed file is ignored, gatehouse prints `No changes to review.`, exits 0 and posts nothing.
+In CI the file is read from the base branch, like the styleguide and constitution: a pull request cannot widen it to hide its own changes. The posted review says how many files were skipped; when every changed file is ignored, gatehouse prints `No changes to review.`, exits 0, and under `--comment` posts a clean review of the head so triage sees one (otherwise it posts nothing).
 
 ### Oversize diffs
 
