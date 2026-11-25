@@ -6,6 +6,8 @@ import json
 import os
 import re
 import sys
+from dataclasses import dataclass
+from http import HTTPStatus
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -297,8 +299,14 @@ def format_review_body(
     scope: str = "",
     fallbacks: dict[str, int] | None = None,
     agent_count: int = 0,
+    unplaced: list[tuple[Agent, list[dict[str, Any]]]] | None = None,
+    refused: list[tuple[Agent, list[dict[str, Any]]]] | None = None,
 ) -> str:
     """Generate the review summary body: counts, scope, skipped files and findings, fallbacks.
+
+    ``unplaced`` are the ``offdiff`` findings themselves, listed so they are
+    seen rather than lost; ``refused`` are findings GitHub would not take as
+    inline comments, listed in the body of the review posted without them.
 
     ``unverified``, ``disproved``, ``reraised``, ``capped`` and ``offdiff``
     are the findings dropped for fabricated evidence, a missing-ref claim
@@ -317,6 +325,28 @@ def format_review_body(
         body += f"\n\n{scope}"
     if ignored:
         body += f"\n\n{ignored} file(s) not reviewed, per `.gatehouse-ignore` on the base branch."
+    body += _dropped(unverified, disproved, reraised, capped)
+    if offdiff:
+        body += f"\n\n{offdiff} finding(s) not posted inline: their line is outside the PR diff."
+        body += _listed(unplaced or [])
+    if refused:
+        body += (
+            "\n\nGitHub refused this review's inline comments, so its findings are "
+            "listed here instead:"
+        )
+        body += _listed(refused)
+    if judged:
+        body += (
+            f"\n\n{judged} finding(s) not raised: already judged in `{LEDGER_FILE}` on this branch."
+        )
+    for served, count in sorted((fallbacks or {}).items()):
+        body += f"\n\n{count} of {agent_count} agents served by {served} (primary unavailable)."
+    return body + _completion(failed, agent_count)
+
+
+def _dropped(unverified: int, disproved: int, reraised: int, capped: int) -> str:
+    """The body's lines for findings the filters dropped before posting."""
+    body = ""
     if unverified:
         body += f"\n\n{unverified} finding(s) dropped: their evidence is not in the diff."
     if disproved:
@@ -325,15 +355,26 @@ def format_review_body(
         body += f"\n\n{reraised} finding(s) not re-raised: already answered on this PR."
     if capped:
         body += f"\n\n{capped} more low finding(s) from advisory agents not posted."
-    if offdiff:
-        body += f"\n\n{offdiff} finding(s) not posted: their line is outside the PR diff."
-    if judged:
-        body += (
-            f"\n\n{judged} finding(s) not raised: already judged in `{LEDGER_FILE}` on this branch."
-        )
-    for served, count in sorted((fallbacks or {}).items()):
-        body += f"\n\n{count} of {agent_count} agents served by {served} (primary unavailable)."
-    return body + _completion(failed, agent_count)
+    return body
+
+
+def _listed(results: list[tuple[Agent, list[dict[str, Any]]]]) -> str:
+    """Findings as body lines: severity, agent, where, and what, never a reply marker.
+
+    The marker is what triage asks an answer for, and a body line cannot be
+    replied to, so it is left out.
+    """
+    lines = []
+    for agent, findings in results:
+        for finding in findings:
+            severity = str(finding.get("severity", "low")).upper()
+            where = _inert(strip_ansi(str(finding.get("file", "")))) or "(no file)"
+            line = finding.get("lineStart", 0)
+            if isinstance(line, int) and line > 0:
+                where = f"{where}:{line}"
+            description = _inert(strip_ansi(str(finding.get("description", ""))))
+            lines.append(f"- **{severity}** ({agent.name}) `{where}`: {description}")
+    return "\n\n" + "\n".join(lines) if lines else ""
 
 
 def _completion(failed: tuple[tuple[str, str], ...], agent_count: int) -> str:
@@ -398,6 +439,7 @@ async def post_pr_review(
     capped: int = 0,
     offdiff: int = 0,
     judged: int = 0,
+    unplaced: list[tuple[Agent, list[dict[str, Any]]]] | None = None,
     scope: str = "",
     fallbacks: dict[str, int] | None = None,
     agent_count: int = 0,
@@ -414,11 +456,17 @@ async def post_pr_review(
     ref missing that GitHub resolves, ``reraised`` were MEDIUM or LOW
     within a few lines of an answered thread from the same agent, and
     ``capped`` were advisory LOWs beyond the per-review limit, and
-    ``offdiff`` pointed at lines GitHub cannot anchor a comment to. The
-    review body reports each non-zero count, plus ``scope`` and any
-    ``fallbacks`` (see format_review_body). ``commit_id`` pins the review to
-    the commit that was reviewed, not whatever head is current when it
-    posts. Returns True on success, False on failure.
+    ``offdiff`` pointed at lines GitHub cannot anchor a comment to; those
+    are ``unplaced``, listed in the body instead. The review body reports
+    each non-zero count, plus ``scope`` and any ``fallbacks`` (see
+    format_review_body). ``commit_id`` pins the review to the commit that
+    was reviewed, not whatever head is current when it posts.
+
+    GitHub refuses a whole review (422) if any one inline comment names a
+    path or line it cannot resolve in the PR. So a review with inline
+    comments that GitHub refuses is posted once more with none, its findings
+    listed in the body: one unplaceable finding never costs the review. Returns True on
+    success, False on failure.
     """
     context = detect_pr_context()
     if context is None:
@@ -438,13 +486,62 @@ async def post_pr_review(
 
     repo, pr_number = context
 
+    comments, inline = _inline_comments(results)
+
+    def payload(refused: list[tuple[Agent, list[dict[str, Any]]]] | None) -> dict[str, Any]:
+        body = format_review_body(
+            results,
+            failed,
+            ignored,
+            unverified=unverified,
+            disproved=disproved,
+            reraised=reraised,
+            capped=capped,
+            offdiff=offdiff,
+            judged=judged,
+            scope=scope,
+            fallbacks=fallbacks,
+            agent_count=agent_count,
+            unplaced=unplaced,
+            refused=refused,
+        )
+        sent: dict[str, Any] = {
+            "event": "REQUEST_CHANGES" if request_changes else "COMMENT",
+            "body": body,
+        }
+        if comments and refused is None:
+            sent["comments"] = comments
+        if commit_id:
+            sent["commit_id"] = commit_id
+        return sent
+
+    if await _post_review(repo, pr_number, token, payload(None)):
+        return True
+    # Only a 422 is GitHub refusing the review's content. Any other failure,
+    # a 5xx or a dropped connection, may have posted it, so it is not re-sent.
+    if not comments or _LAST_POST.refusal != HTTPStatus.UNPROCESSABLE_ENTITY:
+        return False
+    print(
+        "Warning: posting the review again with its inline comments in the body.",
+        file=sys.stderr,
+    )
+    return await _post_review(repo, pr_number, token, payload(inline))
+
+
+def _inline_comments(
+    results: list[tuple[Agent, list[dict[str, Any]]]],
+) -> tuple[list[dict[str, Any]], list[tuple[Agent, list[dict[str, Any]]]]]:
+    """The review's inline comments, and the findings they are, by agent."""
     comments: list[dict[str, Any]] = []
+    inline: list[tuple[Agent, list[dict[str, Any]]]] = []
     for agent, findings in results:
+        placed = []
         for finding in findings:
             file_path = finding.get("file", "")
             line = finding.get("lineStart", 0)
             if not file_path or line <= 0:
                 continue
+            placed.append(finding)
             comments.append(
                 {
                     "path": file_path,
@@ -452,42 +549,33 @@ async def post_pr_review(
                     "body": _format_comment_body(agent, finding),
                 }
             )
+        if placed:
+            inline.append((agent, placed))
+    return comments, inline
 
-    body = format_review_body(
-        results,
-        failed,
-        ignored,
-        unverified=unverified,
-        disproved=disproved,
-        reraised=reraised,
-        capped=capped,
-        offdiff=offdiff,
-        judged=judged,
-        scope=scope,
-        fallbacks=fallbacks,
-        agent_count=agent_count,
-    )
-    event = "REQUEST_CHANGES" if request_changes else "COMMENT"
 
-    payload: dict[str, Any] = {
-        "event": event,
-        "body": body,
-    }
-    if comments:
-        payload["comments"] = comments
-    if commit_id:
-        payload["commit_id"] = commit_id
+@dataclass
+class _LastPost:
+    """The HTTP status GitHub refused the last review post with, or None when
+    it succeeded or got no answer. A side channel rather than a return value:
+    sdlc records reviews by replacing _post_review, so its signature cannot
+    change (sdlc_jobs/_gatehouse_shim.py)."""
 
-    return await _post_review(repo, pr_number, token, payload)
+    refusal: int | None = None
+
+
+_LAST_POST = _LastPost()
 
 
 async def _post_review(repo: str, pr_number: int, token: str, payload: dict[str, Any]) -> bool:
     """POST one PR review. Returns True on success, False after warning why not."""
+    _LAST_POST.refusal = None
     url = f"{GITHUB_API_URL}/repos/{repo}/pulls/{pr_number}/reviews"
     try:
         async with httpx.AsyncClient() as client:
             response = await client.post(url, headers=_headers(token), json=payload, timeout=30.0)
         if response.status_code >= 400:
+            _LAST_POST.refusal = response.status_code
             print(
                 f"Warning: GitHub API returned {response.status_code}: {response.text[:200]}",
                 file=sys.stderr,

@@ -175,6 +175,76 @@ async def test_post_pr_review_constructs_payload(
 
 
 @pytest.mark.asyncio
+async def test_post_pr_review_refused_comments_post_again_in_the_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """GitHub refuses a whole review for one comment it cannot anchor (422).
+    The review goes again with no inline comments and its findings in the body."""
+    monkeypatch.setenv("GITHUB_REPOSITORY", "crunchtools/gatehouse")
+    monkeypatch.setenv("GITHUB_REF", "refs/pull/7/merge")
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_test123")
+    request = httpx.Request("POST", "https://example.com")
+    refused = httpx.Response(422, request=request, json={"errors": ["Path could not be resolved"]})
+    mock_client = AsyncMock(spec=httpx.AsyncClient)
+    mock_client.post = AsyncMock(side_effect=[refused, httpx.Response(200, request=request)])
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("gatehouse.github.httpx.AsyncClient", return_value=mock_client):
+        success = await post_pr_review([(BUG_HUNTER, [SAMPLE_FINDING])], request_changes=False)
+
+    assert success is True
+    first, second = (c.kwargs["json"] for c in mock_client.post.call_args_list)
+    assert len(first["comments"]) == 1
+    assert "comments" not in second
+    assert "GitHub refused this review's inline comments" in second["body"]
+    assert "`src/app.py:10`" in second["body"]
+    assert second["body"].endswith(REVIEW_MARKER) == first["body"].endswith(REVIEW_MARKER)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        httpx.Response(502, request=httpx.Request("POST", "https://example.com")),
+        httpx.ConnectError("connection reset"),
+    ],
+    ids=["server-error", "transport-error"],
+)
+async def test_post_pr_review_other_failures_are_not_retried(
+    monkeypatch: pytest.MonkeyPatch, outcome: httpx.Response | Exception
+) -> None:
+    """Only a 422 is GitHub refusing the review. A 5xx or a dropped connection
+    may have posted it, so the review is not sent a second time."""
+    monkeypatch.setenv("GITHUB_REPOSITORY", "crunchtools/gatehouse")
+    monkeypatch.setenv("GITHUB_REF", "refs/pull/7/merge")
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_test123")
+    mock_client = AsyncMock(spec=httpx.AsyncClient)
+    mock_client.post = AsyncMock(side_effect=[outcome])
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("gatehouse.github.httpx.AsyncClient", return_value=mock_client):
+        success = await post_pr_review([(BUG_HUNTER, [SAMPLE_FINDING])], request_changes=False)
+
+    assert success is False
+    assert mock_client.post.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_post_pr_review_without_comments_is_not_retried(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GITHUB_REPOSITORY", "crunchtools/gatehouse")
+    monkeypatch.setenv("GITHUB_REF", "refs/pull/7/merge")
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_test123")
+    sent = AsyncMock(return_value=False)
+    with patch("gatehouse.github._post_review", sent):
+        assert await post_pr_review([(BUG_HUNTER, [])], request_changes=False) is False
+    sent.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_post_failed_review_carries_reason_and_marker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -688,7 +758,7 @@ def test_format_review_body_scope_fallback_and_offdiff() -> None:
         agent_count=8,
     )
     assert "Reviewed 2 commits since abc1234 (incremental)." in body
-    assert "1 finding(s) not posted: their line is outside the PR diff." in body
+    assert "1 finding(s) not posted inline: their line is outside the PR diff." in body
     assert "3 of 8 agents served by google/gemini-3.5-flash-lite" in body
     assert body.endswith(REVIEW_MARKER)
 
