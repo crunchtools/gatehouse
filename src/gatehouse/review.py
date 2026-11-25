@@ -115,7 +115,7 @@ HEAD_REPO_ENV = "GATEHOUSE_HEAD_REPO"
 
 
 # LOWs from these agents (by name, as printed in each finding) are required
-# answers, matching triage.yml's `required_low_agents` default; every other
+# answers, matching sdlc's `gate` triage (sdlc_jobs/_findings.py); every other
 # agent's LOWs are advisory, and only the most confident few are posted.
 REQUIRED_LOW_AGENTS = frozenset({"Bug Hunter", "Security Scan"})
 MAX_ADVISORY_LOWS = 5
@@ -1359,7 +1359,7 @@ async def _empty_diff(*, comment: bool, ignored: bool) -> int:
     """Handle a diff with nothing left to send, before any incremental scoping.
 
     Every file ignored is nothing to review. With comment and nothing
-    ignored, no diff arrived at all: review.yml always sends a non-empty
+    ignored, no diff arrived at all: sdlc's `ai` job always sends a non-empty
     diff for a PR that changes anything, so an empty one was lost on the
     way. That is posted as a review marked failed and exits 2, so triage
     holds instead of passing on nothing.

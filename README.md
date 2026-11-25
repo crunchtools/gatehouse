@@ -122,41 +122,15 @@ What that means in practice: a tree that fails keeps failing and a tree that pas
 
 ## GitHub Actions
 
-Drop in [`examples/gatehouse.yml`](examples/gatehouse.yml) to review every PR (forks included) via the reusable `review.yml` workflow — the diff is piped as data, never checked out or executed.
-
-The example also runs `Gatehouse triage`, a deterministic check that every required inline finding has an answer it can verify: a reply that starts `fixed in <sha>` naming a commit on the PR, `not a bug: <reason>` with a reason of at least 20 characters, or `deferred: <issue URL>` naming an open issue. Any other reply answers nothing. A reply from the Ashigaru App (`ashigaru-crunchtools[bot]`) answers nothing either: an AI fix does not sign off on its own finding. Triage also fails unless a finished Gatehouse review of the PR's current head exists; a review that failed, timed out or never posted, or one of an older head, holds the PR. The one exception is an Ashigaru release PR, which the review skips without posting. Findings without a file and line appear only in the review summary and are not counted. CRITICAL, HIGH and MEDIUM findings are required from every agent; LOW findings only from Bug Hunter and Security Scan, and the `required_low_agents` input changes that list (pass the same value to the review and triage jobs, so the review never caps a LOW that triage requires). Other LOWs still post, as advisory.
-
-On a push to an open PR, only the commits since the last complete Gatehouse review are reviewed (`--incremental`), fetched through the compare API. GitHub refuses the diff of a PR of more than 300 files; the workflow then rebuilds it from the PR's file list (up to 3000 files; files with no patch, such as binaries, are skipped with a warning). A PR's first review, a force-push or rebase, a review that had an unfinished agent, or a failed compare all fall back to reviewing the whole PR. The review summary says which it was, and says when a fallback model served any agent; the job's step summary shows per-agent tokens and cost.
+Crunchtools repositories run Gatehouse through the fleet `ci.yml` from [sdlc](https://github.com/crunchtools/sdlc): its `ai` job reviews the pull request's head with `--comment`, and its `gate` job (the required `sdlc / gate (pull_request_target)` check) holds the merge until a finished review of that head exists and every required inline finding has an answer it can verify: a reply that starts `fixed in <sha>` naming a commit on the PR, `not a bug: <reason>` with a reason of at least 20 characters, or `deferred: <issue URL>` naming an open issue. sdlc's `sdlc_jobs/ai.py` and `sdlc_jobs/gate.py` document the rest. The reusable `review.yml`, `triage.yml`, `retriage.yml` and `gourmand.yml` workflows, and the examples that called them, were removed in favour of it.
 
 Before posting, gatehouse drops four kinds of finding, and the review summary counts each: a finding whose quoted evidence appears nowhere in the diff (or the styleguide and constitution the agents were given), a finding on a line outside the PR diff (GitHub would reject the whole review), a MEDIUM or LOW that repeats an answered thread by the same agent within 5 lines, and advisory LOWs beyond the 5 most confident. Every finding comment carries a hidden `<!-- gatehouse agent=… confidence=… -->` marker for tuning.
 
 A workflow or action under the account that owns the repository is first-party: its owner owns the repository's secrets too, and only that account can move its tags. The agents are told the owner (from `GATEHOUSE_CONTEXT_REPO`, `GITHUB_REPOSITORY` or the `origin` remote) and do not flag the ref a first-party workflow is called at, `@v0` included, or the secrets passed to it. Third-party workflows are reviewed as before, and a call moved from a first-party owner to another one is still flagged.
 
-A release pull request Ashigaru opens (branch `ashigaru/release-*` in the same repository, author `ashigaru-crunchtools[bot]`) is not reviewed: it only moves the changelog and the version strings, which the constitution validator checks. The review job posts nothing and passes, so `Gatehouse triage` passes too.
-
-Two more kinds of pull request skip the model calls. A pull request opened by `dependabot[bot]`, `crunchtools-ci[bot]` or `ashigaru-crunchtools[bot]` from a branch in the same repository, whose every changed line is a `uses:` line in `.github/workflows/*.yml` naming the same action on both sides, gets one review saying it was skipped. Dependency manifests, lock files, Containerfiles and hook configs are always reviewed: a new dependency, hook or base image is not a pin. A push whose `git patch-id --verbatim` of the base...head diff matches a head Gatehouse already reviewed completely (a rebase, or a re-push of the same change) gets a review naming that head; `Gatehouse triage` counts that head's commits as still on the pull request, so its findings and their `fixed in` answers carry forward. Either way both checks stay green and no model is called. A human's pull request, a fork's, or a bot's that touches anything else is reviewed as before.
-
-Add [`examples/gatehouse-retriage.yml`](examples/gatehouse-retriage.yml) as well if `Gatehouse triage` is a required check. A reply to a finding starts a run whose checks branch rules ignore; the retriage workflow re-runs triage inside the `pull_request_target` run, where the result counts.
-
-The review is **advisory by default**: findings post as PR comments and never fail the check, so a non-deterministic LLM finding can never block a merge. An agent that could not finish is named in the review, with the class of failure (`HTTP 402 (payment required)`, `timeout`, ...). When fewer than half of the agents finish, or the reviewer cannot run at all, nothing was reviewed: the review says so instead of "found no issues", the check fails, and `Gatehouse triage` fails with it until the review job is re-run. Do not mark it a required status check. To let critical/high findings fail the check (still not recommended as a required gate), opt in:
-
-```yaml
-uses: crunchtools/gatehouse/.github/workflows/review.yml@v0
-with:
-  blocking: true
-```
-
-### Plaintext secrets
-
-The Gourmand job (`gourmand.yml`, the required `Code Quality (Gourmand)` check) first refuses any line a change ADDS that carries a known credential shape: Google (`AIza`), Anthropic (`sk-ant-`), OpenRouter (`sk-or-v1-`), GitHub (`gh?_`, `github_pat_`), GitLab (`glpat-`), AWS (`AKIA`), Slack (`xox?-`) and bare JWTs. It also refuses a secret-named key given a literal: a fallback on a secret env read (`process.env.PGPASSWORD || 'rotv'`, `${PGPASSWORD:-rotv}`, `getenv("X", "x")`), a quoted assignment (`password: 'x'`), or an unquoted value in env, compose, yaml, conf and unit files and Containerfiles (`PGPASSWORD=rotv`, `ENV`, `Environment=`, `PodmanArgs=--env`); a value that is wholly a placeholder (`changeme`, `<...>`, `${...}`) or a switch (`yes`, `${X:-unset}`) passes, and a named literal in a test path, or a named literal or fallback in Markdown, reST, AsciiDoc or `docs/`, is a warning rather than a refusal. Known gaps, by design: lowercase env names, credentials inside URLs, PEM private key blocks, `${X:=default}`, and names outside the word list such as `DB_PW`. Each hit is an annotation naming the file, line and key, never the value. A test fixture marks its line `gatehouse: allow-secret`. Secrets belong in a `*_FILE` path or the host's encrypted store; the constitution states the rule. `secret_scan: false` turns the step off for one caller, in an emergency only.
-
 ## Versions
 
-Call the reusable workflows at the major tag, `@v0`, as the examples do. Each release moves that tag once its container images are pushed, so a release reaches every repository without a pin bump there; `review.yml` at the tag names the image of the same release. Every release also keeps its own `vX.Y.Z` tag. To undo a release, move the major tag back: `git tag -f v0 vX.Y.Z && git push -f origin v0`.
-
-A change that needs an edit in the calling repository (an input renamed or removed, a check name changed, a config format Gourmand rejects) is a new major tag, while the version is 0.x as well. Repositories move to a new major by editing their caller files.
-
-To release: bump the version in `pyproject.toml`, `src/gatehouse/__init__.py`, `Containerfile` and `uv.lock` (`review.yml` reads its image from `__init__.py` at its own commit, so it needs no bump), add the CHANGELOG entry, merge, push the tag `vX.Y.Z`, and publish the GitHub Release (which publishes to PyPI). The tag builds the images and then moves `v0`.
+A release goes through the fleet `ci.yml`: a release pull request rolls the CHANGELOG's Unreleased section into the new version and moves the version in `pyproject.toml`, `src/gatehouse/__init__.py`, `Containerfile` and `uv.lock`; merging it tags `vX.Y.Z`, publishes to PyPI, and promotes the image to `quay.io/crunchtools/gatehouse:latest`, which sdlc's review runs.
 
 ## The finding ledger
 
@@ -227,11 +201,11 @@ tests/fixtures/
 *.fp
 ```
 
-In CI the file is read from the base branch, like the styleguide and constitution: a pull request cannot widen it to hide its own changes. The posted review says how many files were skipped; when every changed file is ignored, gatehouse prints `No changes to review.`, exits 0 and posts nothing.
+In CI the file is read from the base branch, like the styleguide and constitution: a pull request cannot widen it to hide its own changes. The posted review says how many files were skipped; when every changed file is ignored, gatehouse prints `No changes to review.`, exits 0, and under `--comment` posts a clean review of the head so triage sees one (otherwise it posts nothing).
 
 ### Oversize diffs
 
-Before any model is called, a deleted file whose diff is over 64 KiB is cut down to its header and a note of how many lines it removed, since none of them reach the new tree; a smaller deletion is still sent whole, so a removed protection stays visible. If the diff is still over 1 MiB (`GATEHOUSE_MAX_DIFF_BYTES`, or `review.yml`'s `max_diff_bytes` input, to change it), gatehouse names the largest files, calls nothing and exits 2; under `--comment` it posts that as a review marked failed, so triage holds the PR. Every agent sample would carry the whole diff, so a diff no model can take is refused rather than paid for and rejected upstream.
+Before any model is called, a deleted file whose diff is over 64 KiB is cut down to its header and a note of how many lines it removed, since none of them reach the new tree; a smaller deletion is still sent whole, so a removed protection stays visible. If the diff is still over 1 MiB (`GATEHOUSE_MAX_DIFF_BYTES` to change it), gatehouse names the largest files, calls nothing and exits 2; under `--comment` it posts that as a review marked failed, so the `gate` triage holds the PR. Every agent sample would carry the whole diff, so a diff no model can take is refused rather than paid for and rejected upstream.
 
 ### Model
 

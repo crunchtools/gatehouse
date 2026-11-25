@@ -97,7 +97,7 @@ def _inert(text: str) -> str:
     return text.replace("<!--", "<!\u200b--").replace("-->", "-\u200b->")
 
 
-# The first line of every finding comment; triage.yml parses the same prefix.
+# The first line of every finding comment; sdlc's `gate` triage parses the same prefix.
 FINDING_HEADER_RE = re.compile(r"^\*\*(CRITICAL|HIGH|MEDIUM|LOW)\*\* \(([^)]+)\):")
 
 
@@ -172,8 +172,8 @@ def fetch_answered_threads() -> list[tuple[str, str, int]]:
 # never be reviewed.
 REVIEW_MARKER = "<!-- gatehouse review complete -->"
 # Hidden in the body of a review that did not happen: fewer than half of its
-# agents finished. triage.yml fails while the newest Gatehouse review on a PR
-# carries it, and review.yml posts it when it cannot run the reviewer at all.
+# agents finished. sdlc's `gate` fails while the newest Gatehouse review on a PR
+# carries it, and its `ai` job posts it when it cannot run the reviewer at all.
 REVIEW_FAILED_MARKER = "<!-- gatehouse review failed -->"
 
 

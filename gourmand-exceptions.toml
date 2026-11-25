@@ -46,7 +46,7 @@ justification = "get_git_diff and load_constitution print to stderr and sys.exit
 check = "EV013-hidden_env_config"
 path = "src/gatehouse/review.py"
 classification = "by_design"
-justification = "GATEHOUSE_CONTEXT_REPO and GATEHOUSE_CONTEXT_REF are not hidden toggles. They are the documented fork-safe interface: described in _context_source()'s own docstring, recorded in CHANGELOG.md, and set explicitly by .github/workflows/review.yml. They carry the base repo and base SHA so the styleguide loads from the trusted base rather than a PR head."
+justification = "GATEHOUSE_CONTEXT_REPO and GATEHOUSE_CONTEXT_REF are not hidden toggles. They are the documented fork-safe interface: described in _context_source()'s own docstring, recorded in CHANGELOG.md, and set explicitly by sdlc's `ai` job (sdlc_jobs/ai.py). They carry the base repo and base SHA so the styleguide loads from the trusted base rather than a PR head."
 
 [[exceptions]]
 check = "EV002-manifest_lint_suppression"
