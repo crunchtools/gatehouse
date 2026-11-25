@@ -1949,6 +1949,38 @@ async def test_finding_outside_pr_diff_is_not_posted() -> None:
     assert post.call_args.kwargs["offdiff"] == 1
 
 
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("pr_env")
+async def test_finding_on_a_path_absent_from_the_diff_posts_in_the_body() -> None:
+    """A finding on a path the PR does not touch is listed in the review body,
+    never sent as an inline comment GitHub cannot resolve (#173): the review
+    posts, once, and the finding is in it."""
+    inside = {**json.loads(MOCK_BLOCKING_FINDINGS)[0], "evidence": "user.name.lower()"}
+    absent = {**inside, "file": "docs/not-in-this-pr.md", "lineStart": 7, "lineEnd": 7}
+    absent["description"] = "Flagged on a file this pull request never touches."
+    sent = AsyncMock(return_value=True)
+    with (
+        patch("gatehouse.review.get_file_listing", return_value=None),
+        patch("gatehouse.review.load_styleguide", return_value=None),
+        patch("gatehouse.review.fetch_last_reviewed_commit", return_value=None),
+        patch("gatehouse.review.fetch_compare", return_value=None),
+        patch(
+            "gatehouse.review.call_model",
+            AsyncMock(return_value=Completion(json.dumps([inside, absent]))),
+        ),
+        patch("gatehouse.github._post_review", sent),
+    ):
+        await run_review(stdin_diff=PR_DIFF, agent_slugs=["bugs"], api_key="k", comment=True)
+    sent.assert_awaited_once()
+    payload = sent.call_args.args[3]
+    assert [c["path"] for c in payload["comments"]] == ["src/app.py"]
+    assert "1 finding(s) not posted inline: their line is outside the PR diff." in payload["body"]
+    assert (
+        "`docs/not-in-this-pr.md:7`: Flagged on a file this pull request never touches."
+        in (payload["body"])
+    )
+
+
 def test_right_side_lines_counts_added_and_context_only() -> None:
     from gatehouse.diffview import right_side_lines
 

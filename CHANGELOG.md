@@ -5,6 +5,18 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+### Fixed
+- **A finding GitHub cannot anchor no longer sinks the whole review** (#173).
+  GitHub refuses a review outright (422 "Path could not be resolved", or
+  "Line could not be resolved") if one inline comment names a path or line
+  outside the PR. `review.yml` fetched the diff with `gh pr diff --patch`,
+  which is one patch per commit, so a file a commit added and a later one
+  removed, and every intermediate line number, passed for part of the PR: on
+  crunchtools/rotv#942 the review never posted and triage held the merge. It
+  now fetches the net diff. A finding outside the diff is listed in the review
+  body instead of being dropped unseen, and a review whose inline comments
+  GitHub still refuses is posted once more with none, its findings in the body.
+
 ### Changed
 - **CI is the fleet's one ci.yml** (sdlc 0.15). The Python 3.11 and 3.12 test
   runs that `requires-python` promises are `command` checks in

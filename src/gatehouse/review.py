@@ -630,15 +630,16 @@ def _cap_advisory_lows(
     return kept, len(cut)
 
 
-def _drop_offdiff(results: Results, anchors: dict[str, set[int]] | None) -> tuple[Results, int]:
-    """Drop findings whose file line is not shown in the PR diff.
+def _drop_offdiff(results: Results, anchors: dict[str, set[int]] | None) -> tuple[Results, Results]:
+    """Set aside findings whose file line is not shown in the PR diff.
 
-    GitHub rejects a whole review if one comment points outside the diff.
-    Findings with no file or line are kept: they are never posted inline.
-    With no anchors (not commenting), nothing is dropped.
+    GitHub rejects a whole review if one comment points outside the diff, so
+    these are never posted inline: they are returned second, for the review
+    body to list. Findings with no file or line are kept: they are never
+    posted inline. With no anchors (not commenting), nothing is set aside.
     """
     if anchors is None:
-        return results, 0
+        return results, []
 
     def anchored(_: Agent, finding: dict[str, Any]) -> bool:
         path, line = finding.get("file", ""), finding.get("lineStart", 0)
@@ -656,7 +657,12 @@ def _drop_offdiff(results: Results, anchors: dict[str, set[int]] | None) -> tupl
                 return True
         return False
 
-    return _keep_where(results, anchored)
+    kept, _ = _keep_where(results, anchored)
+    placed = {id(f) for _, findings in kept for f in findings}
+    aside: Results = [
+        (agent, [f for f in findings if id(f) not in placed]) for agent, findings in results
+    ]
+    return kept, [(agent, findings) for agent, findings in aside if findings]
 
 
 def _filter_findings(
@@ -678,7 +684,7 @@ def _filter_findings(
     the tally instead: _filter_samples then _filter_clusters.
     """
     results, counts = _filter_samples(results, haystack, resolve=resolve)
-    results, cluster_counts = _filter_clusters(results, answered, required_low, anchors)
+    results, cluster_counts, _ = _filter_clusters(results, answered, required_low, anchors)
     return results, {**counts, **cluster_counts}
 
 
@@ -708,19 +714,25 @@ def _filter_clusters(
     answered: list[tuple[str, str, int]],
     required_low: frozenset[str] = REQUIRED_LOW_AGENTS,
     anchors: dict[str, set[int]] | None = None,
-) -> tuple[Results, dict[str, int]]:
+) -> tuple[Results, dict[str, int], Results]:
     """Drop what a tallied finding should not be reported for.
 
     Off-diff lines, re-raises of answered threads, and advisory LOWs over the cap.
+    Off-diff findings are returned third rather than lost: the review body
+    lists them, since GitHub cannot place them inline.
 
     These run after the tally, on clusters, so a cap or a window applies to one
     finding rather than to each sample's copy of it.
     """
-    results, offdiff = _drop_offdiff(results, anchors)
+    results, unplaced = _drop_offdiff(results, anchors)
+    offdiff = sum(len(findings) for _, findings in unplaced)
     results, reraised = _drop_reraised(results, answered)
     results, capped = _cap_advisory_lows(results, required_low)
     if offdiff:
-        print(f"Dropped {offdiff} finding(s): line outside the PR diff.", file=sys.stderr)
+        print(
+            f"Listed {offdiff} finding(s) in the review body: line outside the PR diff.",
+            file=sys.stderr,
+        )
     if reraised:
         print(f"Skipped {reraised} finding(s) already answered on this PR.", file=sys.stderr)
     if capped:
@@ -729,7 +741,7 @@ def _filter_clusters(
             f"(at most {MAX_ADVISORY_LOWS} are shown).",
             file=sys.stderr,
         )
-    return results, {"offdiff": offdiff, "reraised": reraised, "capped": capped}
+    return results, {"offdiff": offdiff, "reraised": reraised, "capped": capped}, unplaced
 
 
 LEDGER_AGENT = Agent(
@@ -914,22 +926,23 @@ def _decide(
     required_low: frozenset[str],
     anchors: dict[str, set[int]] | None,
     suppressions: Results,
-) -> tuple[Results, dict[str, int]]:
+) -> tuple[Results, dict[str, int], Results]:
     """Turn every agent's samples into the findings this review reports.
 
     The whole verdict in one place, in order: per-sample filters, the tally
     that makes votes out of samples, the ledger's judgements, then the filters
-    that apply to a tallied finding. Returns the findings and how many each
-    step dropped, keyed as post_pr_review takes them.
+    that apply to a tallied finding. Returns the findings, how many each
+    step dropped, keyed as post_pr_review takes them, and the findings on
+    lines outside the diff, which the review body lists instead.
     """
     outcomes, dropped = _filter_outcomes(outcomes, haystack)
     results = _tally(outcomes, config)
     results, judged_count = _drop_judged(results, ledger)
     results += suppressions
-    results, cluster_dropped = _filter_clusters(results, answered, required_low, anchors)
+    results, cluster_dropped, unplaced = _filter_clusters(results, answered, required_low, anchors)
     dropped.update(cluster_dropped)
     dropped["judged"] = judged_count
-    return results, dropped
+    return results, dropped, unplaced
 
 
 def _report_ledger(
@@ -1549,7 +1562,7 @@ async def run_review(
 
     haystack = _evidence_haystack(diff, styleguide, constitution)
     answered = await threads if threads else []
-    all_results, dropped = _decide(
+    all_results, dropped, unplaced = _decide(
         outcomes,
         config,
         ledger,
@@ -1580,6 +1593,7 @@ async def run_review(
         failed,
         len(ignored),
         **dropped,
+        unplaced=unplaced,
         scope=scope,
         fallbacks=fallbacks,
         agent_count=len(outcomes),
