@@ -64,7 +64,8 @@ one. What Gatehouse promises is only what it can defend:
   it and no commit is held hostage.
 
 What is **measured and not promised**: which findings reach unanimity, and the reported set as a
-whole. Both are tracked with floors (see Measurement) and watched weekly. A number that moves
+whole. Both are tracked with floors (see Measurement) and measured before each prompt, model or
+consensus change ships. A number that moves
 with model sampling is a thermometer, not a contract.
 
 ## Behavior
@@ -182,8 +183,9 @@ worth:
    construction.
 
 It exits 0 when every verdict agreed, 1 when any diff's verdict flipped, and 2 when it could not
-run. A weekly workflow runs it, prints the table and fails on a flip. It is never a required
-status check on a pull request: a live-model eval cannot gate a merge, and a set-score floor is a
+run. It is run by hand before a prompt, model or consensus change ships (the weekly workflow
+was retired in a1790: the fleet `ci.yml` gives no scheduled job a model key). It is never a
+required status check on a pull request: a live-model eval cannot gate a merge, and a set-score floor is a
 warning to investigate, not a verdict. The corpus holds at least 20 diffs, mostly real merged
 pull requests, some carrying bugs a later PR fixed.
 

@@ -12,6 +12,9 @@ All notable changes to this project are documented here, following
   place, so `@v0` no longer moves. Their tests and the two ledger entries on
   `triage.yml` went with them; the README points at sdlc. The `Refuse
   plaintext secrets` step had no port, tracked in crunchtools/sdlc#213.
+- **The weekly `stability.yml` workflow** (a1790). The fleet `ci.yml` gives no
+  scheduled job a model key, and the eval gates nothing, so it is now run by
+  hand before a prompt, model or consensus change ships (README, "Measuring it").
 
 ## [0.34.0] - 2026-11-25
 

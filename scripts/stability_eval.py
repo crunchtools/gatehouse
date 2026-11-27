@@ -27,8 +27,9 @@ Only the verdict decides the exit. The finding-set floors are warnings to
 investigate, not failures, because those sets churn by construction.
 
 It calls a live model, so it costs money and is slow. It is not a required
-status check on pull requests: it runs weekly, and a 1 there is a broken
-promise to investigate, not a merge to block.
+status check, and no workflow runs it: run it before releasing a change to
+the prompt, the model or consensus, which is when repeatability can move. A 1
+is a broken promise to investigate before that release.
 """
 
 from __future__ import annotations
